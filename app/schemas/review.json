@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "evidence": { "type": "string" },
+          "blocking": { "type": "boolean" }
+        },
+        "required": ["name", "passed", "evidence", "blocking"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["summary", "checks"],
+  "additionalProperties": false
+}

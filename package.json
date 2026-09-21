@@ -1,0 +1,13 @@
+{
+  "name": "irixi-office-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node app/server.mjs",
+    "test": "node --test app/tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

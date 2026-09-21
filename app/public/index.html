@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#183b32">
+  <meta name="description" content="Irixi 1.0 — 目标优先、可审阅、可追溯的个人办公 Agent。">
+  <title>Irixi · 维多利亚办公 Agent</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <header class="masthead">
+    <button class="brand" type="button" data-view-target="office" aria-label="回到办公室总览">
+      <span class="brand-mark" aria-hidden="true">I</span>
+      <span><b>IRIXI</b><small>THE PRIVATE OFFICE · 1.0</small></span>
+    </button>
+    <nav class="main-nav" aria-label="主要页面">
+      <button class="nav-tab is-active" type="button" data-view-target="office">办公室</button>
+      <button class="nav-tab" type="button" data-view-target="desk">任务书桌</button>
+      <button class="nav-tab" type="button" data-view-target="review">成果审阅</button>
+      <button class="nav-tab" type="button" data-view-target="connections">连接中心</button>
+    </nav>
+    <div class="header-status"><span id="global-status-dot" class="status-dot"></span><span id="global-status">本地待命</span></div>
+  </header>
+
+  <main id="main-content">
+    <section id="view-office" class="view is-active" aria-labelledby="office-title">
+      <h1 id="office-title" class="visually-hidden">办公室总览</h1>
+      <div class="office-grid">
+        <aside class="task-ledger" aria-label="任务账本">
+          <div class="section-heading ledger-heading">
+            <div><span class="eyebrow">TASK LEDGER</span><h2>任务账本</h2></div>
+            <button class="icon-button" type="button" id="new-task-button" data-open-dialog="task-dialog" aria-label="建立新任务">＋</button>
+          </div>
+          <div id="task-list" class="task-list"></div>
+          <button class="new-task-ribbon" type="button" data-open-dialog="task-dialog">建立一项新工作 <span aria-hidden="true">→</span></button>
+        </aside>
+
+        <section class="room-stage" aria-label="Irixi 维多利亚办公室实时状态">
+          <div class="room-image-wrap">
+            <img src="/assets/concepts/irixi-animal-team-office-v2.png" alt="八角形维多利亚办公室，猫头鹰绅士 Irixi 与小动物同事在不同书桌工作">
+            <div class="room-vignette" aria-hidden="true"></div>
+            <div class="office-state-plaque">
+              <span id="room-state-kicker">OFFICE AT REST</span>
+              <strong id="room-state-title">办公室正在等候第一项工作</strong>
+              <span id="room-state-detail">建立任务后，角色状态会投影到这里。</span>
+            </div>
+          </div>
+          <div id="role-strip" class="role-strip" aria-label="角色实时状态"></div>
+        </section>
+
+        <aside class="goal-rail" aria-label="当前目标与下一步">
+          <div class="goal-seal"><span>ACTIVE</span><b id="goal-version">—</b></div>
+          <span class="eyebrow">THE GOVERNING AIM</span>
+          <h2>当前目标</h2>
+          <p id="active-goal" class="goal-statement">尚未选择任务。</p>
+          <dl class="goal-meta">
+            <div><dt>成功条件</dt><dd id="success-criteria">—</dd></div>
+            <div><dt>工作边界</dt><dd id="goal-boundaries">—</dd></div>
+          </dl>
+          <div class="next-action-block">
+            <span class="eyebrow">NEXT MOVE</span>
+            <p id="next-action">先建立一项工作。</p>
+          </div>
+          <div id="office-actions" class="button-stack"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="view-desk" class="view parchment-view" aria-labelledby="desk-title">
+      <div class="page-heading"><div><span class="eyebrow">THE WORKING DESK</span><h1 id="desk-title">任务书桌</h1><p id="desk-subtitle">材料、建议与工作步骤都围绕当前目标排列。</p></div><button class="secondary-button" type="button" data-open-dialog="task-dialog">＋ 新任务</button></div>
+      <div id="desk-content" class="desk-layout"></div>
+    </section>
+
+    <section id="view-review" class="view parchment-view" aria-labelledby="review-title">
+      <div class="page-heading"><div><span class="eyebrow">THE PROOFING TABLE</span><h1 id="review-title">成果审阅</h1><p>候选稿先核对，再由你决定哪一个版本成为正式成果。</p></div></div>
+      <div id="review-content" class="review-layout"></div>
+    </section>
+
+    <section id="view-connections" class="view parchment-view" aria-labelledby="connections-title">
+      <div class="page-heading"><div><span class="eyebrow">CAPABILITY REGISTER</span><h1 id="connections-title">连接中心</h1><p>这里显示真实可用性、数据边界与验证状态，不把未配置能力装成已连接。</p></div></div>
+      <div id="connection-list" class="connection-register" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="task-dialog" class="ledger-dialog">
+    <form id="task-form" method="dialog">
+      <div class="dialog-heading"><div><span class="eyebrow">NEW COMMISSION</span><h2>建立新任务</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+      <label>任务名称<input name="title" maxlength="160" placeholder="例如：整理本周项目进展" required></label>
+      <label>最终目标<textarea name="goal" rows="4" maxlength="4000" placeholder="完成后，什么结果才算真正解决了这件事？" required></textarea></label>
+      <div class="two-fields">
+        <label>成果类型<select name="type"><option value="document">办公文档</option><option value="research">研究简报</option><option value="email">邮件草稿</option><option value="calendar">日历草稿</option></select></label>
+        <label>起始提供者<select name="provider"><option value="demo">演示提供者（仅体验流程）</option><option value="codex-cli">Codex CLI（真实模型）</option></select></label>
+      </div>
+      <label>成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" rows="3" placeholder="包含明确结论&#10;能追溯到给定材料"></textarea></label>
+      <label>工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" rows="3" placeholder="不自动发送或发布&#10;材料不足时标记待确认"></textarea></label>
+      <p class="form-disclosure">选择 Codex 后，运行时会把当前任务目标和你加入的材料发送给 Codex 服务；演示提供者不调用模型。</p>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">建立任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="material-dialog" class="ledger-dialog">
+    <form id="material-form" method="dialog">
+      <div class="dialog-heading"><div><span class="eyebrow">SOURCE INTAKE</span><h2>加入材料</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+      <fieldset class="material-choice"><legend>材料方式</legend><label><input type="radio" name="materialMode" value="text" checked> 粘贴文本</label><label><input type="radio" name="materialMode" value="file"> 选择文件</label><label><input type="radio" name="materialMode" value="url"> 明确网址</label></fieldset>
+      <label>材料名称<input name="name" maxlength="200" placeholder="例如：项目周报原稿"></label>
+      <div data-material-panel="text"><label>正文<textarea name="text" rows="10" placeholder="粘贴你希望 Irixi 使用的材料"></textarea></label></div>
+      <div data-material-panel="file" hidden><label>本地文件<input name="file" type="file" accept=".txt,.md,.markdown,.docx,.pdf"></label><p class="field-note">只读取你选中的文件；支持 TXT、MD、DOCX、可提取文字的 PDF，最大 1.5 MB。</p></div>
+      <div data-material-panel="url" hidden><label>公开网址<input name="url" type="url" placeholder="https://example.com/article"></label><p class="field-note">只读取这个明确地址；本机、内网和非文本内容会被拒绝。</p></div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">加入材料账本</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="suggestion-dialog" class="ledger-dialog compact-dialog">
+    <form id="suggestion-form" method="dialog">
+      <div class="dialog-heading"><div><span class="eyebrow">NEW NOTE</span><h2>加入一条建议</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+      <label>建议内容<textarea name="text" rows="5" maxlength="2000" required placeholder="这条想法是支持当前目标，还是可能替代目标？"></textarea></label>
+      <label>你也可以直接指定分类<select name="classification"><option value="">让 Irixi 先判断</option><option value="support">支持当前目标</option><option value="replace">替代当前目标</option><option value="deviate">偏离 / 留待以后</option><option value="unclear">暂不明确</option></select></label>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">记录建议</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="live-region" class="visually-hidden" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

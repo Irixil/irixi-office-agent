@@ -1,0 +1,6 @@
+data/tasks/*
+!data/tasks/.gitkeep
+.DS_Store
+.dz/
+.irixi-runtime/
+.impeccable/
