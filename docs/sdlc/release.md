@@ -5,6 +5,10 @@
 - 目标仓库：先推送至 `Irixil/silver-octo-meme`，再重命名为 `Irixil/irixi-office-agent`
 - 可见性：公开
 - 授权：项目所有者已在当前对话明确确认上述推送、公开与改名操作
+- 结果：已发布
+- 最终地址：<https://github.com/Irixil/irixi-office-agent>
+- 首次公开提交：`ee2f45364240b204c78bd605504e4b56bbe1d637`
+- 远程核对：仓库已改名，可见性为 Public，默认分支为 `main`，远程 `main` 与首次公开提交一致，`README.md` 可读
 
 ## 本次包含
 
