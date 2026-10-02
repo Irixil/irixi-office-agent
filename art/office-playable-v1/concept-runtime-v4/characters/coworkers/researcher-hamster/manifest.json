@@ -1,0 +1,250 @@
+{
+  "id": "researcher-hamster-v4-states-2",
+  "revision": "coworker-v4-2",
+  "status": "integration-ready-art-validated",
+  "role": "researcher",
+  "species": "hamster",
+  "poseClass": "seated-desk-bust",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "sheet": "runtime/spritesheet.png",
+  "sheetLayout": {
+    "columns": 2,
+    "rows": 4,
+    "rowOrder": [
+      "idle",
+      "working",
+      "sleeping",
+      "slack"
+    ],
+    "columnOrder": [
+      "A",
+      "B"
+    ]
+  },
+  "animations": {
+    "idle": {
+      "row": 0,
+      "columns": [
+        0,
+        1
+      ],
+      "frames": 2,
+      "fps": 2.5,
+      "frameDurationMs": 400,
+      "loop": true,
+      "returnTo": null,
+      "preview": "preview/idle.gif"
+    },
+    "working": {
+      "row": 1,
+      "columns": [
+        0,
+        1
+      ],
+      "frames": 2,
+      "fps": 6.25,
+      "frameDurationMs": 160,
+      "loop": true,
+      "returnTo": null,
+      "preview": "preview/working.gif"
+    },
+    "sleeping": {
+      "row": 2,
+      "columns": [
+        0,
+        1
+      ],
+      "frames": 2,
+      "fps": 2.0,
+      "frameDurationMs": 500,
+      "loop": true,
+      "returnTo": null,
+      "preview": "preview/sleeping.gif"
+    },
+    "slack": {
+      "row": 3,
+      "columns": [
+        0,
+        1
+      ],
+      "frames": 2,
+      "fps": 4.166666666666667,
+      "frameDurationMs": 240,
+      "loop": false,
+      "returnTo": "idle",
+      "preview": "preview/slack.gif"
+    }
+  },
+  "deskDock": {
+    "worldAnchor": [
+      240,
+      645
+    ],
+    "frontLayerId": "researcher-desk-front",
+    "frontLayerDepthY": 688,
+    "frontLayerPlacement": {
+      "worldPosition": [
+        204,
+        704
+      ],
+      "pivot": [
+        151,
+        173
+      ]
+    },
+    "previews": {
+      "idle": {
+        "full": "preview/desk-dock-idle-preview.png",
+        "crop": "preview/desk-dock-idle-crop.png"
+      },
+      "working": {
+        "full": "preview/desk-dock-working-preview.png",
+        "crop": "preview/desk-dock-working-crop.png"
+      }
+    },
+    "preview": "preview/desk-dock-preview.png",
+    "crop": "preview/desk-dock-crop.png",
+    "calibrationStatus": "art-preview-calibrated-runtime-pending"
+  },
+  "source": {
+    "file": "source/imagegen-state-sheet.png",
+    "sha256": "0a2ea952e4285fcf850bbcedd79b0cc8e062e1da452e059d16c9fce9c160e883",
+    "generation": "ImageGen; eight distinct model-generated poses in a 2x4 state sheet"
+  },
+  "processing": "equal-cell splitting, alpha-bbox crop, one shared scale across all eight poses, fixed anchor placement, packing and preview only",
+  "validation": {
+    "mode": "RGBA",
+    "frameCount": 8,
+    "transparentCorners": true,
+    "sharedScale": 0.42073170731707316,
+    "frames": [
+      {
+        "state": "idle",
+        "column": 0,
+        "file": "frames/idle-00.png",
+        "visibleBBox": [
+          18,
+          10,
+          158,
+          135
+        ],
+        "visibleSize": [
+          140,
+          125
+        ]
+      },
+      {
+        "state": "idle",
+        "column": 1,
+        "file": "frames/idle-01.png",
+        "visibleBBox": [
+          19,
+          8,
+          158,
+          135
+        ],
+        "visibleSize": [
+          139,
+          127
+        ]
+      },
+      {
+        "state": "working",
+        "column": 0,
+        "file": "frames/working-00.png",
+        "visibleBBox": [
+          7,
+          0,
+          170,
+          135
+        ],
+        "visibleSize": [
+          163,
+          135
+        ]
+      },
+      {
+        "state": "working",
+        "column": 1,
+        "file": "frames/working-01.png",
+        "visibleBBox": [
+          6,
+          0,
+          170,
+          135
+        ],
+        "visibleSize": [
+          164,
+          135
+        ]
+      },
+      {
+        "state": "sleeping",
+        "column": 0,
+        "file": "frames/sleeping-00.png",
+        "visibleBBox": [
+          15,
+          28,
+          161,
+          135
+        ],
+        "visibleSize": [
+          146,
+          107
+        ]
+      },
+      {
+        "state": "sleeping",
+        "column": 1,
+        "file": "frames/sleeping-01.png",
+        "visibleBBox": [
+          17,
+          27,
+          160,
+          135
+        ],
+        "visibleSize": [
+          143,
+          108
+        ]
+      },
+      {
+        "state": "slack",
+        "column": 0,
+        "file": "frames/slack-00.png",
+        "visibleBBox": [
+          19,
+          3,
+          158,
+          135
+        ],
+        "visibleSize": [
+          139,
+          132
+        ]
+      },
+      {
+        "state": "slack",
+        "column": 1,
+        "file": "frames/slack-01.png",
+        "visibleBBox": [
+          19,
+          1,
+          158,
+          135
+        ],
+        "visibleSize": [
+          139,
+          134
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "output": { "type": "string" },
+    "sources": { "type": "array", "items": { "type": "string" } },
+    "claims": { "type": "array", "items": { "type": "object", "properties": {
+      "statement": { "type": "string" }, "materialId": { "type": "string" }, "sourceName": { "type": "string" },
+      "locator": { "type": "string", "pattern": "^L[0-9]+-L[0-9]+$" }, "quote": { "type": "string" }
+    }, "required": ["statement", "materialId", "sourceName", "locator", "quote"], "additionalProperties": false } },
+    "gap": { "type": "string" },
+    "caveats": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+    "acceptanceChecks": { "type": "array", "items": { "type": "object", "properties": {
+      "criterion": { "type": "string" }, "passed": { "type": "boolean" }, "evidence": { "type": "string" }
+    }, "required": ["criterion", "passed", "evidence"], "additionalProperties": false } },
+    "deliverables": { "type": "array", "maxItems": 4, "items": { "type": "object", "properties": {
+      "kind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] },
+      "title": { "type": "string" }, "content": { "type": "string" }
+    }, "required": ["kind", "title", "content"], "additionalProperties": false } },
+    "toolRequests": { "type": "array", "maxItems": 6, "items": { "type": "object", "properties": {
+      "id": { "type": "string" },
+      "tool": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read"] },
+      "args": { "anyOf": [
+        { "type": "object", "properties": { "materialIds": { "type": "array", "items": { "type": "string" } } }, "required": ["materialIds"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "materialIds": { "type": "array", "items": { "type": "string" } },
+          "startLine": { "type": "integer", "minimum": 1 },
+          "maxLines": { "type": "integer", "minimum": 1, "maximum": 5000 }
+        }, "required": ["materialIds", "startLine", "maxLines"], "additionalProperties": false },
+        { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"], "additionalProperties": false },
+        { "type": "object", "properties": { "query": { "type": "string" }, "scope": { "type": "string", "enum": ["task", "workspace-confirmed"] } }, "required": ["query", "scope"], "additionalProperties": false },
+        { "type": "object", "properties": { "url": { "type": "string" } }, "required": ["url"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "expression": { "type": "string" },
+          "inputs": { "type": "array", "items": { "type": "object", "properties": {
+            "name": { "type": "string" }, "value": { "type": "number" }, "sourceRef": { "type": "string" }
+          }, "required": ["name", "value", "sourceRef"], "additionalProperties": false } }
+        }, "required": ["expression", "inputs"], "additionalProperties": false }
+      ] },
+      "reason": { "type": "string" }
+    }, "required": ["id", "tool", "args", "reason"], "additionalProperties": false } }
+  },
+  "required": ["summary", "output", "sources", "claims", "gap", "caveats", "acceptanceChecks", "deliverables", "toolRequests"],
+  "additionalProperties": false
+}

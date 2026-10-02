@@ -1,0 +1,307 @@
+{
+  "id": "writer-note-taking-v6",
+  "revision": "motion-repair-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "role": "writer",
+  "species": "mouse",
+  "action": "noteTaking",
+  "supersedes": "../../seated-work-v5/writer",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "worldAnchor": [
+    304,
+    390
+  ],
+  "frameCount": 14,
+  "frameIndices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13
+  ],
+  "keyframeIndices": [
+    2,
+    5,
+    8,
+    11
+  ],
+  "frameDurationsMs": [
+    420,
+    160,
+    180,
+    150,
+    170,
+    240,
+    150,
+    170,
+    320,
+    170,
+    160,
+    260,
+    180,
+    420
+  ],
+  "cycleDurationMs": 3150,
+  "fallbackFrameDurationMs": 225,
+  "loop": true,
+  "safeSwitchFrameIndices": [
+    0,
+    1,
+    12,
+    13
+  ],
+  "returnTo": null,
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 14,
+    "rows": 1
+  },
+  "fullframePattern": "fullframe/writer-note-taking_{index:02d}.png",
+  "keyframePattern": "keyframe/writer-note-taking_{index:02d}.png",
+  "hitArea": [
+    -27,
+    -182,
+    68,
+    86
+  ],
+  "hitAreaCoordinateSpace": "relative-to-container-anchor",
+  "activeLimb": "screen-left hand with one white feather quill",
+  "anchorLimb": "screen-right hand holding one cream manuscript",
+  "propAndContactContract": "one quill and one manuscript remain attached to their hands for the whole loop",
+  "stationPatch": {
+    "file": "../station-patch/writer-desk-manuscript-dedup.png",
+    "worldPosition": [
+      110,
+      150
+    ],
+    "dedupWorldBBox": [
+      241,
+      239,
+      338,
+      307
+    ]
+  },
+  "layering": [
+    "room base with fixed chair and desk",
+    "station dedup patch",
+    "animated seated character group",
+    "existing desk-front occluder"
+  ],
+  "generation": "Final low-jitter loop uses four tiny poses from one role-specific ImageGen consistency sheet in a forward/back sequence. Other generated sheets remain provenance references but are not mixed into the final loop. Local processing only split, keyed/cleaned alpha, applied one shared scale and fixed anchor, packed, timed, and composited evidence.",
+  "sharedScale": 0.19745222929936307,
+  "sourceHashes": {
+    "baseline": "a788a13ffbe0bc6e9c62384e90a5eba4f3a72ec96fe9b38abfd9df98153e057a",
+    "keyPoseSheet": "d011d9c9907f00d2f9c3c8b19489e2a549cdfe87c947fc324b9cdf918a74e3d2",
+    "inbetweenSheetA": "3bffd2540462977b86b8aed727caa22be9105dee374145a56a8fecf24bf5eaa9",
+    "inbetweenSheetB": "0c7ecda85cf5ffaeaff32213930c5c001b82fd42165d4236ad496244a3383317",
+    "loopSeamSheet": "bd0c62533d6947bb3fc5088b2f363c25acddb759b4b177622b93825059c29e45"
+  },
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 4,
+      "visibleBBox": [
+        46,
+        10,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        93
+      ]
+    },
+    {
+      "frame": 5,
+      "visibleBBox": [
+        46,
+        10,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        93
+      ]
+    },
+    {
+      "frame": 6,
+      "visibleBBox": [
+        46,
+        11,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        92
+      ]
+    },
+    {
+      "frame": 7,
+      "visibleBBox": [
+        46,
+        11,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        92
+      ]
+    },
+    {
+      "frame": 8,
+      "visibleBBox": [
+        46,
+        10,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        93
+      ]
+    },
+    {
+      "frame": 9,
+      "visibleBBox": [
+        46,
+        10,
+        130,
+        103
+      ],
+      "visibleSize": [
+        84,
+        93
+      ]
+    },
+    {
+      "frame": 10,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 11,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 12,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    },
+    {
+      "frame": 13,
+      "visibleBBox": [
+        46,
+        12,
+        129,
+        103
+      ],
+      "visibleSize": [
+        83,
+        91
+      ]
+    }
+  ],
+  "evidence": {
+    "isolatedPreview": "preview.gif",
+    "isolatedPreview30s": "preview-30s.gif",
+    "adjacentFrames": "adjacent-frame-contact-sheet.png",
+    "roomPreview": "room-preview.gif",
+    "roomPreview30s": "room-preview-30s.gif",
+    "roomAdjacentFrames": "room-adjacent-frame-contact-sheet.png"
+  }
+}

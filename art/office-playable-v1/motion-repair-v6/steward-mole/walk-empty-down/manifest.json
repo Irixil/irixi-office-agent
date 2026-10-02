@@ -1,0 +1,90 @@
+{
+  "id": "steward-mole-walk-empty-down-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "action": "walk-empty-down",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "frameCount": 4,
+  "frameDurationsMs": [
+    160,
+    160,
+    160,
+    160
+  ],
+  "cycleDurationMs": 640,
+  "loop": true,
+  "returnTo": null,
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 4,
+    "rows": 1
+  },
+  "fullframePattern": "frames/walk-empty-down_{index:02d}.png",
+  "propOwnershipBeginsFrame": null,
+  "propReleaseAfterFrame": null,
+  "bookStackContract": "exactly three books: green bottom, burgundy middle, navy top; cream pages; no scroll or fourth book",
+  "sharedCharacterScale": 0.26216484607745777,
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        35,
+        54,
+        141,
+        194
+      ],
+      "visibleSize": [
+        106,
+        140
+      ]
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        35,
+        53,
+        141,
+        194
+      ],
+      "visibleSize": [
+        106,
+        141
+      ]
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        35,
+        53,
+        141,
+        194
+      ],
+      "visibleSize": [
+        106,
+        141
+      ]
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        34,
+        52,
+        142,
+        194
+      ],
+      "visibleSize": [
+        108,
+        142
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "walk-empty-down": "8871bfd508426e435fb69a8dfd23dba9140ee65b97c03b4cfe5ce47bc5cc9c81"
+  }
+}

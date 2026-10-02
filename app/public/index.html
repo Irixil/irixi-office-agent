@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#183b32">
   <meta name="description" content="Irixi 1.0 — 目标优先、可审阅、可追溯的个人办公 Agent。">
   <title>Irixi · 维多利亚办公 Agent</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=office-spatial-v1">
 </head>
 <body>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -27,44 +27,50 @@
   <main id="main-content">
     <section id="view-office" class="view is-active" aria-labelledby="office-title">
       <h1 id="office-title" class="visually-hidden">办公室总览</h1>
-      <div class="office-grid">
-        <aside class="task-ledger" aria-label="任务账本">
-          <div class="section-heading ledger-heading">
-            <div><span class="eyebrow">TASK LEDGER</span><h2>任务账本</h2></div>
-            <button class="icon-button" type="button" id="new-task-button" data-open-dialog="task-dialog" aria-label="建立新任务">＋</button>
-          </div>
-          <div id="task-list" class="task-list"></div>
-          <button class="new-task-ribbon" type="button" data-open-dialog="task-dialog">建立一项新工作 <span aria-hidden="true">→</span></button>
-        </aside>
+      <div class="office-shell">
+        <div id="office-game" class="office-game" aria-label="可行走的维多利亚像素办公室。使用方向键或 WASD 移动，点击同事交谈。"></div>
+        <details class="office-float office-float-left office-drawer">
+          <summary class="office-drawer-toggle"><span>任务</span><small>打开账本</small></summary>
+          <aside class="task-ledger office-drawer-panel" aria-label="任务账本">
+            <div class="section-heading ledger-heading">
+              <div><span class="eyebrow">TASK LEDGER</span><h2>任务账本</h2></div>
+              <button class="icon-button" type="button" id="new-task-button" data-open-dialog="task-dialog" aria-label="建立新任务">＋</button>
+            </div>
+            <div id="task-list" class="task-list"></div>
+            <button class="new-task-ribbon" type="button" data-open-dialog="task-dialog">建立一项新工作 <span aria-hidden="true">→</span></button>
+          </aside>
+        </details>
 
         <section class="room-stage" aria-label="Irixi 维多利亚办公室实时状态">
-          <div class="room-image-wrap">
-            <img src="/assets/concepts/irixi-animal-team-office-v2.png" alt="八角形维多利亚办公室，猫头鹰绅士 Irixi 与小动物同事在不同书桌工作">
-            <div class="room-vignette" aria-hidden="true"></div>
-            <div class="office-state-plaque">
-              <span id="room-state-kicker">OFFICE AT REST</span>
-              <strong id="room-state-title">办公室正在等候第一项工作</strong>
+            <details class="office-state-plaque">
+              <summary>
+                <span id="room-state-kicker">OFFICE AT REST</span>
+                <strong id="room-state-title">办公室正在等候第一项工作</strong>
+              </summary>
               <span id="room-state-detail">建立任务后，角色状态会投影到这里。</span>
-            </div>
-          </div>
+            </details>
           <div id="role-strip" class="role-strip" aria-label="角色实时状态"></div>
         </section>
 
-        <aside class="goal-rail" aria-label="当前目标与下一步">
-          <div class="goal-seal"><span>ACTIVE</span><b id="goal-version">—</b></div>
-          <span class="eyebrow">THE GOVERNING AIM</span>
-          <h2>当前目标</h2>
-          <p id="active-goal" class="goal-statement">尚未选择任务。</p>
-          <dl class="goal-meta">
-            <div><dt>成功条件</dt><dd id="success-criteria">—</dd></div>
-            <div><dt>工作边界</dt><dd id="goal-boundaries">—</dd></div>
-          </dl>
-          <div class="next-action-block">
-            <span class="eyebrow">NEXT MOVE</span>
-            <p id="next-action">先建立一项工作。</p>
-          </div>
-          <div id="office-actions" class="button-stack"></div>
-        </aside>
+        <details class="office-float office-float-right office-drawer">
+          <summary class="office-drawer-toggle"><span>目标</span><small>查看下一步</small></summary>
+          <aside class="goal-rail office-drawer-panel" aria-label="当前目标与下一步">
+            <div class="goal-seal"><span>ACTIVE</span><b id="goal-version">—</b></div>
+            <span class="eyebrow">THE GOVERNING AIM</span>
+            <h2>当前目标</h2>
+            <p id="active-goal" class="goal-statement">尚未选择任务。</p>
+            <dl class="goal-meta">
+              <div><dt>成功条件</dt><dd id="success-criteria">—</dd></div>
+              <div><dt>工作边界</dt><dd id="goal-boundaries">—</dd></div>
+            </dl>
+            <div class="next-action-block">
+              <span class="eyebrow">NEXT MOVE</span>
+              <p id="next-action">先建立一项工作。</p>
+            </div>
+            <div id="office-actions" class="button-stack"></div>
+          </aside>
+        </details>
+        <div class="movement-help" aria-hidden="true">WASD / 方向键移动 · 点击同事交谈 · Esc 取消行走</div>
       </div>
     </section>
 
@@ -90,11 +96,12 @@
       <label>任务名称<input name="title" maxlength="160" placeholder="例如：整理本周项目进展" required></label>
       <label>最终目标<textarea name="goal" rows="4" maxlength="4000" placeholder="完成后，什么结果才算真正解决了这件事？" required></textarea></label>
       <div class="two-fields">
-        <label>成果类型<select name="type"><option value="document">办公文档</option><option value="research">研究简报</option><option value="email">邮件草稿</option><option value="calendar">日历草稿</option></select></label>
+        <label>成果类型<select name="type"><option value="general">让规划器按目标判断</option><option value="document">办公文档</option><option value="spreadsheet">电子表格</option><option value="presentation">演示文稿</option><option value="research">研究简报</option><option value="email">邮件草稿</option><option value="calendar">日历草稿</option></select></label>
         <label>起始提供者<select name="provider"><option value="demo">演示提供者（仅体验流程）</option><option value="codex-cli">Codex CLI（真实模型）</option></select></label>
       </div>
       <label>成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" rows="3" placeholder="包含明确结论&#10;能追溯到给定材料"></textarea></label>
       <label>工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" rows="3" placeholder="不自动发送或发布&#10;材料不足时标记待确认"></textarea></label>
+      <label class="checkbox-line"><input type="checkbox" name="memoryPolicy" value="workspace-confirmed"> 允许本任务搜索其他任务中已经由我确认的成果</label>
       <p class="form-disclosure">选择 Codex 后，运行时会把当前任务目标和你加入的材料发送给 Codex 服务；演示提供者不调用模型。</p>
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">建立任务</button></div>
     </form>
@@ -121,8 +128,24 @@
     </form>
   </dialog>
 
+  <dialog id="coworker-dialog" class="ledger-dialog compact-dialog coworker-dialog">
+    <form id="coworker-form" method="dialog">
+      <div class="dialog-heading"><div><span class="eyebrow" id="coworker-role">OFFICE CONVERSATION</span><h2 id="coworker-name">与同事交谈</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+      <p id="coworker-status" class="form-disclosure">Irixi 正在走近，对话现在就可以开始。</p>
+      <div id="coworker-history" class="conversation-history" aria-live="polite"></div>
+      <div id="coworker-actions" class="inline-actions"></div>
+      <label>这次要做什么<select id="coworker-intent" name="intent"><option value="assign">交代工作或补充要求</option><option value="progress">询问当前进度</option><option value="revise">要求修改当前成果</option></select></label>
+      <label>交代事项<textarea id="coworker-message" name="text" rows="4" maxlength="2000" required placeholder="写下你希望这位同事注意的事项"></textarea></label>
+      <input type="hidden" name="role">
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>结束交谈（不取消模型）</button><button class="danger-button" id="cancel-conversation-button" type="button" hidden>取消本次模型回复</button><button class="primary-button" type="submit">发送</button></div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="live-region" class="visually-hidden" aria-live="polite"></div>
-  <script type="module" src="/app.js"></script>
+  <script src="/vendor/phaser.min.js"></script>
+  <script src="/vendor/easystar.min.js"></script>
+    <script type="module" src="/office-game.js?v=office-spatial-v15"></script>
+  <script type="module" src="/app.js?v=office-playable-v2d"></script>
 </body>
 </html>

@@ -1,0 +1,307 @@
+{
+  "id": "researcher-research-writing-v6",
+  "revision": "motion-repair-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "role": "researcher",
+  "species": "hamster",
+  "action": "researchWriting",
+  "supersedes": "../../seated-work-v5/researcher",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "worldAnchor": [
+    240,
+    645
+  ],
+  "frameCount": 14,
+  "frameIndices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13
+  ],
+  "keyframeIndices": [
+    2,
+    5,
+    8,
+    11
+  ],
+  "frameDurationsMs": [
+    480,
+    180,
+    200,
+    160,
+    200,
+    300,
+    170,
+    220,
+    520,
+    180,
+    170,
+    260,
+    180,
+    480
+  ],
+  "cycleDurationMs": 3700,
+  "fallbackFrameDurationMs": 264,
+  "loop": true,
+  "safeSwitchFrameIndices": [
+    0,
+    1,
+    12,
+    13
+  ],
+  "returnTo": null,
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 14,
+    "rows": 1
+  },
+  "fullframePattern": "fullframe/researcher-research-writing_{index:02d}.png",
+  "keyframePattern": "keyframe/researcher-research-writing_{index:02d}.png",
+  "hitArea": [
+    -34,
+    -185,
+    76,
+    92
+  ],
+  "hitAreaCoordinateSpace": "relative-to-container-anchor",
+  "activeLimb": "screen-left hand with one white feather quill",
+  "anchorLimb": "screen-right hand stabilizing one research manuscript",
+  "propAndContactContract": "one quill and one manuscript remain attached; the evidence-reading hold is longest",
+  "stationPatch": {
+    "file": "../station-patch/researcher-desk-manuscript-dedup.png",
+    "worldPosition": [
+      164,
+      515
+    ],
+    "dedupWorldBBox": [
+      164,
+      515,
+      242,
+      580
+    ]
+  },
+  "layering": [
+    "room base with fixed chair and desk",
+    "station dedup patch",
+    "animated seated character group",
+    "existing desk-front occluder"
+  ],
+  "generation": "Final low-jitter loop uses four tiny poses from one role-specific ImageGen consistency sheet in a forward/back sequence. Other generated sheets remain provenance references but are not mixed into the final loop. Local processing only split, keyed/cleaned alpha, applied one shared scale and fixed anchor, packed, timed, and composited evidence.",
+  "sharedScale": 0.2028397565922921,
+  "sourceHashes": {
+    "baseline": "c6af4699e75acc2f2b66e6662809b478b35456604b081008e55f883550e3a3ee",
+    "keyPoseSheet": "f1608f3f4523f009de75284f9f600c95add95b0b126379dce16e91725a122b82",
+    "inbetweenSheetA": "53a1a179c966b02b51c441c698a661aab029232ec9b927998d827fe8bc715bee",
+    "inbetweenSheetB": "d32708af9a41450d6a4bd42b605d6dc77b699800135887c63e0b09ea684d25eb",
+    "loopSeamSheet": "f589748a0cb251a15331dc13da1c434e1575899eab532b37261762e86ea732a9"
+  },
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        38,
+        6,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        100
+      ]
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        38,
+        6,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        100
+      ]
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        38,
+        9,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        97
+      ]
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        38,
+        9,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        97
+      ]
+    },
+    {
+      "frame": 4,
+      "visibleBBox": [
+        38,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        102
+      ]
+    },
+    {
+      "frame": 5,
+      "visibleBBox": [
+        38,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        102
+      ]
+    },
+    {
+      "frame": 6,
+      "visibleBBox": [
+        39,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        98,
+        102
+      ]
+    },
+    {
+      "frame": 7,
+      "visibleBBox": [
+        39,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        98,
+        102
+      ]
+    },
+    {
+      "frame": 8,
+      "visibleBBox": [
+        38,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        102
+      ]
+    },
+    {
+      "frame": 9,
+      "visibleBBox": [
+        38,
+        4,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        102
+      ]
+    },
+    {
+      "frame": 10,
+      "visibleBBox": [
+        38,
+        9,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        97
+      ]
+    },
+    {
+      "frame": 11,
+      "visibleBBox": [
+        38,
+        9,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        97
+      ]
+    },
+    {
+      "frame": 12,
+      "visibleBBox": [
+        38,
+        6,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        100
+      ]
+    },
+    {
+      "frame": 13,
+      "visibleBBox": [
+        38,
+        6,
+        137,
+        106
+      ],
+      "visibleSize": [
+        99,
+        100
+      ]
+    }
+  ],
+  "evidence": {
+    "isolatedPreview": "preview.gif",
+    "isolatedPreview30s": "preview-30s.gif",
+    "adjacentFrames": "adjacent-frame-contact-sheet.png",
+    "roomPreview": "room-preview.gif",
+    "roomPreview30s": "room-preview-30s.gif",
+    "roomAdjacentFrames": "room-adjacent-frame-contact-sheet.png"
+  }
+}

@@ -1,0 +1,481 @@
+{
+  "id": "continuity-repair-v3-validation",
+  "roles": {
+    "writer": {
+      "structuralChecks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScale": true,
+        "manualRegistrationOffsetsRecorded": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "structuralChecksPassed": true,
+      "visualContinuityReview": {
+        "status": "candidate-needs-coordinator-review",
+        "scope": "contact sheet, fixed-guide head/chest check, and room-scale work-rest-work evidence",
+        "note": "Gray-palette source restored; middle poses translated by recorded head/chest landmark offsets. Coordinator review required.",
+        "userAcceptanceStillRequired": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            46,
+            12,
+            129,
+            103
+          ],
+          "visibleSize": [
+            83,
+            91
+          ],
+          "center": [
+            87.5,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            40,
+            11,
+            134,
+            102
+          ],
+          "visibleSize": [
+            94,
+            91
+          ],
+          "center": [
+            87.0,
+            56.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            41,
+            11,
+            133,
+            102
+          ],
+          "visibleSize": [
+            92,
+            91
+          ],
+          "center": [
+            87.0,
+            56.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            48,
+            12,
+            124,
+            103
+          ],
+          "visibleSize": [
+            76,
+            91
+          ],
+          "center": [
+            86.0,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.1758468880225837,
+        "sourceCellBottomBaseline": 629,
+        "placement": [
+          -7,
+          -8
+        ],
+        "targetContentBottom": 103,
+        "manualHeadChestRegistrationOffsets": [
+          [
+            -18,
+            0
+          ],
+          [
+            18,
+            0
+          ]
+        ],
+        "registrationBasis": "hand-selected same-canvas head, both-ear, chest and seated-base landmarks; no bbox centering"
+      }
+    },
+    "researcher": {
+      "structuralChecks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScale": true,
+        "manualRegistrationOffsetsRecorded": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "structuralChecksPassed": true,
+      "visualContinuityReview": {
+        "status": "candidate-needs-coordinator-review",
+        "scope": "contact sheet, fixed-guide head/chest check, and room-scale work-rest-work evidence",
+        "note": "Middle poses translated by recorded head/chest landmark offsets. Coordinator review required.",
+        "userAcceptanceStillRequired": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            38,
+            6,
+            137,
+            106
+          ],
+          "visibleSize": [
+            99,
+            100
+          ],
+          "center": [
+            87.5,
+            56.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            32,
+            5,
+            142,
+            105
+          ],
+          "visibleSize": [
+            110,
+            100
+          ],
+          "center": [
+            87.0,
+            55.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            34,
+            8,
+            136,
+            107
+          ],
+          "visibleSize": [
+            102,
+            99
+          ],
+          "center": [
+            85.0,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            37,
+            8,
+            132,
+            107
+          ],
+          "visibleSize": [
+            95,
+            99
+          ],
+          "center": [
+            84.5,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.18082160705111525,
+        "sourceCellBottomBaseline": 657,
+        "placement": [
+          -10,
+          -13
+        ],
+        "targetContentBottom": 106,
+        "manualHeadChestRegistrationOffsets": [
+          [
+            -27,
+            0
+          ],
+          [
+            26,
+            0
+          ]
+        ],
+        "registrationBasis": "hand-selected same-canvas head, both-ear, chest and seated-base landmarks; no bbox centering"
+      }
+    },
+    "reviewer": {
+      "structuralChecks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScale": true,
+        "manualRegistrationOffsetsRecorded": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "structuralChecksPassed": true,
+      "visualContinuityReview": {
+        "status": "candidate-needs-coordinator-review",
+        "scope": "contact sheet, fixed-guide head/chest check, and room-scale work-rest-work evidence",
+        "note": "Previously stable candidate retained; coordinator review remains authoritative.",
+        "userAcceptanceStillRequired": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            14,
+            16,
+            177,
+            139
+          ],
+          "visibleSize": [
+            163,
+            123
+          ],
+          "center": [
+            95.5,
+            77.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            15,
+            21,
+            177,
+            139
+          ],
+          "visibleSize": [
+            162,
+            118
+          ],
+          "center": [
+            96.0,
+            80.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            13,
+            21,
+            178,
+            139
+          ],
+          "visibleSize": [
+            165,
+            118
+          ],
+          "center": [
+            95.5,
+            80.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            20,
+            28,
+            175,
+            139
+          ],
+          "visibleSize": [
+            155,
+            111
+          ],
+          "center": [
+            97.5,
+            83.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.2392638036809816,
+        "sourceCellBottomBaseline": 646,
+        "placement": [
+          -23,
+          -16
+        ],
+        "targetContentBottom": 139,
+        "manualHeadChestRegistrationOffsets": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "registrationBasis": "hand-selected same-canvas head, both-ear, chest and seated-base landmarks; no bbox centering"
+      }
+    },
+    "archivist": {
+      "structuralChecks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScale": true,
+        "manualRegistrationOffsetsRecorded": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "structuralChecksPassed": true,
+      "visualContinuityReview": {
+        "status": "candidate-needs-coordinator-review",
+        "scope": "contact sheet, fixed-guide head/chest check, and room-scale work-rest-work evidence",
+        "note": "Charcoal/oxblood candidate retained with recorded head/chest registration; coordinator review required.",
+        "userAcceptanceStillRequired": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            34,
+            16,
+            157,
+            136
+          ],
+          "visibleSize": [
+            123,
+            120
+          ],
+          "center": [
+            95.5,
+            76.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            27,
+            9,
+            166,
+            136
+          ],
+          "visibleSize": [
+            139,
+            127
+          ],
+          "center": [
+            96.5,
+            72.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            28,
+            9,
+            167,
+            136
+          ],
+          "visibleSize": [
+            139,
+            127
+          ],
+          "center": [
+            97.5,
+            72.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            26,
+            4,
+            164,
+            136
+          ],
+          "visibleSize": [
+            138,
+            132
+          ],
+          "center": [
+            95.0,
+            70.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.21686746987951808,
+        "sourceCellBottomBaseline": 736,
+        "placement": [
+          0,
+          -24
+        ],
+        "targetContentBottom": 136,
+        "manualHeadChestRegistrationOffsets": [
+          [
+            -6,
+            0
+          ],
+          [
+            5,
+            0
+          ]
+        ],
+        "registrationBasis": "hand-selected same-canvas head, both-ear, chest and seated-base landmarks; no bbox centering"
+      }
+    }
+  },
+  "structuralChecksPassed": true,
+  "visualContinuityReviewPassed": false,
+  "visualContinuityReviewStatus": "candidate-needs-coordinator-review",
+  "userVisualAcceptancePending": true
+}

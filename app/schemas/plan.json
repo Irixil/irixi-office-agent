@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "projectAlignment": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["standalone", "aligned", "conflict"] },
+        "explanation": { "type": "string" }
+      },
+      "required": ["status", "explanation"],
+      "additionalProperties": false
+    },
+    "outputKind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] },
+    "deliverables": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] } },
+    "roles": {
+      "type": "array", "minItems": 1, "maxItems": 8,
+      "items": { "type": "object", "properties": {
+        "key": { "type": "string" }, "name": { "type": "string" }, "mission": { "type": "string" },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "recruitmentReason": { "type": "string" }
+      }, "required": ["key", "name", "mission", "capabilities", "recruitmentReason"], "additionalProperties": false }
+    },
+    "steps": {
+      "type": "array", "minItems": 3, "maxItems": 12,
+      "items": { "type": "object", "properties": {
+        "key": { "type": "string" }, "title": { "type": "string" },
+        "kind": { "type": "string", "enum": ["research", "analysis", "tool", "synthesis", "review", "delivery"] },
+        "role": { "type": "string" }, "dependsOn": { "type": "array", "items": { "type": "string" } },
+        "tools": { "type": "array", "items": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read"] } },
+        "webScope": { "type": "object", "properties": {
+          "queries": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+          "urls": { "type": "array", "maxItems": 12, "items": { "type": "string" } }
+        }, "required": ["queries", "urls"], "additionalProperties": false },
+        "acceptanceCriteria": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "expectedResult": { "type": "string" }
+      }, "required": ["key", "title", "kind", "role", "dependsOn", "tools", "webScope", "acceptanceCriteria", "expectedResult"], "additionalProperties": false }
+    }
+  },
+  "required": ["summary", "projectAlignment", "outputKind", "deliverables", "roles", "steps"],
+  "additionalProperties": false
+}

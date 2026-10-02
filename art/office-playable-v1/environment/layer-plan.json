@@ -1,0 +1,36 @@
+{
+  "coordinateSystem": "960x540 pixels; top-left origin; x right; y down",
+  "drawOrder": [
+    "room-base",
+    "furniture-backs-by-pivot-y",
+    "characters-by-foot-anchor-y",
+    "furniture-fronts-by-occlusion-line",
+    "interaction-effects-and-ui"
+  ],
+  "walkablePolygons": [
+    {
+      "id": "main-octagonal-floor",
+      "points": [[236, 171], [728, 171], [823, 285], [724, 437], [574, 499], [401, 499], [223, 437], [126, 290]]
+    },
+    {
+      "id": "bottom-doorway",
+      "points": [[405, 465], [555, 465], [555, 540], [405, 540]]
+    }
+  ],
+  "doorways": [
+    {"id": "north", "rect": [430, 40, 100, 130], "facing": "up"},
+    {"id": "south", "rect": [405, 465, 150, 75], "facing": "down"}
+  ],
+  "suggestedSpawns": {
+    "player": [480, 420],
+    "hamster": [350, 410],
+    "mole": [625, 410]
+  },
+  "interactionDistance": 40,
+  "notes": [
+    "Treat the polygon coordinates as the first collision pass and tune after in-engine playtest.",
+    "Furniture collision rectangles are local to each sprite and are listed in manifest.json.",
+    "Sort movable sprites by their pivot or foot-anchor y value; do not sort by image top edge.",
+    "Keep collision and interaction shapes independent from the artwork so the room can be rearranged."
+  ]
+}

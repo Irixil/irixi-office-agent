@@ -15,8 +15,23 @@
         "required": ["name", "passed", "evidence", "blocking"],
         "additionalProperties": false
       }
+    },
+    "claimChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimIndex": { "type": "integer", "minimum": 0 },
+          "materialId": { "type": "string" },
+          "locator": { "type": "string", "pattern": "^L[0-9]+-L[0-9]+$" },
+          "verdict": { "type": "string", "enum": ["supported", "unsupported", "uncertain"] },
+          "evidence": { "type": "string" }
+        },
+        "required": ["claimIndex", "materialId", "locator", "verdict", "evidence"],
+        "additionalProperties": false
+      }
     }
   },
-  "required": ["summary", "checks"],
+  "required": ["summary", "checks", "claimChecks"],
   "additionalProperties": false
 }
