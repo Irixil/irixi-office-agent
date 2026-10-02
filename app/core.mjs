@@ -3,6 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { groundingChecks } from './execution.mjs';
+import {
+  applicabilityFingerprintMatches,
+  assertNoCriticalMaterialDecision,
+  ensureMaterialPolicy,
+  materialContext,
+  registerAddedMaterial,
+} from './material-applicability.mjs';
 
 const VALID_TASK_TYPES = new Set(['general', 'document', 'research', 'spreadsheet', 'presentation', 'email', 'calendar']);
 const VALID_SUGGESTIONS = new Set(['support', 'replace', 'deviate', 'unclear']);
@@ -234,6 +241,7 @@ export function acceptGoalReplacement(task, suggestionId, input = {}) {
   if (!nextStatement) throw new Error('请明确填写新目标。');
   if (!nextSuccessCriteria.length) throw new Error('请明确填写新目标的成功条件；不会自动继承旧条件。');
   if (!nextBoundaries.length) throw new Error('请明确填写新目标的工作边界；不会自动继承旧边界。');
+  ensureMaterialPolicy(task, 'goal_replaced');
   for (const item of task.events || []) {
     if (!item.type?.startsWith('conversation.') || item.detail?.goalVersionId) continue;
     item.detail ??= {};
@@ -280,6 +288,8 @@ export function acceptGoalReplacement(task, suggestionId, input = {}) {
 
 export function addMaterial(task, input = {}) {
   const text = cleanText(input.text, 1_500_000);
+  const readyUserMaterial = input.status !== 'failed' && input.generatedEvidence !== true;
+  if (readyUserMaterial) ensureMaterialPolicy(task, 'ready_material_added');
   const material = {
     id: makeId('material'),
     name: cleanText(input.name, 200) || '未命名材料',
@@ -291,14 +301,20 @@ export function addMaterial(task, input = {}) {
     bytes: Number(input.bytes || Buffer.byteLength(text)),
     createdAt: now(),
   };
+  if (input.generatedEvidence === true) material.generatedEvidence = true;
   task.materials.push(material);
+  if (readyUserMaterial) registerAddedMaterial(task, material);
   event(task, 'material.added', `${material.name} 已进入材料账本。`, { materialId: material.id, status: material.status });
+  if (readyUserMaterial && (task.plan || task.workItems?.length || task.artifacts?.some((artifact) => ['candidate', 'confirmed'].includes(artifact.status)))) {
+    invalidateCurrentWork(task, 'material_input_changed', '材料输入已变化；旧计划、在途结果和候选资格已失效，需要按当前材料重新规划。');
+  }
   return material;
 }
 
 export function buildPlan(task) {
   const goal = activeGoal(task);
-  const needsResearch = task.type === 'research' || task.materials.length > 1 || task.materials.some((item) => item.kind === 'url');
+  const applicable = materialContext(task, { includeGeneratedEvidence: false }).effectiveMaterials;
+  const needsResearch = task.type === 'research' || applicable.length > 1 || applicable.some((item) => item.kind === 'url');
   const definitions = [
     ...(needsResearch ? [['researcher', '整理并核对选定材料', '带材料 ID、行号和原文的研究结果']] : []),
     ['writer', task.type === 'email' ? '起草邮件' : task.type === 'calendar' ? '起草日程' : task.type === 'spreadsheet' ? '起草表格候选数据' : task.type === 'presentation' ? '起草演示稿候选内容' : '起草候选成果', '绑定研究结果与来源的候选成果'],
@@ -319,7 +335,8 @@ export function buildPlan(task) {
       goalVersionId: goal.id,
       projectRootGoalVersionId: task.projectRootGoalVersionId || goal.id,
       projectRootInputFingerprint: task.projectRootInputFingerprint || projectInputFingerprint(task),
-      inputMaterialIds: task.materials.filter((material) => material.status === 'ready').map((material) => material.id),
+      materialApplicabilityFingerprint: materialContext(task, { includeGeneratedEvidence: false }).fingerprint,
+      inputMaterialIds: applicable.map((material) => material.id),
       inputSuggestionIds: task.suggestions.filter((suggestion) => (suggestion.goalVersionId || goal.id) === goal.id && suggestion.classification === 'support' && suggestion.status === 'routed').map((suggestion) => suggestion.id),
       dependsOn: [],
       expectedResult: expected,
@@ -338,6 +355,7 @@ export function buildPlan(task) {
 export function createArtifact(task, result, provider, expectedGoalVersionId = activeGoal(task).id) {
   const goal = activeGoal(task);
   if (goal.id !== expectedGoalVersionId) throw new Error('候选成果属于旧目标版本，已拒绝写入当前结果。');
+  assertNoCriticalMaterialDecision(task, '候选成果');
   const version = task.artifacts.length + 1;
   for (const item of task.artifacts) if (item.status === 'candidate') item.status = 'superseded_candidate';
   const artifact = {
@@ -367,6 +385,7 @@ export function createArtifact(task, result, provider, expectedGoalVersionId = a
     goalVersionId: goal.id,
     projectRootGoalVersionId: task.projectRootGoalVersionId || (projectRootId(task) === task.id ? goal.id : null),
     projectRootInputFingerprint: task.projectRootInputFingerprint || (projectRootId(task) === task.id ? projectInputFingerprint(task) : null),
+    materialApplicabilityFingerprint: materialContext(task, { includeGeneratedEvidence: false }).fingerprint,
     workResultIds: task.workItems.filter((item) => item.status === 'completed' && item.result).map((item) => item.id),
     instructionIds: task.suggestions.filter((item) => (item.goalVersionId || goal.id) === goal.id && item.classification === 'support' && item.status === 'routed').map((item) => item.id),
     status: 'candidate',
@@ -412,6 +431,7 @@ export function recordReview(task, artifactId, result) {
   const artifact = task.artifacts.find((item) => item.id === artifactId);
   if (!artifact) throw new Error('找不到要核对的候选成果。');
   assertArtifactInputCurrent(task, artifact);
+  assertNoCriticalMaterialDecision(task, '独立审阅');
   const providedChecks = Array.isArray(result.checks) ? result.checks.map((item) => ({
     name: cleanText(item.name, 120),
     passed: Boolean(item.passed),
@@ -492,6 +512,7 @@ export function recordReview(task, artifactId, result) {
     id: makeId('review'),
     artifactId,
     goalVersionId: artifact.goalVersionId,
+    materialApplicabilityFingerprint: artifact.materialApplicabilityFingerprint ?? null,
     checks,
     summary: passed ? (modelSummary || '候选成果已通过独立核对。') : `宿主最终审阅未通过：${failedBlockingChecks.map((item) => `${item.name}（${item.evidence}）`).join('；')}`.slice(0, 2_000),
     modelSummary,
@@ -516,12 +537,16 @@ export function confirmArtifact(task, artifactId) {
   const artifact = task.artifacts.find((item) => item.id === artifactId);
   if (!artifact) throw new Error('找不到要确认的候选成果。');
   assertArtifactInputCurrent(task, artifact);
+  assertNoCriticalMaterialDecision(task, '确认指定版本');
   if (artifact.goalVersionId !== activeGoal(task).id) throw new Error('这个版本属于旧目标，不能作为当前目标成果确认。');
   if (artifact.status !== 'candidate') throw new Error('只有当前候选版本可以确认。');
   if (['running', 'cancellation_unknown'].includes(task.status)) throw new Error('任务仍有工作在进行，不能使用旧核对结果确认。');
   if (artifact.reviewStatus !== 'passed') throw new Error('这个版本尚未通过独立核对，不能确认。');
   const latestReview = task.reviews.filter((item) => item.artifactId === artifactId).at(-1);
-  if (!latestReview?.passed || latestReview.goalVersionId !== activeGoal(task).id) throw new Error('缺少当前目标下的有效独立审阅。');
+  if (!latestReview?.passed || latestReview.goalVersionId !== activeGoal(task).id
+    || (latestReview.materialApplicabilityFingerprint ?? null) !== (artifact.materialApplicabilityFingerprint ?? null)) {
+    throw new Error('缺少当前目标和材料范围下的有效独立审阅。');
+  }
   if (latestReview.nativeFiles) {
     const reviewed = JSON.stringify(latestReview.nativeFiles);
     const current = JSON.stringify((artifact.nativeFiles || []).filter((file) => file.status === 'ready').map((file) => ({
@@ -541,6 +566,7 @@ export function confirmArtifact(task, artifactId) {
     artifactId,
     artifactVersion: artifact.version,
     goalVersionId: artifact.goalVersionId,
+    materialApplicabilityFingerprint: artifact.materialApplicabilityFingerprint ?? null,
     status: 'confirmed',
     decidedAt: now(),
   };
@@ -579,10 +605,14 @@ export function assertExportAllowed(task, artifactId, approvalId) {
   if (!artifact) throw new Error('找不到要导出的成果。');
   if (artifact.goalVersionId !== activeGoal(task).id) throw new Error('旧目标下的成果不能作为当前目标正式导出。');
   assertArtifactInputCurrent(task, artifact);
+  assertNoCriticalMaterialDecision(task, '导出');
   if (artifact.status !== 'confirmed') throw new Error('只有明确确认的指定版本才能导出。');
   if (artifact.reviewStatus !== 'passed') throw new Error('这个版本当前没有有效的通过核对，不能导出。');
   const latestReview = task.reviews.filter((item) => item.artifactId === artifactId).at(-1);
-  if (!latestReview?.passed || latestReview.goalVersionId !== activeGoal(task).id) throw new Error('缺少当前目标下仍然有效的独立审阅。');
+  if (!latestReview?.passed || latestReview.goalVersionId !== activeGoal(task).id
+    || (latestReview.materialApplicabilityFingerprint ?? null) !== (artifact.materialApplicabilityFingerprint ?? null)) {
+    throw new Error('缺少当前目标和材料范围下仍然有效的独立审阅。');
+  }
   if (latestReview.nativeFiles) {
     const reviewed = JSON.stringify(latestReview.nativeFiles);
     const current = JSON.stringify((artifact.nativeFiles || []).filter((file) => file.status === 'ready').map((file) => ({
@@ -592,7 +622,7 @@ export function assertExportAllowed(task, artifactId, approvalId) {
   }
   const approval = task.approvals.find((item) => {
     if (item.id !== approvalId || item.artifactId !== artifactId || item.status !== 'confirmed') return false;
-    if (item.goalVersionId === artifact.goalVersionId) return true;
+    if (item.goalVersionId === artifact.goalVersionId) return item.materialApplicabilityFingerprint === artifact.materialApplicabilityFingerprint;
     return item.goalVersionId === undefined
       && projectRootId(task) === task.id
       && artifact.projectRootGoalVersionId === undefined
@@ -605,6 +635,16 @@ export function assertExportAllowed(task, artifactId, approvalId) {
 
 export function publicTask(task) {
   const result = structuredClone(task);
+  const materials = materialContext(task);
+  const planningMaterials = materialContext(task, { includeGeneratedEvidence: false });
+  result.materialContext = {
+    policyActive: materials.policyActive,
+    scope: materials.scope,
+    fingerprint: materials.fingerprint,
+    directory: materials.directory,
+    blockingDecisions: materials.blockingDecisions,
+    effectiveMaterialIds: planningMaterials.effectiveMaterials.map((item) => item.id),
+  };
   result.continuity = deriveTaskContinuity(task);
   return result;
 }
@@ -621,6 +661,7 @@ export function assertArtifactInputCurrent(task, artifact) {
     throw new Error('项目根任务的工作交代已在候选生成后变化，请按当前输入重新规划和生成。');
   }
   if (projectRootId(task) !== task.id && !artifact.projectRootInputFingerprint) throw new Error('这个候选没有绑定当前项目输入，请重新规划。');
+  if (!applicabilityFingerprintMatches(task, artifact.materialApplicabilityFingerprint)) throw new Error('材料内容或适用决定已变化，请按当前材料重新规划、生成和核对。');
 }
 
 export function artifactInputIsCurrent(task, artifact) {
@@ -635,6 +676,7 @@ export function artifactInputIsCurrent(task, artifact) {
     return false;
   }
   if (projectRootId(task) !== task.id && !artifact.projectRootInputFingerprint) return false;
+  if (!applicabilityFingerprintMatches(task, artifact.materialApplicabilityFingerprint)) return false;
   return true;
 }
 
@@ -653,7 +695,9 @@ export function deriveTaskContinuity(task) {
     title: readyForDownload && (item.kind === 'delivery' || item.role === 'steward') ? '下载已确认的指定版本' : item.title,
     status: readyForDownload && (item.kind === 'delivery' || item.role === 'steward') ? 'ready_to_export' : item.status,
   }));
+  const materialDecisions = materialContext(task).blockingDecisions;
   const blockers = [
+    ...materialDecisions.map((item) => `材料“${item.name}”需要决定：${item.reason}`),
     ...(task.materials || []).filter((item) => item.status === 'failed').map((item) => `材料“${item.name}”读取失败：${item.error || '未知原因'}`),
     ...(task.workItems || []).filter((item) => ['failed', 'blocked'].includes(item.status)).map((item) => `${item.title}：${item.error || item.status}`),
     ...(task.suggestions || []).filter((item) => item.goalVersionId === goal.id && item.status === 'waiting_user').map((item) => `目标替代建议等待确认：${item.text}`),
@@ -679,6 +723,7 @@ export function deriveTaskContinuity(task) {
   else if (task.status === 'waiting_user' && projectConflict) nextStep = '决定如何让本任务目标与项目根目标对齐；对齐前不会继续执行。';
   else if (task.status === 'waiting_user' && candidate?.reviewStatus === 'passed') nextStep = '审阅当前候选并明确确认、拒绝或提出修改。';
   else if (task.status === 'waiting_user') nextStep = blockers[0] ? `处理等待中的决定：${blockers[0]}` : '处理当前明确等待的用户决定。';
+  else if (materialDecisions.length) nextStep = `可继续规划和不依赖它的研究；形成候选前需决定：${materialDecisions[0].name}（${materialDecisions[0].reason}）`;
   else if (readyForDownload) nextStep = '下载已确认的指定版本。';
   else if (['failed', 'partial', 'cancelled', 'cancellation_unknown'].includes(task.status)
     && ['budget_exhausted', 'permanent_error', 'same_error_exhausted'].includes(task.execution?.stopReason)) {

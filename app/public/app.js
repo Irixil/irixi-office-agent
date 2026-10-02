@@ -1,5 +1,5 @@
 import { synchronizedUrl } from './navigation-state.js';
-import { planInputsChanged, shouldPollTask } from './task-input-state.js';
+import { materialDecisionExpectation, planInputsChanged, shouldPollTask } from './task-input-state.js';
 
 const initialQuery = new URLSearchParams(window.location.search);
 let requestedTaskId = initialQuery.get('task');
@@ -74,6 +74,7 @@ function artifactInputIsCurrent(task, artifact) {
   if (task?.projectRootTaskId && (!artifact?.projectRootGoalVersionId || !artifact?.projectRootInputFingerprint)) return false;
   if (artifact?.projectRootGoalVersionId && task?.projectRootGoalVersionId && artifact.projectRootGoalVersionId !== task.projectRootGoalVersionId) return false;
   if (artifact?.projectRootInputFingerprint && task?.projectRootInputFingerprint && artifact.projectRootInputFingerprint !== task.projectRootInputFingerprint) return false;
+  if ((artifact?.materialApplicabilityFingerprint ?? null) !== (task?.materialContext?.fingerprint ?? null)) return false;
   return true;
 }
 
@@ -287,7 +288,21 @@ async function loadScene() {
 
 function renderMaterials(task) {
   if (!task.materials.length) return '<p class="empty-ledger">尚未加入材料。Irixi 可以使用粘贴文本、TXT/MD、DOCX、可搜索 PDF 和明确网址。</p>';
-  return `<ol class="register-list">${task.materials.map((item, index) => `<li class="register-row"><span class="row-index">${String(index + 1).padStart(2, '0')}</span><div><strong>${esc(item.name)}</strong><p>${esc(item.status === 'ready' ? `${item.source} · ${item.bytes || 0} 字节` : item.error || '读取失败')}</p></div><span class="record-status" data-tone="${item.status === 'ready' ? 'good' : 'bad'}">${item.status === 'ready' ? '可读' : '失败'}</span></li>`).join('')}</ol>`;
+  const directory = new Map((task.materialContext?.directory || []).map((item) => [item.id, item]));
+  return `<p class="field-note material-policy-note">材料原件和历史始终保留。这里决定哪些内容可用于当前目标；“事实参考”表示你允许沿用这份来源，不表示系统已验证整份文档。混合了事实、旧要求和约束的材料请先拆分后分别加入。</p><ol class="register-list">${task.materials.map((item, index) => {
+    const context = directory.get(item.id) || {};
+    const stateLabel = item.status !== 'ready' ? '读取失败' : context.eligible ? '当前可用' : context.eligibility === 'needs_decision' || context.eligibility === 'needs_reconfirmation' ? '需要决定' : '当前排除';
+    const tone = item.status !== 'ready' ? 'bad' : context.eligible ? 'good' : context.eligibility?.startsWith('needs') ? 'warn' : 'muted';
+    const form = item.status === 'ready' && !context.generatedEvidence ? `<form class="material-applicability-form" data-material-applicability="${esc(item.id)}" data-expected-fingerprint="${esc(JSON.stringify(task.materialContext?.fingerprint ?? null))}" data-expected-scope="${esc(JSON.stringify(task.materialContext?.scope || null))}" data-expected-content-sha256="${esc(JSON.stringify(context.contentSha256 || null))}">
+      <label>当前用途<select name="category"><option value="unclassified" ${context.category === 'unclassified' ? 'selected' : ''}>仅限当前目标（未分类）</option><option value="reusable_fact" ${context.category === 'reusable_fact' ? 'selected' : ''}>我明确允许沿用的事实参考</option><option value="goal_specific" ${context.category === 'goal_specific' ? 'selected' : ''}>目标专属材料</option><option value="constraint" ${context.category === 'constraint' ? 'selected' : ''}>需要确认的约束</option></select></label>
+      <label>处理<select name="disposition"><option value="use" ${context.disposition === 'use' ? 'selected' : ''}>用于当前目标</option><option value="pending" ${context.disposition === 'pending' ? 'selected' : ''}>待重新确认</option><option value="exclude" ${context.disposition === 'exclude' ? 'selected' : ''}>不影响交付，暂不使用</option></select></label>
+      <label>影响<select name="impact"><option value="non_blocking" ${context.impact !== 'required_for_delivery' ? 'selected' : ''}>不影响交付</option><option value="required_for_delivery" ${context.impact === 'required_for_delivery' ? 'selected' : ''}>交付前必须决定</option></select></label>
+      <label>用途<input name="purpose" maxlength="500" required value="${esc(context.purpose || '')}" placeholder="例如：核对试用范围"></label>
+      <label>原因<input name="reason" maxlength="1000" value="${esc(context.reason || '')}" placeholder="为何使用、排除或重确认"></label>
+      <button class="secondary-button" type="submit">保存用途决定</button>
+    </form>` : '';
+    return `<li class="register-row material-record"><span class="row-index">${String(index + 1).padStart(2, '0')}</span><div><strong>${esc(item.name)}</strong><p>${esc(item.status === 'ready' ? `${item.source} · ${item.bytes || 0} 字节` : item.error || '读取失败')}</p><small>${esc(context.reason || '')}</small>${form}</div><span class="record-status" data-tone="${tone}">${stateLabel}</span></li>`;
+  }).join('')}</ol>`;
 }
 
 function renderSuggestions(task) {
@@ -690,6 +705,25 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('submit', async (event) => {
+  const materialForm = event.target.closest('[data-material-applicability]');
+  if (materialForm) {
+    event.preventDefault();
+    const data = new FormData(materialForm);
+    const materialId = materialForm.dataset.materialApplicability;
+    const body = {
+      category: data.get('category'), disposition: data.get('disposition'), impact: data.get('impact'),
+      purpose: String(data.get('purpose') || '').trim(), reason: String(data.get('reason') || '').trim(),
+      // These values are the render-time snapshot. Never upgrade an old form to
+      // the newest live task scope while the user is still editing it.
+      ...materialDecisionExpectation(materialForm),
+    };
+    try {
+      await postTaskAction(`materials/${materialId}/applicability`, body);
+      announce('材料用途决定已保存；旧计划与旧候选不会冒充当前结果。');
+      await loadTasks({ preserve: true });
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   const form = event.target.closest('[data-goal-replacement]');
   if (!form) return;
   event.preventDefault();

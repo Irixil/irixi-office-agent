@@ -22,6 +22,7 @@ import {
 } from '../core.mjs';
 import { __test as providerTest } from '../providers.mjs';
 import { __test as serverTest } from '../server.mjs';
+import { bindGeneratedEvidence } from '../material-applicability.mjs';
 import {
   beginWork,
   completeWork,
@@ -462,6 +463,10 @@ test('公开页面精确采集时间不冒充业务日期，其他无来源日�
   material.evidenceSha256 = 'abc123';
   material.locator = 'https://example.com/#sha256=abc123';
   material.evidenceMetadata = { httpStatus: 200, contentType: 'text/html', resolutionMode: 'system-dns' };
+  task.plan = { revision: 1 };
+  const evidenceItem = { id: 'work-web-evidence', goalVersionId: activeGoal(task).id, projectRootGoalVersionId: activeGoal(task).id, sourceContextFingerprint: 'source-web' };
+  task.workItems = [evidenceItem];
+  bindGeneratedEvidence(task, material, evidenceItem);
   const exactMetadata = createArtifact(task, { title: '采集记录', summary: '候选', content: '采集时间：2026-09-30T15:42:31.552Z', sources: [], claims: [] }, 'test');
   const reviewPrompt = providerTest.reviewPrompt(task, exactMetadata);
   assert.match(reviewPrompt, /2026-09-30T15:42:31\.552Z/);

@@ -45,6 +45,15 @@ import {
 import { runAuthorizedTools } from './tools.mjs';
 import { readPublicPage } from './web-tools.mjs';
 import {
+  applicabilityFingerprintMatches,
+  assertNoCriticalMaterialDecision,
+  currentMaterialScope,
+  ensureMaterialPolicy,
+  materialContentSha256,
+  materialContext,
+  recordMaterialDecision,
+} from './material-applicability.mjs';
+import {
   beginWork,
   beginWorkItem,
   completeWork,
@@ -136,6 +145,12 @@ async function hydrateProjectContext(store, task) {
   return copy;
 }
 
+async function normalizeProjectScopeForExplicitWrite(store, task) {
+  const root = projectRootId(task) === task.id ? task : await store.get(projectRootId(task));
+  task.projectRootGoalVersionId = activeGoal(root).id;
+  task.projectRootInputFingerprint = projectInputFingerprint(root);
+}
+
 async function assertProjectGoalFresh(store, task, expectedVersionId = null, expectedInputFingerprint = null) {
   const root = projectRootId(task) === task.id ? task : await store.get(projectRootId(task));
   const rootGoalVersionId = activeGoal(root).id;
@@ -204,6 +219,7 @@ function normalizeRootGoalDecision(tasks, root) {
 
 function invalidateLinkedTaskForRootGoal(task, rootTaskId, rootGoalVersionId, rootInputFingerprint, reason = 'project_goal_replaced') {
   if (task.id === rootTaskId || projectRootId(task) !== rootTaskId) return;
+  ensureMaterialPolicy(task, reason);
   task.projectRootGoalVersionId = rootGoalVersionId;
   task.projectRootInputFingerprint = rootInputFingerprint;
   invalidateCurrentWork(task, reason, reason === 'project_root_instructions_changed'
@@ -229,11 +245,16 @@ async function reconcileProjectInputs(store) {
     const rootGoalVersionId = activeGoal(root).id;
     const rootInputFingerprint = projectInputFingerprint(root);
     if (snapshot.id === root.id) {
-      if (snapshot.projectRootGoalVersionId !== rootGoalVersionId || snapshot.projectRootInputFingerprint !== rootInputFingerprint
-        || (rootGoalDecisionPending(snapshot) && snapshot.status !== 'waiting_user')) {
+      const hasPersistedRootScope = Object.hasOwn(snapshot, 'projectRootGoalVersionId')
+        && Object.hasOwn(snapshot, 'projectRootInputFingerprint');
+      const rootScopeChanged = hasPersistedRootScope
+        && (snapshot.projectRootGoalVersionId !== rootGoalVersionId || snapshot.projectRootInputFingerprint !== rootInputFingerprint);
+      if (rootScopeChanged || (rootGoalDecisionPending(snapshot) && snapshot.status !== 'waiting_user')) {
         await store.mutate(snapshot.id, (task) => {
-          task.projectRootGoalVersionId = activeGoal(task).id;
-          task.projectRootInputFingerprint = projectInputFingerprint(task);
+          if (hasPersistedRootScope) {
+            task.projectRootGoalVersionId = activeGoal(task).id;
+            task.projectRootInputFingerprint = projectInputFingerprint(task);
+          }
           if (rootGoalDecisionPending(task) && task.status !== 'waiting_user') {
             setTaskState(task, 'waiting_user', 'coordinator', '项目根任务正在等待完整目标变更决定；决定完成前关联任务保持暂停。');
           }
@@ -248,6 +269,9 @@ async function reconcileProjectInputs(store) {
       continue;
     }
     if (childPausedForRoot) await store.mutate(snapshot.id, (task) => releaseLinkedTaskFromRootDecision(task, root.id));
+    const hasPersistedRootScope = Object.hasOwn(snapshot, 'projectRootGoalVersionId')
+      && Object.hasOwn(snapshot, 'projectRootInputFingerprint');
+    if (!hasPersistedRootScope) continue;
     if (snapshot.projectRootGoalVersionId === rootGoalVersionId && snapshot.projectRootInputFingerprint === rootInputFingerprint) continue;
     await store.mutate(snapshot.id, (task) => invalidateLinkedTaskForRootGoal(
       task,
@@ -565,6 +589,10 @@ async function callProviderStep(store, providers, taskId, role, method, signal, 
     let callId = null;
     let task;
     if (signal.aborted) { const error = new Error('运行已取消。'); error.code = 'cancelled'; throw error; }
+    if (method === 'generate' || method === 'review') {
+      const current = await store.get(taskId);
+      assertNoCriticalMaterialDecision(current, method === 'review' ? '独立审阅' : '候选成果');
+    }
     if ((await store.get(taskId)).provider === 'codex-cli') {
       const reserved = await store.mutate(taskId, (draft) => {
         const call = reserveModelCall(draft, role);
@@ -578,6 +606,7 @@ async function callProviderStep(store, providers, taskId, role, method, signal, 
     }
     task = await hydrateProjectContext(store, task);
     try {
+      if (method === 'generate' || method === 'review') assertNoCriticalMaterialDecision(task, method === 'review' ? '独立审阅' : '候选成果');
       const artifact = artifactId ? task.artifacts.find((item) => item.id === artifactId) : null;
       const result = method === 'review'
         ? await providers.review(task, artifact, { signal })
@@ -606,6 +635,7 @@ async function callDynamicWork(store, providers, taskId, workItemId, signal, run
       const session = workSession(task, workItemId);
       assertSessionFresh(task, session, { runId });
       if (!item || item.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
+      if (item.kind === 'synthesis') assertNoCriticalMaterialDecision(task, '候选成果');
       const attemptId = `${runId}:${workItemId}:${round + 1}`;
       const input = sessionInput(task, item, toolResults, []);
       markSession(task, workItemId, 'running', { runId, attemptId, input, toolCalls: session.toolCalls || [] });
@@ -780,10 +810,13 @@ function recoverableNativeCandidate(task) {
   if (!session || !session.attemptId?.startsWith(`${task.execution.id}:${item.id}:`)) return null;
   const artifact = task.artifacts?.filter((entry) => entry.goalVersionId === goal.id && entry.status === 'candidate' && entry.reviewStatus === 'pending').at(-1);
   if (!artifact || artifact.provider !== task.provider || task.reviews?.some((review) => review.artifactId === artifact.id)) return null;
+  if (!applicabilityFingerprintMatches(task, artifact.materialApplicabilityFingerprint)
+    || (item.materialApplicabilityFingerprint ?? null) !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint
+    || (session.materialApplicabilityFingerprint ?? null) !== (item.materialApplicabilityFingerprint ?? null)) return null;
   const expectedKinds = task.plan.deliverables || [task.plan.outputKind];
   if (expectedKinds.some((kind) => !artifact.deliverables?.some((entry) => entry.kind === kind && String(entry.content || '').trim()))) return null;
   if ((item.dependsOn || []).some((id) => !artifact.workResultIds.includes(id) || task.workItems.find((entry) => entry.id === id)?.status !== 'completed')) return null;
-  const currentMaterialIds = task.materials.filter((entry) => entry.status === 'ready' && entry.generatedEvidence !== true).map((entry) => entry.id).sort();
+  const currentMaterialIds = materialContext(task, { includeGeneratedEvidence: false }).effectiveMaterials.map((entry) => entry.id).sort();
   const currentSuggestionIds = task.suggestions.filter((entry) => (entry.goalVersionId || goal.id) === goal.id && entry.classification === 'support' && entry.status === 'routed').map((entry) => entry.id).sort();
   if (JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(currentMaterialIds)
     || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(currentSuggestionIds)) return null;
@@ -792,7 +825,8 @@ function recoverableNativeCandidate(task) {
     if (session.nativeCandidate.artifactId !== artifact.id
       || session.nativeCandidate.contentSha256 !== contentSha256
       || session.nativeCandidate.inputFingerprint !== item.inputFingerprint
-      || session.nativeCandidate.sourceContextFingerprint !== item.sourceContextFingerprint) return null;
+      || session.nativeCandidate.sourceContextFingerprint !== item.sourceContextFingerprint
+      || (session.nativeCandidate.materialApplicabilityFingerprint ?? null) !== (item.materialApplicabilityFingerprint ?? null)) return null;
   } else {
     const failedNative = (artifact.nativeFiles || []).filter((entry) => entry.status === 'failed');
     if (!failedNative.length || failedNative.some((entry) => {
@@ -895,6 +929,17 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
     const ready = task.workItems.filter((item) => snapshot.result.readyIds.includes(item.id));
     const reviewItem = ready.find((item) => item.kind === 'review');
     const deliveryItem = ready.find((item) => item.kind === 'delivery');
+    const synthesisBlocked = ready.find((item) => item.kind === 'synthesis') && materialContext(task).blockingDecisions;
+    if (synthesisBlocked?.length) {
+      await store.mutate(taskId, (draft) => {
+        const synthesis = draft.workItems.find((item) => item.kind === 'synthesis' && item.status === 'ready');
+        if (synthesis) { synthesis.status = 'blocked'; synthesis.error = `需要材料决定：${synthesisBlocked.map((item) => item.name).join('、')}`; synthesis.updatedAt = new Date().toISOString(); }
+        if (draft.execution?.phase === 'executing') transitionExecution(draft, 'partial');
+        if (draft.execution) draft.execution.stopReason = 'material_decision_required';
+        setTaskState(draft, 'waiting_user', 'coordinator', `形成候选前需要决定材料用途：${synthesisBlocked.map((item) => `${item.name}（${item.reason}）`).join('；')}`);
+      });
+      return;
+    }
     const runnable = ready.filter((item) => !['review', 'delivery'].includes(item.kind)).slice(0, task.execution.limits.maxConcurrentModelCalls);
 
     if (runnable.length) {
@@ -927,7 +972,9 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
               storedResult = { ...storedResult, artifactId: artifact.id, version: artifact.version };
               session.nativeCandidate = {
                 artifactId: artifact.id, contentSha256: artifactContentSha256(artifact), inputFingerprint: current.inputFingerprint,
-                sourceContextFingerprint: current.sourceContextFingerprint, planRevision: draft.plan.revision, modelCompletedAt: new Date().toISOString(),
+                sourceContextFingerprint: current.sourceContextFingerprint,
+                materialApplicabilityFingerprint: current.materialApplicabilityFingerprint ?? null,
+                planRevision: draft.plan.revision, modelCompletedAt: new Date().toISOString(),
               };
               session.output = structuredClone(storedResult);
               session.updatedAt = new Date().toISOString();
@@ -1053,11 +1100,13 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
 }
 
 function planInputFingerprint(task, projectRootGoalVersionId) {
+  const applicability = materialContext(task, { includeGeneratedEvidence: false });
   return JSON.stringify({
     goalVersionId: activeGoal(task).id,
     projectRootGoalVersionId,
     projectRootInputFingerprint: task.projectRootInputFingerprint || null,
-    materials: task.materials.map((item) => [item.id, item.status, item.createdAt, item.bytes]),
+    materialApplicabilityFingerprint: applicability.fingerprint,
+    materials: applicability.effectiveMaterials.map((item) => [item.id, item.status, item.createdAt, item.bytes, materialContentSha256(item)]),
     suggestions: task.suggestions.map((item) => [item.id, item.classification, item.status, item.correctedAt]),
     provider: task.provider,
   });
@@ -1066,9 +1115,11 @@ function planInputFingerprint(task, projectRootGoalVersionId) {
 function modelPlanInputsChanged(task) {
   if (task.plan?.source !== 'model') return false;
   const goal = activeGoal(task);
-  const materialIds = task.materials.filter((item) => item.status === 'ready' && item.generatedEvidence !== true).map((item) => item.id).sort();
+  const applicability = materialContext(task, { includeGeneratedEvidence: false });
+  const materialIds = applicability.effectiveMaterials.map((item) => item.id).sort();
   const suggestionIds = task.suggestions.filter((item) => (item.goalVersionId || goal.id) === goal.id && item.classification === 'support' && item.status === 'routed').map((item) => item.id).sort();
-  return task.workItems.some((item) => JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(materialIds)
+  return task.workItems.some((item) => (item.materialApplicabilityFingerprint ?? null) !== applicability.fingerprint
+    || JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(materialIds)
     || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(suggestionIds));
 }
 
@@ -1145,9 +1196,11 @@ async function runTask(store, providers, taskId) {
       if (mustRebuild && !dynamic) buildPlan(task);
       const execution = startExecution(task, goal.id);
       if (dynamic) {
-        const currentMaterialIds = task.materials.filter((item) => item.status === 'ready' && item.generatedEvidence !== true).map((item) => item.id).sort();
+        const applicability = materialContext(task, { includeGeneratedEvidence: false });
+        const currentMaterialIds = applicability.effectiveMaterials.map((item) => item.id).sort();
         const currentSuggestionIds = task.suggestions.filter((item) => (item.goalVersionId || goal.id) === goal.id && item.classification === 'support' && item.status === 'routed').map((item) => item.id).sort();
-        const planInputsChanged = task.workItems.some((item) => JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(currentMaterialIds)
+        const planInputsChanged = task.workItems.some((item) => (item.materialApplicabilityFingerprint ?? null) !== applicability.fingerprint
+          || JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(currentMaterialIds)
           || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(currentSuggestionIds));
         if (planInputsChanged) throw new Error('材料或工作交代已变化，请先让规划器按当前输入重新形成计划。');
         for (const item of task.workItems) {
@@ -1159,6 +1212,7 @@ async function runTask(store, providers, taskId) {
             goalVersionId: goal.id, planRevision: task.plan.revision, status: 'planned', input: null, output: null,
             projectRootGoalVersionId: task.projectRootGoalVersionId || goal.id,
             projectRootInputFingerprint: task.projectRootInputFingerprint || null,
+            materialApplicabilityFingerprint: applicability.fingerprint,
             runId: execution.id, attemptId: null, toolCalls: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
             resumedFromRunId: task.executionHistory.at(-1)?.id || null,
           });
@@ -1255,6 +1309,13 @@ async function runTask(store, providers, taskId) {
           return;
         }
         const budget = error.code === 'budget_exhausted';
+        if (error.code === 'material_decision_required') {
+          if (running) failWork(task, running.role, error, 'blocked');
+          if (task.execution && ['executing', 'reviewing'].includes(task.execution.phase)) transitionExecution(task, 'partial');
+          if (task.execution) task.execution.stopReason = 'material_decision_required';
+          setTaskState(task, 'waiting_user', 'coordinator', error.message);
+          return;
+        }
         if (running) failWork(task, running.role, error, budget ? 'blocked' : 'failed');
         if (task.execution && ['executing', 'reviewing'].includes(task.execution.phase)) transitionExecution(task, budget ? 'partial' : 'failed');
         task.execution.stopReason = budget ? 'budget_exhausted' : 'provider_failed';
@@ -1287,9 +1348,11 @@ async function answerOneQueuedConversation(store, providers, taskId, signal) {
       const queuedProjectGoal = queued.projectRootGoalVersionId || (!task.projectRootTaskId ? activeGoal(task).id : null);
       const currentProjectGoal = task.projectRootGoalVersionId || (!task.projectRootTaskId ? activeGoal(task).id : null);
       const queuedInstructions = queued.instructionIds || [];
+      const materialApplicabilityFingerprint = materialContext(task, { includeGeneratedEvidence: false }).fingerprint;
       if (activeGoal(task).id !== queued.goalVersionId || currentProjectGoal !== queuedProjectGoal
         || (queued.projectRootInputFingerprint && task.projectRootInputFingerprint !== queued.projectRootInputFingerprint)
         || JSON.stringify(currentInstructionIds(task).slice().sort()) !== JSON.stringify(queuedInstructions.slice().sort())
+        || (queued.materialApplicabilityFingerprint ?? null) !== materialApplicabilityFingerprint
         || task.provider !== queued.provider || (queued.agentId && !currentAgent)) {
         queued.status = 'stale'; queued.completedAt = new Date().toISOString(); queued.error = '排队消息所属的目标、提供者或团队已变化。';
         event(task, 'conversation.stale', '排队消息所属的目标、提供者或团队已变化，未启动旧回复。', { role: queued.role, agentId: queued.agentId, goalVersionId: queued.goalVersionId, queueId: queued.id });
@@ -1309,9 +1372,10 @@ async function answerOneQueuedConversation(store, providers, taskId, signal) {
       const current = task.conversationQueue?.find((item) => item.id === queued.id);
       if (!current || current.status !== 'running' || activeGoal(task).id !== queued.goalVersionId
         || JSON.stringify(currentInstructionIds(task).slice().sort()) !== JSON.stringify((queued.instructionIds || []).slice().sort())
+        || (queued.materialApplicabilityFingerprint ?? null) !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint
         || task.provider !== queued.provider) throw Object.assign(new Error('排队对话属于旧目标、旧工作交代、旧提供者或已取消回复。'), { code: 'stale_result' });
       current.status = 'completed'; current.completedAt = new Date().toISOString(); current.reply = content;
-      event(task, 'conversation.reply', content, { role: queued.role, agentId: queued.agentId, workItemId: queued.workItemId, kind: reply.kind || 'answer', sourceRefs: Array.isArray(reply.sourceRefs) ? reply.sourceRefs.slice(0, 12) : [], provider: queued.provider, goalVersionId: queued.goalVersionId, projectRootGoalVersionId: queued.projectRootGoalVersionId || null, projectRootInputFingerprint: queued.projectRootInputFingerprint || null, instructionIds: queued.instructionIds || [], queueId: queued.id, requestEventId: queued.requestEventId, content });
+      event(task, 'conversation.reply', content, { role: queued.role, agentId: queued.agentId, workItemId: queued.workItemId, kind: reply.kind || 'answer', sourceRefs: Array.isArray(reply.sourceRefs) ? reply.sourceRefs.slice(0, 12) : [], provider: queued.provider, goalVersionId: queued.goalVersionId, projectRootGoalVersionId: queued.projectRootGoalVersionId || null, projectRootInputFingerprint: queued.projectRootInputFingerprint || null, materialApplicabilityFingerprint: queued.materialApplicabilityFingerprint ?? null, instructionIds: queued.instructionIds || [], queueId: queued.id, requestEventId: queued.requestEventId, content });
     });
   } catch (error) {
     await store.mutate(taskId, (task) => {
@@ -1392,7 +1456,9 @@ function projectOfficeTask(task) {
       title: artifact.title,
       summary: artifact.summary,
       goalStatement: goal?.statement || null,
-      materialIds: task.materials?.filter((item) => item.status === 'ready').map((item) => item.id) || [],
+      effectiveMaterialIds: materialContext(task).effectiveMaterials.map((item) => item.id),
+      materialIds: materialContext(task).effectiveMaterials.map((item) => item.id),
+      allMaterialIds: task.materials?.map((item) => item.id) || [],
       process: {
         taskStatus: task.status,
         executionPhase: task.execution?.phase || null,
@@ -1591,10 +1657,11 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               const projectRootGoalVersionId = task.projectRootGoalVersionId || goalVersionId;
               const projectRootInputFingerprint = task.projectRootInputFingerprint || projectInputFingerprint(task);
               const instructionIds = currentInstructionIds(task);
+              const materialApplicabilityFingerprint = materialContext(task, { includeGeneratedEvidence: false }).fingerprint;
               const provider = task.provider;
               const workItemId = task.workItems.find((item) => item.agentId === knownDynamicAgent?.id && item.status === 'running')?.id || task.workItems.find((item) => item.agentId === knownDynamicAgent?.id)?.id || null;
-              const userEvent = event(task, 'conversation.user', message, { role, agentId: knownDynamicAgent?.id || null, workItemId, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, instructionIds, provider, content: message });
-              const queued = { id: `conversation-${crypto.randomUUID()}`, role, agentId: knownDynamicAgent?.id || null, workItemId, message, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, instructionIds, provider, requestEventId: userEvent.id, status: 'pending', createdAt: new Date().toISOString(), startedAt: null, completedAt: null, reply: null, error: null };
+              const userEvent = event(task, 'conversation.user', message, { role, agentId: knownDynamicAgent?.id || null, workItemId, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, materialApplicabilityFingerprint, instructionIds, provider, content: message });
+              const queued = { id: `conversation-${crypto.randomUUID()}`, role, agentId: knownDynamicAgent?.id || null, workItemId, message, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, materialApplicabilityFingerprint, instructionIds, provider, requestEventId: userEvent.id, status: 'pending', createdAt: new Date().toISOString(), startedAt: null, completedAt: null, reply: null, error: null };
               task.conversationQueue.push(queued); task.conversationQueue = task.conversationQueue.slice(-40);
               event(task, 'conversation.queued', '同事收到了这条消息；当前模型工作到安全切换点后会实际回复。', { role, agentId: queued.agentId, workItemId, goalVersionId, provider, queueId: queued.id, requestEventId: userEvent.id });
               return queued;
@@ -1614,9 +1681,10 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               const projectRootGoalVersionId = task.projectRootGoalVersionId || goalVersionId;
               const projectRootInputFingerprint = task.projectRootInputFingerprint || projectInputFingerprint(task);
               const instructionIds = currentInstructionIds(task);
-              const userEvent = event(task, 'conversation.user', message, { role, agentId, workItemId, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, instructionIds, provider, content: message });
+              const materialApplicabilityFingerprint = materialContext(task, { includeGeneratedEvidence: false }).fingerprint;
+              const userEvent = event(task, 'conversation.user', message, { role, agentId, workItemId, goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, materialApplicabilityFingerprint, instructionIds, provider, content: message });
               event(task, 'conversation.call_started', `${role} 已开始一次${provider === 'demo' ? '演示' : '真实模型'}回复。`, { role, agentId, workItemId, goalVersionId, provider, requestEventId: userEvent.id });
-              return { goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, instructionIds, provider, requestEventId: userEvent.id };
+              return { goalVersionId, projectRootGoalVersionId, projectRootInputFingerprint, materialApplicabilityFingerprint, instructionIds, provider, requestEventId: userEvent.id };
             });
             request = before.result;
             const reply = await providers.converse(await hydrateProjectContext(store, before.task), role, message, { signal: controller.signal });
@@ -1630,6 +1698,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               await assertProjectGoalFresh(store, task, request.projectRootGoalVersionId, request.projectRootInputFingerprint);
               if (activeJobs.get(taskId) !== entry || activeGoal(task).id !== request.goalVersionId
                 || JSON.stringify(currentInstructionIds(task).slice().sort()) !== JSON.stringify(request.instructionIds.slice().sort())
+                || request.materialApplicabilityFingerprint !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint
                 || task.provider !== request.provider) {
                 const error = new Error('对话结果属于旧目标或旧提供者，未写入当前对话。');
                 error.code = 'stale_result';
@@ -1638,7 +1707,8 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               return event(task, 'conversation.reply', content, {
                 role, kind: reply.kind || 'answer', sourceRefs: Array.isArray(reply.sourceRefs) ? reply.sourceRefs.slice(0, 12) : [],
                 provider: request.provider, goalVersionId: request.goalVersionId, projectRootGoalVersionId: request.projectRootGoalVersionId,
-                projectRootInputFingerprint: request.projectRootInputFingerprint, instructionIds: request.instructionIds,
+                projectRootInputFingerprint: request.projectRootInputFingerprint, materialApplicabilityFingerprint: request.materialApplicabilityFingerprint,
+                instructionIds: request.instructionIds,
                 requestEventId: request.requestEventId, content,
               });
             });
@@ -1737,6 +1807,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             }
             const nextRootId = requestedRootId === taskId ? null : requestedRootId;
             if (projectRootId(child) === (nextRootId || child.id)) return child;
+            ensureMaterialPolicy(child, 'project_link_changed');
             if (child.plan || child.workItems?.length || child.execution) invalidateCurrentWork(child, 'project_link_changed', '项目关联已改变；原任务目标和历史保留，旧计划已失效。');
             child.projectRootTaskId = nextRootId;
             child.projectRootGoalVersionId = activeGoal(root).id;
@@ -1748,8 +1819,25 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           activeQueuedReplies.get(taskId)?.controller.abort();
           return json(res, 200, { task: publicTask(await hydrateProjectContext(store, changed.tasks.get(taskId))) });
         }
+        const applicabilityMatch = action.match(/^materials\/([a-z0-9-]+)\/applicability$/);
+        if (applicabilityMatch) {
+          const changed = await store.mutate(taskId, async (task) => {
+            await normalizeProjectScopeForExplicitWrite(store, task);
+            const decision = recordMaterialDecision(task, applicabilityMatch[1], body);
+            invalidateCurrentWork(task, 'material_applicability_changed', '材料适用决定已变化；旧计划、在途结果和候选资格已失效，需要按当前材料重新规划。');
+            event(task, 'material.applicability_decided', `已记录“${task.materials.find((item) => item.id === decision.materialId)?.name || '材料'}”的当前用途：${decision.purpose}`, {
+              materialId: decision.materialId, decisionId: decision.id, category: decision.category,
+              disposition: decision.disposition, impact: decision.impact, materialApplicabilityFingerprint: materialContext(task, { includeGeneratedEvidence: false }).fingerprint,
+            });
+            return decision;
+          });
+          activeJobs.get(taskId)?.controller.abort();
+          activeQueuedReplies.get(taskId)?.controller.abort();
+          return json(res, 200, { task: publicTask(changed.task), decision: changed.result });
+        }
         if (action === 'materials/text') {
           const changed = await store.mutate(taskId, (task) => addMaterial(task, { name: body.name || '粘贴文本', kind: 'text', source: 'user-paste', text: body.text }));
+          activeJobs.get(taskId)?.controller.abort(); activeQueuedReplies.get(taskId)?.controller.abort();
           return json(res, 201, { task: publicTask(changed.task), material: changed.result });
         }
         if (action === 'materials/file') {
@@ -1760,12 +1848,14 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             return json(res, 422, { error: { code: 'material_parse_failed', message: error.message }, task: publicTask(changed.task) });
           }
           const changed = await store.mutate(taskId, (task) => addMaterial(task, parsed));
+          activeJobs.get(taskId)?.controller.abort(); activeQueuedReplies.get(taskId)?.controller.abort();
           return json(res, 201, { task: publicTask(changed.task), material: changed.result });
         }
         if (action === 'materials/url') {
           try {
             const fetched = await publicPageReader(body.url, { maxBytes: MAX_MATERIAL_BYTES, timeoutMs: 15_000 });
             const changed = await store.mutate(taskId, (task) => addMaterial(task, { name: body.name || new URL(fetched.finalUrl).hostname, kind: 'url', source: fetched.finalUrl, text: fetched.text, bytes: fetched.bytes }));
+            activeJobs.get(taskId)?.controller.abort(); activeQueuedReplies.get(taskId)?.controller.abort();
             return json(res, 201, { task: publicTask(changed.task), material: changed.result });
           } catch (error) {
             const changed = await store.mutate(taskId, (task) => addMaterial(task, { name: body.name || body.url || '网址', kind: 'url', source: body.url, status: 'failed', error: error.message }));
@@ -1826,7 +1916,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           if (planStale) {
             const planned = await planTask(store, providers, taskId);
             snapshot = planned.task;
-            if (snapshot.status === 'waiting_user' || !snapshot.plan || !snapshot.workItems.length) {
+            if (snapshot.status === 'waiting_user' || !snapshot.workItems.length || (snapshot.provider === 'codex-cli' && !snapshot.plan)) {
               return json(res, 200, { task: publicTask(await hydrateProjectContext(store, snapshot)), action: 'await_user', message: deriveTaskContinuity(snapshot).progress.nextStep });
             }
           }

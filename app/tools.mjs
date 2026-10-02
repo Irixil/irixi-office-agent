@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { addMaterial } from './core.mjs';
+import { assertMaterialEligible, bindGeneratedEvidence, materialContext } from './material-applicability.mjs';
 import { readPublicPage, searchPublicWeb } from './web-tools.mjs';
 
 const asciiFold = (value) => String(value || '').replaceAll(/[A-Z]/g, (character) => character.toLowerCase());
@@ -136,7 +137,7 @@ function searchMaterials(task, item, query) {
   const terms = queryTerms(task, item, query);
   if (!terms.length) return [];
   const matches = [];
-  const readyMaterials = task.materials.filter((entry) => entry.status === 'ready');
+  const readyMaterials = materialContext(task).effectiveMaterials;
   for (let materialIndex = 0; materialIndex < readyMaterials.length; materialIndex += 1) {
     const material = readyMaterials[materialIndex];
     const lines = String(material.text || '').split(/\r?\n/);
@@ -197,9 +198,7 @@ function readMaterialPackets(task, args = {}, maxChars = 120_000) {
   if (!requestedIds.length) throw new Error('材料读取必须提供至少一个 materialId。');
   if (requestedIds.length > 12) throw new Error('一次最多读取 12 份材料。');
   const materials = requestedIds.map((materialId) => {
-    const material = task.materials.find((entry) => entry.id === materialId && entry.status === 'ready');
-    if (!material) throw new Error(`材料 ${materialId} 不存在或不可读。`);
-    return material;
+    return assertMaterialEligible(task, materialId);
   });
   const startLine = Number.isInteger(args.startLine) ? args.startLine : 1;
   const maxLines = Number.isInteger(args.maxLines) ? args.maxLines : 2_000;
@@ -295,8 +294,7 @@ export function safeCalculate(expression) {
 function sourceValue(task, sourceRef, value) {
   const match = /^material:([^#]+)#L(\d+)-L(\d+)$/.exec(String(sourceRef || ''));
   if (!match) throw new Error('计算输入必须引用 material:<id>#Lx-Ly。');
-  const material = task.materials.find((entry) => entry.id === match[1] && entry.status === 'ready');
-  if (!material) throw new Error('计算输入引用的材料不存在或不可读。');
+  const material = assertMaterialEligible(task, match[1]);
   const start = Number(match[2]);
   const end = Number(match[3]);
   const lines = String(material.text || '').split(/\r?\n/);
@@ -341,6 +339,7 @@ export async function searchMemory(store, task, item, query, requestedScope = 't
         source: `task:${candidate.id}/artifact:${artifact.id}/v${artifact.version}`,
         confirmedAt: artifact.confirmedAt || null,
         status: 'confirmed',
+        goalVersionId: artifact.goalVersionId || null,
         content: String(artifact.content || ''),
         searchable: `${artifact.title || ''} ${artifact.summary || ''} ${artifact.content || ''}`,
         _order: taskIndex,
@@ -363,6 +362,7 @@ export async function searchMemory(store, task, item, query, requestedScope = 't
         content,
         searchable: `${entry.title || ''} ${backingArtifact?.summary || ''} ${content}`,
         confirmedAt: backingArtifact?.confirmedAt || null,
+        goalVersionId: entry.goalVersionId || backingArtifact?.goalVersionId || null,
         _order: taskIndex,
       });
     }
@@ -385,8 +385,10 @@ export async function searchMemory(store, task, item, query, requestedScope = 't
     const allPeerSources = [...new Set(peers.map((peer) => peer.source).filter(Boolean))];
     const peerSources = boundedConflictSources(allPeerSources);
     results.push({
+      use: 'reference-only',
       scope: document.scope,
       taskId: document.taskId,
+      goalVersionId: document.goalVersionId,
       ...(document.memoryId ? { memoryId: document.memoryId } : {}),
       ...(document.artifactId ? { artifactId: document.artifactId } : {}),
       artifactVersion: document.artifactVersion,
@@ -473,9 +475,7 @@ export async function runAuthorizedTools(store, task, item, requests = [], { sig
         const stored = await store.mutate(task.id, (draft) => {
           let material = draft.materials.find((entry) => entry.generatedEvidence === true && entry.evidenceSha256 === page.sha256 && entry.source === page.finalUrl);
           if (!material) {
-            material = addMaterial(draft, { name: page.title || new URL(page.finalUrl).hostname, kind: 'url', source: page.finalUrl, text: page.text, bytes: page.bytes });
-            material.generatedEvidence = true;
-            material.evidenceForWorkItemId = item.id;
+            material = addMaterial(draft, { name: page.title || new URL(page.finalUrl).hostname, kind: 'url', source: page.finalUrl, text: page.text, bytes: page.bytes, generatedEvidence: true });
             material.evidenceSha256 = page.sha256;
             material.fetchedAt = page.fetchedAt;
             material.locator = page.locator;
@@ -485,6 +485,7 @@ export async function runAuthorizedTools(store, task, item, requests = [], { sig
               resolutionMode: page.resolutionMode || null,
             };
           }
+          bindGeneratedEvidence(draft, material, item);
           return structuredClone(material);
         });
         const material = stored.result;

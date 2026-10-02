@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
-import { activeGoal, deriveTaskContinuity, event, makeId, setTaskState } from './core.mjs';
+import { activeGoal, artifactInputIsCurrent, deriveTaskContinuity, event, makeId, setTaskState } from './core.mjs';
+import { materialContext } from './material-applicability.mjs';
 
 const VALID_KINDS = new Set(['research', 'analysis', 'tool', 'synthesis', 'review', 'delivery']);
 const SAFE_TOOL_NAMES = new Set(['materials.read', 'materials.search', 'memory.search', 'calculate', 'web.search', 'web.read']);
@@ -107,6 +108,27 @@ function previousCompletedByKey(task) {
     .map((item) => [item.stepKey, item]));
 }
 
+function workItemUsesGeneratedEvidence(task, item) {
+  if (!item) return false;
+  if ((item.tools || []).some((tool) => tool.startsWith('web.'))) return true;
+  const resultText = item.result ? JSON.stringify(item.result) : '';
+  return (task.materials || []).some((material) => material.generatedEvidence === true
+    && (resultText.includes(material.id) || (material.source && resultText.includes(material.source))));
+}
+
+function workItemGeneratedEvidenceIsCurrent(task, item) {
+  if (!workItemUsesGeneratedEvidence(task, item)) return true;
+  const directory = new Map(materialContext(task).directory.map((entry) => [entry.id, entry]));
+  const resultText = item.result ? JSON.stringify(item.result) : '';
+  return (task.materials || []).some((material) => {
+    if (material.generatedEvidence !== true || directory.get(material.id)?.eligible !== true) return false;
+    const bindings = Array.isArray(material.evidenceBindings) ? material.evidenceBindings : material.evidenceForWorkItemId ? [{ workItemId: material.evidenceForWorkItemId }] : [];
+    if (bindings.some((binding) => binding.workItemId === item.id)) return true;
+    return !task.materialApplicability && bindings.length === 0
+      && (resultText.includes(material.id) || (material.source && resultText.includes(material.source)));
+  });
+}
+
 function stationForRole(role, steps) {
   const text = `${role.key} ${role.name} ${role.mission} ${(role.capabilities || []).join(' ')} ${steps.filter((step) => step.role === role.key).map((step) => `${step.kind} ${step.title}`).join(' ')}`.toLowerCase();
   const ownedKinds = new Set(steps.filter((step) => step.role === role.key).map((step) => step.kind));
@@ -162,19 +184,27 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
   });
   const idByKey = new Map(validated.steps.map((step) => [step.key, makeId('work')]));
   const fingerprintByKey = new Map();
-  const materialFingerprint = task.materials.filter((material) => material.status === 'ready' && material.generatedEvidence !== true).map((material) => ({
+  const applicability = materialContext(task, { includeGeneratedEvidence: false });
+  const materialFingerprint = applicability.effectiveMaterials.map((material) => ({
     id: material.id, bytes: material.bytes, createdAt: material.createdAt,
     contentSha256: crypto.createHash('sha256').update(String(material.text || '')).digest('hex'),
   }));
   const instructionFingerprint = task.suggestions.filter((suggestion) => (suggestion.goalVersionId || goal.id) === goal.id && suggestion.classification === 'support' && suggestion.status === 'routed').map((suggestion) => ({ id: suggestion.id, text: suggestion.text }));
   const projectRootGoalVersionId = task.projectRootGoalVersionId || goal.id;
   const projectRootInputFingerprint = task.projectRootInputFingerprint || null;
-  const sourceContextFingerprint = crypto.createHash('sha256').update(JSON.stringify({ goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint, materialFingerprint, instructionFingerprint })).digest('hex');
+  const applicabilityFingerprintPart = applicability.policyActive
+    ? { materialApplicabilityFingerprint: applicability.fingerprint }
+    : {};
+  const sourceContextFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+    goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint,
+    ...applicabilityFingerprintPart, materialFingerprint, instructionFingerprint,
+  })).digest('hex');
   const fingerprintFor = (step) => {
     if (fingerprintByKey.has(step.key)) return fingerprintByKey.get(step.key);
     const dependencyFingerprints = step.dependsOn.map((key) => fingerprintFor(validated.steps.find((candidate) => candidate.key === key)));
     const value = crypto.createHash('sha256').update(JSON.stringify({
-      goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint, step, materialFingerprint, instructionFingerprint, dependencyFingerprints,
+      goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint,
+      ...applicabilityFingerprintPart, step, materialFingerprint, instructionFingerprint, dependencyFingerprints,
     })).digest('hex');
     fingerprintByKey.set(step.key, value);
     return value;
@@ -182,14 +212,15 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
   const workItems = validated.steps.map((step) => {
     const prior = previousByKey.get(step.key);
     const inputFingerprint = fingerprintFor(step);
-    const reused = Boolean(prior && prior.kind === step.kind && prior.inputFingerprint === inputFingerprint && !['synthesis', 'review', 'delivery'].includes(step.kind));
+    const reused = Boolean(prior && !workItemUsesGeneratedEvidence(task, prior) && prior.kind === step.kind && prior.inputFingerprint === inputFingerprint && !['synthesis', 'review', 'delivery'].includes(step.kind));
     return {
       id: idByKey.get(step.key), stepKey: step.key, title: step.title, kind: step.kind,
       role: step.role, agentId: roleMap.get(step.role).id,
       status: reused ? 'completed' : 'pending', goalVersionId: goal.id,
       projectRootGoalVersionId,
       projectRootInputFingerprint,
-      inputMaterialIds: task.materials.filter((material) => material.status === 'ready' && material.generatedEvidence !== true).map((material) => material.id),
+      inputMaterialIds: applicability.effectiveMaterials.map((material) => material.id),
+      materialApplicabilityFingerprint: applicability.fingerprint,
       inputSuggestionIds: task.suggestions.filter((suggestion) => (suggestion.goalVersionId || goal.id) === goal.id && suggestion.classification === 'support' && suggestion.status === 'routed').map((suggestion) => suggestion.id),
       dependsOn: step.dependsOn.map((key) => idByKey.get(key)), dependencyKeys: step.dependsOn,
       tools: step.tools, acceptanceCriteria: step.acceptanceCriteria, expectedResult: step.expectedResult, webScope: step.webScope,
@@ -225,6 +256,7 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
       goalVersionId: goal.id, planRevision: revision, status: 'planned', input: null, output: null,
       projectRootGoalVersionId,
       projectRootInputFingerprint,
+      materialApplicabilityFingerprint: applicability.fingerprint,
       runId: null, attemptId: null, toolCalls: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
@@ -237,6 +269,7 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
     id: makeId('plan'), revision, source: 'model', goalVersionId: goal.id, summary: validated.summary,
     projectRootGoalVersionId,
     projectRootInputFingerprint,
+    materialApplicabilityFingerprint: applicability.fingerprint,
     outputKind: validated.outputKind, deliverables: validated.deliverables, projectAlignment: validated.projectAlignment, roleKeys: validated.roles.map((role) => role.key),
     stepKeys: validated.steps.map((step) => step.key), reason, createdAt: new Date().toISOString(),
   };
@@ -279,6 +312,83 @@ export function workSession(task, workItemId) {
   return task.agentSessions?.findLast((session) => session.workItemId === workItemId) || null;
 }
 
+function workItemMatchesArtifact(task, item, artifact) {
+  const goal = activeGoal(task);
+  const projectRootGoalVersionId = artifact.projectRootGoalVersionId || (!task.projectRootTaskId ? artifact.goalVersionId : null);
+  const projectRootInputFingerprint = artifact.projectRootInputFingerprint || null;
+  const itemProjectRootGoalVersionId = item?.projectRootGoalVersionId || (!task.projectRootTaskId ? goal.id : null);
+  const itemProjectRootInputFingerprint = item?.projectRootInputFingerprint || null;
+  return item?.status === 'completed'
+    && item.goalVersionId === artifact.goalVersionId
+    && itemProjectRootGoalVersionId === projectRootGoalVersionId
+    && itemProjectRootInputFingerprint === projectRootInputFingerprint
+    && (item.materialApplicabilityFingerprint ?? null) === (artifact.materialApplicabilityFingerprint ?? null);
+}
+
+function completedSessionForArtifact(task, item, artifact, planRevision = null) {
+  const session = (task.agentSessions || []).findLast((candidate) => candidate.workItemId === item.id
+    && candidate.status === 'completed' && (planRevision === null || candidate.planRevision === planRevision)) || null;
+  if (!session) return null;
+  const projectRootGoalVersionId = artifact.projectRootGoalVersionId || (!task.projectRootTaskId ? artifact.goalVersionId : null);
+  const projectRootInputFingerprint = artifact.projectRootInputFingerprint || null;
+  const sessionProjectRootGoalVersionId = session.projectRootGoalVersionId || (!task.projectRootTaskId ? artifact.goalVersionId : null);
+  const sessionProjectRootInputFingerprint = session.projectRootInputFingerprint || null;
+  if (session.goalVersionId !== artifact.goalVersionId
+    || sessionProjectRootGoalVersionId !== projectRootGoalVersionId
+    || sessionProjectRootInputFingerprint !== projectRootInputFingerprint
+    || (session.materialApplicabilityFingerprint ?? null) !== (artifact.materialApplicabilityFingerprint ?? null)) return null;
+  return session;
+}
+
+export function candidateDependencyEvidence(task, artifact) {
+  if (!artifact || !artifactInputIsCurrent(task, artifact)) return [];
+  const snapshots = [
+    { items: task.workItems || [], archived: false },
+    ...(task.workHistory || []).slice().reverse().map((entry) => ({ items: entry.items || [], archived: true })),
+  ];
+  const chain = snapshots.find((snapshot) => snapshot.items.some((item) => item.kind === 'synthesis'
+    && item.result?.artifactId === artifact.id && workItemMatchesArtifact(task, item, artifact))) || snapshots[0];
+  const chainItems = chain.items;
+  const chainById = new Map(chainItems.map((item) => [item.id, item]));
+  const synthesis = chainItems.find((item) => item.kind === 'synthesis'
+    && item.result?.artifactId === artifact.id && workItemMatchesArtifact(task, item, artifact)) || null;
+  const synthesisSession = synthesis ? completedSessionForArtifact(task, synthesis, artifact) : null;
+  const planRevision = synthesisSession?.planRevision ?? null;
+  const dependencyIds = new Set();
+  const collectDependencies = (item) => {
+    for (const dependencyId of item?.dependsOn || []) {
+      if (dependencyIds.has(dependencyId)) continue;
+      dependencyIds.add(dependencyId);
+      collectDependencies(chainById.get(dependencyId));
+    }
+  };
+  if (synthesis) collectDependencies(synthesis);
+  else for (const workItemId of artifact.workResultIds || []) dependencyIds.add(workItemId);
+  const artifactResultIds = new Set(artifact.workResultIds || []);
+  return [...dependencyIds]
+    .map((workItemId) => chainById.get(workItemId))
+    .filter((item) => artifactResultIds.has(item?.id)
+      && (['research', 'analysis'].includes(item?.kind) || (!task.plan?.source && !item?.kind))
+      && item.result
+      && workItemMatchesArtifact(task, item, artifact)
+      && (!synthesis || item.sourceContextFingerprint === synthesis.sourceContextFingerprint)
+      && (!chain.archived || !workItemUsesGeneratedEvidence(task, item))
+      && workItemGeneratedEvidenceIsCurrent(task, item))
+    .map((item) => {
+      const session = completedSessionForArtifact(task, item, artifact, planRevision);
+      return {
+        workItemId: item.id,
+        stepKey: item.stepKey || null,
+        kind: item.kind,
+        role: item.role,
+        title: item.title,
+        result: structuredClone(item.result),
+        sessionId: session?.id || null,
+        successfulToolCalls: (session?.toolCalls || []).filter((call) => call.ok === true).map((call) => structuredClone(call)),
+      };
+    });
+}
+
 export function validateWorkResult(item, result, { toolCalls = [] } = {}) {
   const requests = Array.isArray(result?.toolRequests) ? result.toolRequests : [];
   const output = clean(result?.output, 1_500_000);
@@ -303,10 +413,12 @@ export function validateWorkResult(item, result, { toolCalls = [] } = {}) {
 }
 
 export function sessionInput(task, item, toolResults = [], memories = []) {
+  const applicability = materialContext(task);
   const dependencies = (item.dependsOn || []).map((id) => task.workItems.find((candidate) => candidate.id === id)).filter(Boolean)
     .map((candidate) => ({ stepKey: candidate.stepKey, title: candidate.title, role: candidate.role, result: candidate.result }));
   const priorSameStep = (task.workHistory || []).flatMap((entry) => entry.items || [])
     .filter((candidate) => candidate.status === 'completed' && candidate.result && candidate.goalVersionId === activeGoal(task).id && candidate.sourceContextFingerprint === item.sourceContextFingerprint)
+    .filter((candidate) => !workItemUsesGeneratedEvidence(task, candidate))
     .filter((candidate) => candidate.stepKey === item.stepKey)
     .at(-1);
   const historicalCompletedEvidence = priorSameStep ? [{
@@ -326,10 +438,8 @@ export function sessionInput(task, item, toolResults = [], memories = []) {
     continuity: deriveTaskContinuity(task),
     linkedTaskContext: task.linkedTaskContext || null,
     workItem: { stepKey: item.stepKey, title: item.title, kind: item.kind, role: item.role, expectedResult: item.expectedResult, acceptanceCriteria: item.acceptanceCriteria, allowedTools: item.tools || [], webScope: item.webScope || null },
-    materialDirectory: task.materials.map((material) => ({
-      id: material.id, name: material.name, kind: material.kind, source: material.source, status: material.status, bytes: material.bytes,
-      metadata: material.generatedEvidence === true ? { evidenceType: 'web-read', fetchedAt: material.fetchedAt || null, contentSha256: material.evidenceSha256 || null } : null,
-    })),
+    materialApplicability: { fingerprint: applicability.fingerprint, blockingDecisions: applicability.blockingDecisions },
+    materialDirectory: applicability.directory,
     dependencies, historicalCompletedEvidence,
     candidateArtifact: candidateArtifact ? {
       id: candidateArtifact.id, version: candidateArtifact.version, title: candidateArtifact.title,
@@ -356,7 +466,8 @@ export function assertSessionFresh(task, session, { runId = null, attemptId = nu
   const projectRootInputFingerprint = task.projectRootInputFingerprint || null;
   const sessionProjectInputFingerprint = session?.projectRootInputFingerprint || (!task.projectRootTaskId ? projectRootInputFingerprint : null);
   if (!session || session.goalVersionId !== activeGoal(task).id || sessionProjectGoalVersionId !== projectRootGoalVersionId
-    || sessionProjectInputFingerprint !== projectRootInputFingerprint || session.planRevision !== task.plan?.revision) {
+    || sessionProjectInputFingerprint !== projectRootInputFingerprint || session.planRevision !== task.plan?.revision
+    || (session.materialApplicabilityFingerprint ?? null) !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint) {
     const error = new Error('代理会话属于旧目标或旧计划，结果已拒绝写入。');
     error.code = 'stale_result';
     throw error;
@@ -372,4 +483,4 @@ export function planFingerprint(task) {
   return crypto.createHash('sha256').update(JSON.stringify({ goal: activeGoal(task), plan: task.plan, work: task.workItems.map((item) => ({ key: item.stepKey, status: item.status, result: item.result })) })).digest('hex');
 }
 
-export const __test = { SAFE_TOOL_NAMES, VALID_KINDS, assertAcyclic };
+export const __test = { SAFE_TOOL_NAMES, VALID_KINDS, assertAcyclic, workItemUsesGeneratedEvidence };

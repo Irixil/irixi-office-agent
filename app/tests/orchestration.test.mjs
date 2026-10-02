@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { addMaterial, createStore, createTask } from '../core.mjs';
+import { activeGoal, addMaterial, createStore, createTask } from '../core.mjs';
 import { applyModelPlan, sessionInput, validateModelPlan, validateWorkResult } from '../orchestration.mjs';
 import { runAuthorizedTools, safeCalculate } from '../tools.mjs';
 
@@ -353,7 +353,9 @@ test('公开网页工具仅执行计划预声明的查询和网址，读到正�
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const store = createStore(root); await store.init();
   const task = createTask({ goal: '研究公开官网上的 Example 资料', provider: 'codex-cli' });
-  const item = { id: 'work-web', tools: ['web.search', 'web.read'], webScope: { queries: ['Example official source'], urls: [] } };
+  const item = { id: 'work-web', goalVersionId: activeGoal(task).id, projectRootGoalVersionId: activeGoal(task).id, sourceContextFingerprint: 'source-web', tools: ['web.search', 'web.read'], webScope: { queries: ['Example official source'], urls: [] } };
+  task.plan = { revision: 1 };
+  task.workItems = [item];
   task.agentSessions = [{ id: 'session-web', workItemId: item.id, toolCalls: [] }];
   await store.save(task);
   let searchCalls = 0;

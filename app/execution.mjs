@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { assertMaterialEligible, materialContext } from './material-applicability.mjs';
 
 // Adapted from OpenOffice phase-machine.ts and retry.ts at
 // 5b0246c396aed041c5262ab0132623bf2b8b067b. The original MIT license is
@@ -242,10 +243,10 @@ export function finishModelCall(task, callId, { status = 'completed', usage = 'u
   return call;
 }
 
-export function sourcePackets(task, maxChars = 120_000) {
+export function sourcePackets(task, maxChars = 120_000, options = {}) {
   let remaining = maxChars;
   const packets = [];
-  for (const material of task.materials.filter((item) => item.status === 'ready')) {
+  for (const material of materialContext(task, options).effectiveMaterials) {
     if (remaining <= 0) break;
     const lines = String(material.text || '').split(/\r?\n/);
     const selected = [];
@@ -320,8 +321,9 @@ function criticalTokens(value) {
 }
 
 export function validateClaim(task, claim) {
-  const material = task.materials.find((item) => item.id === claim?.materialId && item.status === 'ready');
-  if (!material) return { passed: false, reason: '来源材料不存在或不可读。' };
+  let material;
+  try { material = assertMaterialEligible(task, claim?.materialId); }
+  catch (error) { return { passed: false, reason: error.message }; }
   if (claim.sourceName !== material.name) return { passed: false, reason: '来源名称与材料 ID 不匹配。' };
   const selected = locatorText(material, claim.locator);
   if (selected === null) return { passed: false, reason: '来源行号无效。' };
@@ -335,7 +337,7 @@ export function validateClaim(task, claim) {
 
 export function validateResearchResult(task, result) {
   const observations = Array.isArray(result?.observations) ? result.observations : [];
-  const ready = task.materials.filter((item) => item.status === 'ready');
+  const ready = materialContext(task).effectiveMaterials;
   const checks = observations.map((claim) => validateClaim(task, claim));
   const covered = new Set(observations.filter((_, index) => checks[index]?.passed).map((item) => item.materialId));
   const missingMaterials = ready.filter((item) => !covered.has(item.id));
@@ -350,7 +352,7 @@ export function validateResearchResult(task, result) {
 
 export function groundingChecks(task, artifact) {
   const claims = Array.isArray(artifact.claims) ? artifact.claims : [];
-  const ready = task.materials.filter((item) => item.status === 'ready');
+  const ready = materialContext(task).effectiveMaterials;
   const results = claims.map((claim) => validateClaim(task, claim));
   const validClaims = claims.filter((_, index) => results[index]?.passed);
   const allSourceLinksValid = claims.length > 0 && results.every((item) => item.passed);
@@ -364,7 +366,7 @@ export function groundingChecks(task, artifact) {
     && Array.isArray(item.result?.inputs) && item.result.inputs.every((input) => input.sourceRef && input.evidence?.quote)).map((item) => String(item.result.result)));
   const numberPart = (token) => token.replaceAll(',', '').match(/[-+]?\d+(?:\.\d+)?/)?.[0] || '';
   let actualDeliveredContent = [artifact.content, ...(artifact.deliverables || []).map((entry) => entry.content)].join('\n');
-  for (const material of task.materials.filter((item) => item.generatedEvidence === true && item.fetchedAt)) {
+  for (const material of ready.filter((item) => item.generatedEvidence === true && item.fetchedAt)) {
     actualDeliveredContent = actualDeliveredContent.replaceAll(String(material.fetchedAt), '');
   }
   const unsupportedTokens = criticalTokens(actualDeliveredContent).filter((token) => !sourceTokens.has(token) && !allowedContextTokens.has(token) && !derivedNumbers.has(numberPart(token)));
@@ -407,6 +409,6 @@ export function demoResearch(task) {
   return {
     summary: `演示材料整理覆盖 ${observations.length} 份可读材料；这不是模型研究。`,
     observations,
-    missingFacts: task.materials.filter((item) => item.status !== 'ready').map((item) => `${item.name} 无法读取：${item.error || '未知原因'}`),
+    missingFacts: materialContext(task).directory.filter((item) => !item.eligible).map((item) => `${item.name} 未使用：${item.reason}`),
   };
 }

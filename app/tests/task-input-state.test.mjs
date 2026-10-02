@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { planInputsChanged, shouldPollTask } from '../public/task-input-state.js';
+import { materialDecisionExpectation, planInputsChanged, shouldPollTask } from '../public/task-input-state.js';
 
 test('模型计划在新增支持目标的改稿要求后要求重新规划', () => {
   const task = {
@@ -30,4 +30,18 @@ test('长复核和原生刷新只轮询发起操作的当前任务', () => {
   assert.equal(shouldPollTask(task, { pendingAction: 'artifact-review', pendingActionTaskId: 'task-a' }), true);
   assert.equal(shouldPollTask(task, { pendingAction: 'native-refresh', pendingActionTaskId: 'task-b' }), false);
   assert.equal(shouldPollTask({ id: 'task-b', status: 'running' }), true);
+});
+
+test('材料决定提交读取 render-time 表单快照而不读取刷新后的 live task', () => {
+  const form = { dataset: {
+    expectedFingerprint: JSON.stringify('fingerprint-old'),
+    expectedScope: JSON.stringify({ localGoalVersionId: 'goal-old', projectRootTaskId: 'task-root', projectRootGoalVersionId: 'root-old', projectRootInputFingerprint: 'input-old' }),
+    expectedContentSha256: JSON.stringify('content-old'),
+  } };
+  const liveTask = { materialContext: { fingerprint: 'fingerprint-new', scope: { localGoalVersionId: 'goal-new' }, directory: [{ contentSha256: 'content-new' }] } };
+  const expectation = materialDecisionExpectation(form);
+  assert.equal(expectation.expectedFingerprint, 'fingerprint-old');
+  assert.equal(expectation.expectedScope.localGoalVersionId, 'goal-old');
+  assert.equal(expectation.expectedContentSha256, 'content-old');
+  assert.notEqual(expectation.expectedFingerprint, liveTask.materialContext.fingerprint);
 });
