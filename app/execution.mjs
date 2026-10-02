@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { assertMaterialEligible, materialContext } from './material-applicability.mjs';
+import { projectCandidateFingerprint, projectWorkspaceFingerprint } from './project-workspace.mjs';
 
 // Adapted from OpenOffice phase-machine.ts and retry.ts at
 // 5b0246c396aed041c5262ab0132623bf2b8b067b. The original MIT license is
@@ -58,6 +59,10 @@ export function startExecution(task, goalVersionId, budget = {}) {
     goalVersionId,
     projectRootGoalVersionId: task.projectRootGoalVersionId || goalVersionId,
     projectRootInputFingerprint: task.projectRootInputFingerprint || null,
+    ...(task.type === 'project' ? {
+      workspaceScopeFingerprint: projectWorkspaceFingerprint(task),
+      sourceSnapshotSha256: task.projectWorkspace?.sourceSnapshotSha256 || null,
+    } : {}),
     phase: 'planned',
     limits,
     modelCalls: [],
@@ -89,7 +94,9 @@ export function beginWorkItem(task, workItemId) {
   const itemProjectGoalVersionId = item.projectRootGoalVersionId || (!task.projectRootTaskId ? task.execution?.projectRootGoalVersionId : null);
   const itemProjectInputFingerprint = item.projectRootInputFingerprint || (!task.projectRootTaskId ? task.execution?.projectRootInputFingerprint : null);
   if (item.goalVersionId !== task.execution?.goalVersionId || itemProjectGoalVersionId !== task.execution?.projectRootGoalVersionId
-    || itemProjectInputFingerprint !== task.execution?.projectRootInputFingerprint) throw new Error('工作项目标或项目输入版本已经过期。');
+    || itemProjectInputFingerprint !== task.execution?.projectRootInputFingerprint
+    || (task.type === 'project' && item.workspaceScopeFingerprint !== task.execution?.workspaceScopeFingerprint)
+    || (task.type === 'project' && item.sourceSnapshotSha256 !== task.execution?.sourceSnapshotSha256)) throw new Error('工作项目标、项目输入或工作区版本已经过期。');
   item.status = 'running';
   item.startedAt = now();
   item.updatedAt = item.startedAt;
@@ -120,7 +127,9 @@ export function completeWorkItem(task, workItemId, result) {
   const itemProjectGoalVersionId = item.projectRootGoalVersionId || (!task.projectRootTaskId ? task.execution?.projectRootGoalVersionId : null);
   const itemProjectInputFingerprint = item.projectRootInputFingerprint || (!task.projectRootTaskId ? task.execution?.projectRootInputFingerprint : null);
   if (item.goalVersionId !== task.execution?.goalVersionId || itemProjectGoalVersionId !== task.execution?.projectRootGoalVersionId
-    || itemProjectInputFingerprint !== task.execution?.projectRootInputFingerprint) throw new Error('工作结果属于旧目标或旧项目输入版本。');
+    || itemProjectInputFingerprint !== task.execution?.projectRootInputFingerprint
+    || (task.type === 'project' && item.workspaceScopeFingerprint !== task.execution?.workspaceScopeFingerprint)
+    || (task.type === 'project' && item.sourceSnapshotSha256 !== task.execution?.sourceSnapshotSha256)) throw new Error('工作结果属于旧目标、旧项目输入或旧工作区版本。');
   const meaningful = typeof result === 'string' ? result.trim() : result && Object.keys(result).length;
   if (!meaningful) throw new Error(`${item.title} 没有可检查产物，不能标记完成。`);
   item.result = structuredClone(result);
@@ -294,19 +303,19 @@ function locatorText(material, locator) {
 
 const normalize = (value) => String(value || '').replaceAll(/\s+/g, ' ').trim().toLowerCase();
 
-function criticalTokens(value) {
+function criticalTokenOccurrences(value) {
   // UUIDs are structural references (for example material/task/artifact IDs),
   // not business dates. Remove only the canonical UUID token itself so a real
   // date written next to an ID is still checked normally.
-  const text = String(value || '').replaceAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '');
-  const tokens = [];
+  const text = String(value || '').replaceAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, (match) => ' '.repeat(match.length));
+  const occurrences = [];
   const dateRanges = [];
   const datePattern = /(\d{4})(?:[-/.年](\d{1,2})(?:[-/.月](\d{1,2})日?)?|年)/g;
   for (const match of text.matchAll(datePattern)) {
     const year = match[1];
-    tokens.push(`date:${year}`);
-    if (match[2]) tokens.push(`date:${year}-${String(Number(match[2])).padStart(2, '0')}`);
-    if (match[3]) tokens.push(`date:${year}-${String(Number(match[2])).padStart(2, '0')}-${String(Number(match[3])).padStart(2, '0')}`);
+    occurrences.push({ token: `date:${year}`, index: match.index, end: match.index + match[0].length });
+    if (match[2]) occurrences.push({ token: `date:${year}-${String(Number(match[2])).padStart(2, '0')}`, index: match.index, end: match.index + match[0].length });
+    if (match[3]) occurrences.push({ token: `date:${year}-${String(Number(match[2])).padStart(2, '0')}-${String(Number(match[3])).padStart(2, '0')}`, index: match.index, end: match.index + match[0].length });
     dateRanges.push([match.index, match.index + match[0].length]);
   }
   const pattern = /(?:[¥￥$€]\s*\d[\d,.]*)|(?:\d[\d,.]*\s*(?:万元|美元|欧元|元|天|日|周|月|年|小时|%|套|件|个|人|家))/g;
@@ -315,9 +324,76 @@ function criticalTokens(value) {
   // factual difference, so canonicalize whitespace for token comparison only.
   for (const match of text.matchAll(pattern)) {
     const overlapsDate = dateRanges.some(([start, end]) => match.index < end && match.index + match[0].length > start);
-    if (!overlapsDate) tokens.push(normalize(match[0]).replaceAll(' ', ''));
+    if (!overlapsDate) occurrences.push({ token: normalize(match[0]).replaceAll(' ', ''), index: match.index, end: match.index + match[0].length });
   }
-  return tokens;
+  return occurrences;
+}
+
+function criticalTokens(value) {
+  return criticalTokenOccurrences(value).map((entry) => entry.token);
+}
+
+const TRUSTED_PROJECT_REVIEW_FACTS = Symbol('trusted-project-review-facts');
+
+function projectReviewFactBody(task, artifact) {
+  const candidate = artifact?.projectCandidate;
+  if (task?.type !== 'project' || !candidate) return null;
+  const checks = (candidate.checks || []).filter((entry) => entry?.passed === true
+    && entry.candidateSha256 === candidate.candidateSha256
+    && Number.isInteger(entry.caseTotal) && entry.caseTotal >= 0
+    && Number.isInteger(entry.casePassed) && entry.casePassed === entry.caseTotal)
+    .map((entry) => ({ checkId: String(entry.checkId || ''), caseTotal: entry.caseTotal, casePassed: entry.casePassed }))
+    .sort((left, right) => left.checkId.localeCompare(right.checkId));
+  return {
+    version: 1,
+    taskId: task.id,
+    artifactId: artifact.id,
+    goalVersionId: artifact.goalVersionId,
+    activeGoalVersionId: task.goal?.activeVersionId || null,
+    materialApplicabilityFingerprint: artifact.materialApplicabilityFingerprint ?? null,
+    candidateSha256: candidate.candidateSha256 || null,
+    projectCandidateFingerprint: projectCandidateFingerprint(candidate),
+    sourceIntegritySha256: candidate.sourceIntegritySha256 || null,
+    projectExecutionAuditSha256: candidate.projectExecutionAuditSha256 || null,
+    changedFileCount: Array.isArray(candidate.changes) ? candidate.changes.length : null,
+    checks,
+  };
+}
+
+export function createTrustedProjectReviewFacts(task, artifact) {
+  const body = projectReviewFactBody(task, artifact);
+  if (!body || body.goalVersionId !== body.activeGoalVersionId || !body.candidateSha256
+    || !body.sourceIntegritySha256 || !body.projectExecutionAuditSha256 || !Number.isInteger(body.changedFileCount)) {
+    throw new Error('当前代码候选缺少可用的宿主计数证据。');
+  }
+  const digest = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+  return Object.freeze({ [TRUSTED_PROJECT_REVIEW_FACTS]: true, body: Object.freeze(body), digest });
+}
+
+function verifiedProjectReviewFacts(task, artifact, value) {
+  if (!value || value[TRUSTED_PROJECT_REVIEW_FACTS] !== true) return null;
+  const expected = projectReviewFactBody(task, artifact);
+  if (!expected || expected.goalVersionId !== expected.activeGoalVersionId) return null;
+  const digest = crypto.createHash('sha256').update(JSON.stringify(expected)).digest('hex');
+  if (value.digest !== digest || JSON.stringify(value.body) !== JSON.stringify(expected)) return null;
+  return expected;
+}
+
+function hostFactSupportsOccurrence(facts, occurrence, content) {
+  if (!facts || !/^\d[\d,.]*个$/.test(occurrence.token)) return false;
+  const value = Number(occurrence.token.slice(0, -1).replaceAll(',', ''));
+  if (!Number.isFinite(value)) return false;
+  const lineStart = content.lastIndexOf('\n', occurrence.index - 1) + 1;
+  const nextBreak = content.indexOf('\n', occurrence.end);
+  const line = content.slice(lineStart, nextBreak === -1 ? content.length : nextBreak);
+  const localSuffix = content.slice(occurrence.end, nextBreak === -1 ? content.length : nextBreak);
+  const matchingKinds = [];
+  const caseFact = facts.checks.find((entry) => entry.checkId && line.includes(entry.checkId));
+  if (caseFact && /检查|check/i.test(line) && /^\s*(?:用例|全部通过)(?=$|[\s，。；、,:;])/u.test(localSuffix)) {
+    matchingKinds.push(value === caseFact.caseTotal && value === caseFact.casePassed);
+  }
+  if (/workspace\.diff|\bdiff\b/i.test(line) && /^\s*变更(?:条目|文件)(?=$|[\s，。；、,:;])/u.test(localSuffix)) matchingKinds.push(value === facts.changedFileCount);
+  return matchingKinds.length === 1 && matchingKinds[0] === true;
 }
 
 export function validateClaim(task, claim) {
@@ -350,7 +426,7 @@ export function validateResearchResult(task, result) {
   return result;
 }
 
-export function groundingChecks(task, artifact) {
+export function groundingChecks(task, artifact, { projectReviewFacts = null } = {}) {
   const claims = Array.isArray(artifact.claims) ? artifact.claims : [];
   const ready = materialContext(task).effectiveMaterials;
   const results = claims.map((claim) => validateClaim(task, claim));
@@ -369,9 +445,20 @@ export function groundingChecks(task, artifact) {
   for (const material of ready.filter((item) => item.generatedEvidence === true && item.fetchedAt)) {
     actualDeliveredContent = actualDeliveredContent.replaceAll(String(material.fetchedAt), '');
   }
-  const unsupportedTokens = criticalTokens(actualDeliveredContent).filter((token) => !sourceTokens.has(token) && !allowedContextTokens.has(token) && !derivedNumbers.has(numberPart(token)));
+  const trustedProjectFacts = verifiedProjectReviewFacts(task, artifact, projectReviewFacts);
+  const unsupportedTokens = criticalTokenOccurrences(actualDeliveredContent).filter((entry) => !sourceTokens.has(entry.token)
+    && !allowedContextTokens.has(entry.token) && !derivedNumbers.has(numberPart(entry.token))
+    && !hostFactSupportsOccurrence(trustedProjectFacts, entry, actualDeliveredContent)).map((entry) => entry.token);
   const detail = results.filter((item) => !item.passed).map((item) => item.reason);
   return [
+    ...(task.type === 'project' ? [{
+      name: '代码候选宿主计数事实守卫',
+      passed: Boolean(trustedProjectFacts),
+      evidence: trustedProjectFacts
+        ? `宿主计数事实绑定当前候选、源完整性与执行审计；包含 ${trustedProjectFacts.checks.length} 项固定检查和 ${trustedProjectFacts.changedFileCount} 个变更文件。`
+        : '缺少后端在当前物理文件与执行审计核对后构造的宿主计数事实。',
+      blocking: true,
+    }] : []),
     {
       name: '来源定位守卫',
       passed: ready.length === 0 || allSourceLinksValid,
@@ -381,7 +468,7 @@ export function groundingChecks(task, artifact) {
     {
       name: '关键数值守卫',
       passed: unsupportedTokens.length === 0,
-      evidence: unsupportedTokens.length ? `正文中的关键数字未获原文支持：${[...new Set(unsupportedTokens)].join('、')}` : '这里只证明价格、日期、周期等关键数字能在有效引用或目标条件中找到；不证明主体、关系或自然语言蕴含。',
+      evidence: unsupportedTokens.length ? `正文中的关键数字未获原文支持：${[...new Set(unsupportedTokens)].join('、')}` : '这里只证明关键数字能在有效引用、目标条件、可核对计算或绑定当前候选的宿主计数事实中找到；不证明主体、关系或自然语言蕴含。',
       blocking: true,
     },
     {

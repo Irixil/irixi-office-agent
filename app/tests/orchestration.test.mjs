@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { activeGoal, addMaterial, createStore, createTask } from '../core.mjs';
-import { applyModelPlan, sessionInput, validateModelPlan, validateWorkResult } from '../orchestration.mjs';
+import { applyModelPlan, projectExecutionAudit, sessionInput, stampProjectToolCall, validateModelPlan, validateWorkResult } from '../orchestration.mjs';
 import { runAuthorizedTools, safeCalculate } from '../tools.mjs';
 
 function plan() {
@@ -36,6 +36,209 @@ test('模型计划必须是无环且所有必需分支汇入候选成果', () =>
   const selfReview = plan();
   selfReview.steps.find((step) => step.kind === 'review').role = selfReview.steps.find((step) => step.kind === 'synthesis').role;
   assert.throws(() => validateModelPlan(task, selfReview), /不能自审/);
+});
+
+test('project 计划只允许一个具备四项固定 workspace 能力的前置步骤', () => {
+  const task = createTask({ goal: '实现固定问候函数', type: 'project' });
+  task.projectWorkspace = { status: 'ready', scopeFingerprint: 'scope-project', sourceSnapshotSha256: 'source-project' };
+  const projectPlan = {
+    summary: '在隔离候选读取、替换、固定检查并查看 diff。',
+    projectAlignment: { status: 'standalone', explanation: '独立项目任务。' },
+    outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '代码执行员', mission: '修改隔离候选', capabilities: ['固定工作区'], recruitmentReason: '需要形成真实代码差异。' },
+      { key: 'author', name: '候选汇总员', mission: '汇总宿主证据', capabilities: ['说明'], recruitmentReason: '形成候选说明。' },
+      { key: 'auditor', name: '独立审阅员', mission: '独立核对', capabilities: ['审阅'], recruitmentReason: '确认前独立审阅。' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['交付'], recruitmentReason: '只交付指定版本。' },
+    ],
+    steps: [
+      { key: 'code', title: '修改并检查候选', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['固定三例通过且存在真实 diff'], expectedResult: '宿主代码证据' },
+      { key: 'synthesize', title: '形成代码候选', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['绑定宿主证据'], expectedResult: 'project patch 候选' },
+      { key: 'review', title: '独立核对', kind: 'review', role: 'auditor', dependsOn: ['synthesize'], tools: [], acceptanceCriteria: ['核对 hash 与固定检查'], expectedResult: '审阅记录' },
+      { key: 'deliver', title: '等待确认', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['只下载确认 patch'], expectedResult: '待确认 patch' },
+    ],
+  };
+  assert.equal(validateModelPlan(task, projectPlan).steps.length, 4);
+  const missingDiff = structuredClone(projectPlan);
+  missingDiff.steps[0].tools.pop();
+  assert.throws(() => validateModelPlan(task, missingDiff), /同时授权固定/);
+  const split = structuredClone(projectPlan);
+  split.steps[1].tools = ['workspace.diff'];
+  assert.throws(() => validateModelPlan(task, split), /只能有一个受控工作区步骤/);
+  const wrongKind = structuredClone(projectPlan);
+  wrongKind.steps[0].kind = 'analysis';
+  assert.throws(() => validateModelPlan(task, wrongKind), /tool/);
+  const downstreamTool = structuredClone(projectPlan);
+  downstreamTool.steps.find((step) => step.kind === 'review').tools = ['materials.read'];
+  assert.throws(() => validateModelPlan(task, downstreamTool), /不得授权工具/);
+  const extraOwnerTool = structuredClone(projectPlan);
+  extraOwnerTool.steps[0].tools.push('calculate');
+  assert.throws(() => validateModelPlan(task, extraOwnerTool), /额外工具/);
+  const extraStep = structuredClone(projectPlan);
+  extraStep.steps.splice(1, 0, { key: 'extra', title: '额外分析', kind: 'analysis', role: 'developer', dependsOn: ['code'], tools: [], acceptanceCriteria: ['完成'], expectedResult: '额外结果' });
+  extraStep.steps.find((step) => step.kind === 'synthesis').dependsOn = ['extra'];
+  assert.throws(() => validateModelPlan(task, extraStep), /四个步骤/);
+  const wrongOutput = structuredClone(projectPlan);
+  wrongOutput.outputKind = 'document';
+  assert.throws(() => validateModelPlan(task, wrongOutput), /outputKind/);
+  const ordinary = createTask({ goal: '普通文档' });
+  assert.throws(() => validateModelPlan(ordinary, projectPlan), /项目工具/);
+});
+
+function projectAuditFixture() {
+  const task = createTask({ goal: '实现固定问候函数', type: 'project' });
+  task.projectWorkspace = {
+    status: 'ready', scopeFingerprint: 'scope-project', sourceSnapshotSha256: 'source-project',
+    candidate: { candidateSha256: 'candidate-final' },
+  };
+  const projectPlan = {
+    summary: '固定三轮项目工具执行。', projectAlignment: { status: 'standalone', explanation: '独立项目。' },
+    outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '执行员', mission: '修改候选', capabilities: ['workspace'], recruitmentReason: '需要真实差异' },
+      { key: 'author', name: '汇总员', mission: '汇总证据', capabilities: ['summary'], recruitmentReason: '生成候选' },
+      { key: 'auditor', name: '审阅员', mission: '独立审阅', capabilities: ['review'], recruitmentReason: '独立核对' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['delivery'], recruitmentReason: '版本交付' },
+    ],
+    steps: [
+      { key: 'code', title: '受控修改', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['完成'], expectedResult: '证据' },
+      { key: 'synthesize', title: '汇总', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['完成'], expectedResult: '候选' },
+      { key: 'review', title: '审阅', kind: 'review', role: 'auditor', dependsOn: ['synthesize'], tools: [], acceptanceCriteria: ['完成'], expectedResult: '审阅' },
+      { key: 'deliver', title: '交付', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['完成'], expectedResult: '交付' },
+    ],
+  };
+  applyModelPlan(task, projectPlan);
+  const owner = task.workItems.find((item) => item.kind === 'tool');
+  const synthesis = task.workItems.find((item) => item.kind === 'synthesis');
+  const session = task.agentSessions.find((item) => item.workItemId === owner.id);
+  const synthesisSession = task.agentSessions.find((item) => item.workItemId === synthesis.id);
+  task.execution = { id: 'run-current', limits: { maxToolRoundsPerStep: 3 } };
+  owner.status = 'completed'; session.status = 'completed'; session.runId = task.execution.id;
+  synthesisSession.status = 'running'; synthesisSession.runId = task.execution.id;
+  const requests = [
+    { tool: 'workspace.read', args: { path: 'src/greeting.mjs', view: 'candidate', expectedCandidateSha256: 'candidate-start' } },
+    { tool: 'workspace.write', args: { path: 'src/greeting.mjs', expectedFileSha256: 'file-start', expectedCandidateSha256: 'candidate-start', content: 'PRIVATE_BODY_SENTINEL' } },
+    { tool: 'workspace.check', args: { checkId: 'greet-name-contract-v1', expectedCandidateSha256: 'candidate-final' } },
+    { tool: 'workspace.diff', args: { expectedCandidateSha256: 'candidate-final' } },
+  ];
+  const entries = [
+    { tool: 'workspace.read', ok: true, result: { path: 'src/greeting.mjs', view: 'candidate', content: 'PRIVATE_READ_BODY', bytes: 10, fileSha256: 'file-start', candidateSha256: 'candidate-start', sourceSnapshotSha256: 'source-project', workspaceScopeFingerprint: 'scope-project' } },
+    { tool: 'workspace.write', ok: true, result: { path: 'src/greeting.mjs', fileSha256: 'file-final', candidateSha256: 'candidate-final', mutationSequence: 1, diffSha256: 'diff-final', workspaceScopeFingerprint: 'scope-project' } },
+    { tool: 'workspace.check', ok: true, result: { checkId: 'greet-name-contract-v1', passed: true, caseTotal: 3, casePassed: 3, resultDigest: 'result-digest', candidateSha256: 'candidate-final', workspaceScopeFingerprint: 'scope-project', sandboxCapabilityFingerprint: 'sandbox', runtimeFingerprint: 'runtime' } },
+    { tool: 'workspace.diff', ok: true, result: { patch: 'PRIVATE_PATCH_SENTINEL', candidateSha256: 'candidate-final', diffSha256: 'diff-final', changes: [{ path: 'src/greeting.mjs', beforeSha256: 'file-start', afterSha256: 'file-final', bytes: 20 }], sourceSnapshotSha256: 'source-project', workspaceScopeFingerprint: 'scope-project', sourceIntegrity: { allUnchanged: true, integritySha256: 'integrity' } } },
+  ];
+  const rounds = [1, 2, 3, 3]; const ordinals = [1, 1, 1, 2];
+  session.toolCalls = entries.map((entry, index) => stampProjectToolCall(task, owner, session, requests[index], entry, {
+    runId: task.execution.id, attemptId: `${task.execution.id}:${owner.id}:${rounds[index]}`, round: rounds[index], batchOrdinal: rounds[index], requestOrdinal: ordinals[index], sessionSequence: index + 1,
+  }));
+  return { task, owner, synthesis, session, synthesisSession };
+}
+
+test('项目执行审计只接受当前计划三批四调用并移除正文与重复 patch', () => {
+  const { task, synthesis } = projectAuditFixture();
+  const audit = projectExecutionAudit(task, { synthesisWorkItemId: synthesis.id });
+  assert.deepEqual(audit.execution.calls.map((call) => [call.round, call.requestOrdinal, call.request.tool]), [[1, 1, 'workspace.read'], [2, 1, 'workspace.write'], [3, 1, 'workspace.check'], [3, 2, 'workspace.diff']]);
+  const serialized = JSON.stringify(audit);
+  assert.equal(serialized.includes('PRIVATE_BODY_SENTINEL'), false);
+  assert.equal(serialized.includes('PRIVATE_READ_BODY'), false);
+  assert.equal(serialized.includes('PRIVATE_PATCH_SENTINEL'), false);
+  assert.equal(audit.plan.steps.find((step) => step.kind === 'synthesis').allowedTools.length, 0);
+  assert.equal(audit.plan.steps.find((step) => step.kind === 'review').allowedTools.length, 0);
+  assert.equal(audit.plan.steps.find((step) => step.kind === 'delivery').allowedTools.length, 0);
+  assert.equal(audit.execution.owner.sessionBindings[0].inputFingerprint, task.workItems.find((item) => item.kind === 'tool').inputFingerprint);
+  assert.equal(audit.execution.synthesis.sessionBindings[0].sourceContextFingerprint, task.workItems.find((item) => item.kind === 'synthesis').sourceContextFingerprint);
+});
+
+test('项目执行审计对缺失、伪造、旧范围、跨任务、错误顺序与 round4 fail closed', () => {
+  const mutations = [
+    (fixture) => fixture.session.toolCalls.pop(),
+    (fixture) => { fixture.session.toolCalls[0].hostAudit.planId = 'forged-plan'; },
+    (fixture) => { fixture.session.toolCalls[0].hostAudit.binding.materialApplicabilityFingerprint = 'stale-material'; },
+    (fixture) => { fixture.session.toolCalls[0].hostAudit.taskId = 'other-task'; },
+    (fixture) => { fixture.session.toolCalls[2].hostAudit.request.tool = 'workspace.diff'; },
+    (fixture) => { fixture.session.toolCalls[3].hostAudit.round = 4; },
+    (fixture) => { fixture.session.toolCalls[3].hostAudit.sessionSequence = 3; },
+    (fixture) => { fixture.session.toolCalls[2].hostAudit.outcome.ok = false; },
+    (fixture) => { fixture.session.toolCalls[1].ok = false; },
+    (fixture) => { fixture.session.toolCalls[0].tool = 'workspace.diff'; },
+    (fixture) => { fixture.synthesisSession.toolCalls.push({ tool: 'materials.read', ok: false }); },
+  ];
+  for (const mutate of mutations) {
+    const fixture = projectAuditFixture(); mutate(fixture);
+    assert.throws(() => projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
+  }
+  const historical = projectAuditFixture();
+  historical.task.workHistory = [{ items: [structuredClone(historical.owner)] }];
+  historical.task.agentSessions = historical.task.agentSessions.filter((session) => session.id !== historical.session.id);
+  assert.throws(() => projectExecutionAudit(historical.task, { synthesisWorkItemId: historical.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
+});
+
+test('项目执行审计拒绝同一 current run 早先失败会话的额外实际调用', () => {
+  const fixture = projectAuditFixture();
+  const earlier = structuredClone(fixture.session);
+  earlier.id = 'session-earlier-failed';
+  earlier.status = 'failed';
+  earlier.toolCalls = [structuredClone(fixture.session.toolCalls[0])];
+  earlier.toolCalls[0].hostAudit.sessionId = earlier.id;
+  fixture.task.agentSessions.splice(fixture.task.agentSessions.indexOf(fixture.session), 0, earlier);
+  assert.throws(() => projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
+});
+
+test('项目执行审计把plan六项输入绑定纳入规范摘要并逐项拒绝篡改或缺失', () => {
+  const baseline = projectAuditFixture();
+  const audit = projectExecutionAudit(baseline.task, { synthesisWorkItemId: baseline.synthesis.id });
+  assert.deepEqual({
+    goalVersionId: audit.plan.goalVersionId,
+    projectRootGoalVersionId: audit.plan.projectRootGoalVersionId,
+    projectRootInputFingerprint: audit.plan.projectRootInputFingerprint,
+    materialApplicabilityFingerprint: audit.plan.materialApplicabilityFingerprint,
+    workspaceScopeFingerprint: audit.plan.workspaceScopeFingerprint,
+    sourceSnapshotSha256: audit.plan.sourceSnapshotSha256,
+  }, {
+    goalVersionId: audit.binding.goalVersionId,
+    projectRootGoalVersionId: audit.binding.projectRootGoalVersionId,
+    projectRootInputFingerprint: audit.binding.projectRootInputFingerprint,
+    materialApplicabilityFingerprint: audit.binding.materialApplicabilityFingerprint,
+    workspaceScopeFingerprint: audit.binding.workspaceScopeFingerprint,
+    sourceSnapshotSha256: audit.binding.sourceSnapshotSha256,
+  });
+  for (const field of ['goalVersionId', 'projectRootGoalVersionId', 'projectRootInputFingerprint', 'materialApplicabilityFingerprint', 'workspaceScopeFingerprint', 'sourceSnapshotSha256']) {
+    const tampered = projectAuditFixture();
+    tampered.task.plan[field] = `tampered-${field}`;
+    assert.throws(() => projectExecutionAudit(tampered.task, { synthesisWorkItemId: tampered.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `tampered ${field}`);
+    const missing = projectAuditFixture();
+    delete missing.task.plan[field];
+    assert.throws(() => projectExecutionAudit(missing.task, { synthesisWorkItemId: missing.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `missing ${field}`);
+  }
+});
+
+test('项目执行审计逐步核对四个plan item的当前输入绑定', () => {
+  const fields = ['goalVersionId', 'projectRootGoalVersionId', 'projectRootInputFingerprint', 'materialApplicabilityFingerprint', 'workspaceScopeFingerprint', 'sourceSnapshotSha256', 'inputSuggestionIds'];
+  for (let index = 0; index < 4; index += 1) {
+    for (const field of fields) {
+      const tampered = projectAuditFixture();
+      const tamperedItem = tampered.task.workItems[index];
+      tamperedItem[field] = field === 'inputSuggestionIds' ? ['instruction-forged'] : `tampered-${field}`;
+      assert.throws(() => projectExecutionAudit(tampered.task, { synthesisWorkItemId: tampered.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `item ${index} tampered ${field}`);
+      const missing = projectAuditFixture();
+      delete missing.task.workItems[index][field];
+      assert.throws(() => projectExecutionAudit(missing.task, { synthesisWorkItemId: missing.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `item ${index} missing ${field}`);
+    }
+  }
+});
+
+test('项目执行审计逐项核对owner与synthesis的current session输入绑定', () => {
+  const fields = ['goalVersionId', 'projectRootGoalVersionId', 'projectRootInputFingerprint', 'materialApplicabilityFingerprint', 'workspaceScopeFingerprint', 'sourceSnapshotSha256', 'inputFingerprint', 'sourceContextFingerprint'];
+  for (const sessionName of ['session', 'synthesisSession']) {
+    for (const field of fields) {
+      const tampered = projectAuditFixture();
+      tampered[sessionName][field] = `tampered-${field}`;
+      assert.throws(() => projectExecutionAudit(tampered.task, { synthesisWorkItemId: tampered.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `${sessionName} tampered ${field}`);
+      const missing = projectAuditFixture();
+      delete missing[sessionName][field];
+      assert.throws(() => projectExecutionAudit(missing.task, { synthesisWorkItemId: missing.synthesis.id }), (error) => error.code === 'project_execution_audit_stale', `${sessionName} missing ${field}`);
+    }
+  }
 });
 
 test('关联任务的结构化项目冲突会停下且不生成可运行计划', () => {

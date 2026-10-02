@@ -432,7 +432,7 @@ function discoveredWebUrls(task, item) {
   return new Set(urls.map((url) => normalizeScopeValue(url)));
 }
 
-export async function runAuthorizedTools(store, task, item, requests = [], { signal, web = { searchPublicWeb, readPublicPage }, onHostedSearchStart } = {}) {
+export async function runAuthorizedTools(store, task, item, requests = [], { signal, web = { searchPublicWeb, readPublicPage }, onHostedSearchStart, projectWorkspaceHost } = {}) {
   const results = [];
   const seen = new Set();
   for (const request of requests.slice(0, 6)) {
@@ -492,6 +492,10 @@ export async function runAuthorizedTools(store, task, item, requests = [], { sig
         const packet = readMaterialPackets(stored.task, { materialIds: [material.id] })[0];
         const { text: _rawText, ...pageMetadata } = page;
         results.push({ requestId: id, tool: name, ok: true, evidenceType: 'material', result: { ...pageMetadata, ...packet, materialLocator: packet.locator }, sources: [`material:${material.id}#${packet.locator}`] });
+      } else if (name.startsWith('workspace.')) {
+        if (!projectWorkspaceHost) throw new Error('项目工作区宿主不可用。');
+        const projectResult = await projectWorkspaceHost.runTool(store, task.id, item.id, request, { signal });
+        results.push({ requestId: id, tool: name, ok: true, result: projectResult, sources: [] });
       } else results.push({ requestId: id, tool: name, ok: false, error: '未授权工具，未执行。', sources: [] });
     } catch (error) {
       results.push({ requestId: id, tool: name, ok: false, error: error.message, sources: [] });

@@ -11,8 +11,8 @@
       "required": ["status", "explanation"],
       "additionalProperties": false
     },
-    "outputKind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] },
-    "deliverables": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] } },
+    "outputKind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research", "project"] },
+    "deliverables": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research", "project_patch"] } },
     "roles": {
       "type": "array", "minItems": 1, "maxItems": 8,
       "items": { "type": "object", "properties": {
@@ -27,7 +27,7 @@
         "key": { "type": "string" }, "title": { "type": "string" },
         "kind": { "type": "string", "enum": ["research", "analysis", "tool", "synthesis", "review", "delivery"] },
         "role": { "type": "string" }, "dependsOn": { "type": "array", "items": { "type": "string" } },
-        "tools": { "type": "array", "items": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read"] } },
+        "tools": { "type": "array", "items": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read", "workspace.read", "workspace.write", "workspace.diff", "workspace.check"] } },
         "webScope": { "type": "object", "properties": {
           "queries": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
           "urls": { "type": "array", "maxItems": 12, "items": { "type": "string" } }

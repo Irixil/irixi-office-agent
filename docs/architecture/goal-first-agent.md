@@ -48,7 +48,7 @@ Irixi 区分三种东西：
 
 ## 当前权限机制
 
-权限规范统一见[AGENTS.md](../../AGENTS.md)。目前宿主只执行模型计划预声明的六类工具；Codex子进程关闭其自带执行能力。成果通过独立核对且指定版本确认后可下载新文件，不覆盖源文件。发送、发布、付款、删除、线上日程与任意工作区变更当前没有实现；未来接入须另定义并确认对应授权及验收。
+权限规范统一见[AGENTS.md](../../AGENTS.md)。目前宿主执行模型计划预声明的六项通用工具；project 任务另可获授权使用四项 workspace 工具，仅支持登记单文件练习项目。Codex子进程关闭其自带执行能力；模型提出结构化请求，由宿主执行受限操作。成果通过独立核对且指定版本确认后可下载新文件，不覆盖源文件。发送、发布、付款、删除、线上日程与任意工作区变更当前没有实现；未来接入须另定义并确认对应授权及验收。
 
 ## 状态投影与维多利亚办公室
 
@@ -122,3 +122,14 @@ MiniSearch固定版7.2.0以相同中文分词，分别对照词频/长度、后�
 - [agent-office README](https://github.com/harishkotra/agent-office)
 - [agent-office LICENSE](https://github.com/harishkotra/agent-office/blob/main/LICENSE)
 - [agent-office UI 依赖](https://github.com/harishkotra/agent-office/blob/main/packages/ui/package.json)
+
+
+## 2026-10-02 受限 Codex 项目入口
+
+新增 project 类型与 project_patch 成果。用户按当前目标明确授权登记的 Node 单文件练习项目；宿主保存只读 source snapshot，只允许在任务候选副本内整文件替换 src/greeting.mjs，并以文件与候选 hash 防止覆盖并发变化。唯一 kind=tool 工作项获得 read/write/check/diff；合成、审阅、交付步骤的工具授权为空。宿主在实际调用时记录当前运行、计划、工作项、会话、批次与顺序，再将规范审计与候选成果绑定；合成与独立审阅据此核对执行链。正文与 patch 仅在必要代码审阅位置提供，审计摘要不复制它们。确认后只提供 patch 下载，不写回原目录。
+
+授权绑定目标、根输入、材料用途和已接受交代。规划、运行、每轮工具、候选、审阅、确认、下载核对同一绑定及 source/candidate/check 指纹。有效输入改变使授权失效，旧候选和批准保留历史；重新授权须由当前页面明确提交，迟到点击被拒绝。运行重建的会话复制计划快照中的工作区/来源绑定，不能用当前任务值隐式升级旧会话。
+
+固定 Node 检查使用本机 macOS 原生 sandbox-exec 和独立 child；父 verifier 持有固定输入/expected，对 named export greetName 的三组契约逐项比较。模型与候选代码不能读取或修改父侧 expected；公开证据只含规范 verdict、计数、hash、退出/超时/截断及有界输出摘要，原始 stdout/stderr 不进入模型。真实正负探针先核对可运行性、越界读写、网络与环境隔离，不可用则停止，不能降级。时限、输出上限与 Node 堆上限用于资源控制；不宣称绝对进程内存上限或所有子进程执行都被禁止。
+
+真实 Codex 已完成读取、候选修改、固定检查、非空实际 diff、独立审阅；真实 Chrome 完成当前授权、重载、指定版本确认和实际 patch 下载，下载 hash 与已审阅成果一致。接受后续目标后，旧批准下载被拒，旧候选/批准历史保留，原三文件逐字节不变。先前失败及人工任务要求澄清保留在本地，不称为首次成功或无需操作者参与。结果只覆盖登记的合成项目与这三组固定契约，不证明用户真实项目、任意测试、长期自治或跨平台可靠性。详见[当日阶段证据](../evidence/stage-progress-20261002.md)。

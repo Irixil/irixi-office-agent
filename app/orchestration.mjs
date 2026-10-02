@@ -2,9 +2,11 @@ import crypto from 'node:crypto';
 
 import { activeGoal, artifactInputIsCurrent, deriveTaskContinuity, event, makeId, setTaskState } from './core.mjs';
 import { materialContext } from './material-applicability.mjs';
+import { projectWorkspaceFingerprint, publicProjectWorkspace } from './project-workspace.mjs';
 
 const VALID_KINDS = new Set(['research', 'analysis', 'tool', 'synthesis', 'review', 'delivery']);
-const SAFE_TOOL_NAMES = new Set(['materials.read', 'materials.search', 'memory.search', 'calculate', 'web.search', 'web.read']);
+const PROJECT_TOOL_NAMES = new Set(['workspace.read', 'workspace.write', 'workspace.diff', 'workspace.check']);
+const SAFE_TOOL_NAMES = new Set(['materials.read', 'materials.search', 'memory.search', 'calculate', 'web.search', 'web.read', ...PROJECT_TOOL_NAMES]);
 const MAX_PLAN_STEPS = 12;
 const MAX_TEAM_SIZE = 8;
 
@@ -34,7 +36,7 @@ export function validateModelPlan(task, input = {}) {
   } : { status: task.projectRootTaskId ? '' : 'standalone', explanation: '' };
   if (task.projectRootTaskId && !['aligned', 'conflict'].includes(projectAlignment.status)) throw new Error('关联任务计划必须明确判断任务目标与项目根目标是否一致。');
   if (!projectAlignment.explanation) projectAlignment.explanation = task.projectRootTaskId ? '未说明对齐依据。' : '独立任务。';
-  const deliverables = cleanList(input.deliverables, 4, 40).filter((kind) => ['document', 'spreadsheet', 'presentation', 'email', 'calendar', 'research'].includes(kind));
+  const deliverables = cleanList(input.deliverables, 4, 40).filter((kind) => ['document', 'spreadsheet', 'presentation', 'email', 'calendar', 'research', 'project_patch'].includes(kind));
   if (!deliverables.length) throw new Error('计划必须声明至少一种实际交付物。');
   const roles = (Array.isArray(input.roles) ? input.roles : []).map((role, index) => ({
     key: clean(role.key, 60) || `role-${index + 1}`,
@@ -70,6 +72,23 @@ export function validateModelPlan(task, input = {}) {
     const unknownTools = step.tools.filter((tool) => !SAFE_TOOL_NAMES.has(tool));
     if (unknownTools.length) throw new Error(`步骤 ${step.key} 请求了未授权工具：${unknownTools.join('、')}。`);
     if (step.tools.some((tool) => tool.startsWith('web.')) && !(step.webScope?.queries.length || step.webScope?.urls.length)) throw new Error(`步骤 ${step.key} 使用公开网页工具时必须预先声明 webScope.queries 或 webScope.urls。`);
+    if (step.tools.some((tool) => PROJECT_TOOL_NAMES.has(tool)) && (task.type !== 'project' || task.projectWorkspace?.status !== 'ready')) throw new Error(`步骤 ${step.key} 请求了尚未由用户授权并通过隔离探针的项目工具。`);
+  }
+  if (task.type !== 'project' && steps.some((step) => step.tools.some((tool) => PROJECT_TOOL_NAMES.has(tool)))) throw new Error('普通任务不能获得项目工作区工具。');
+  if (task.type === 'project') {
+    if (input.outputKind !== 'project') throw new Error('代码项目的 outputKind 必须是 project。');
+    if (deliverables.length !== 1 || deliverables[0] !== 'project_patch') throw new Error('代码项目的交付物必须且只能是 project_patch。');
+    if (steps.length !== 4 || steps.filter((step) => step.kind === 'tool').length !== 1
+      || steps.filter((step) => step.kind === 'synthesis').length !== 1
+      || steps.filter((step) => step.kind === 'review').length !== 1
+      || steps.filter((step) => step.kind === 'delivery').length !== 1) throw new Error('代码项目必须且只能包含 tool、synthesis、review、delivery 四个步骤。');
+    const projectSteps = steps.filter((step) => step.tools.some((tool) => PROJECT_TOOL_NAMES.has(tool)));
+    if (projectSteps.length !== 1) throw new Error('代码项目必须且只能有一个受控工作区步骤。');
+    if (projectSteps[0].kind !== 'tool') throw new Error('受控工作区步骤必须明确标记为 tool。');
+    if ([...PROJECT_TOOL_NAMES].some((tool) => !projectSteps[0].tools.includes(tool))) throw new Error('受控工作区步骤必须同时授权固定 read、write、check 与 diff。');
+    if (projectSteps[0].tools.length !== PROJECT_TOOL_NAMES.size) throw new Error('受控工作区步骤不得获得固定四项之外的额外工具。');
+    if (['synthesis', 'review', 'delivery'].includes(projectSteps[0].kind)) throw new Error('受控工作区操作必须在候选合成与独立审阅之前完成。');
+    if (steps.some((step) => ['synthesis', 'review', 'delivery'].includes(step.kind) && step.tools.length)) throw new Error('代码项目的 synthesis、review 与 delivery 步骤不得授权工具。');
   }
   assertAcyclic(steps);
   if (steps.filter((step) => step.kind === 'synthesis').length !== 1) throw new Error('计划必须且只能包含一个候选成果合成步骤。');
@@ -95,7 +114,7 @@ export function validateModelPlan(task, input = {}) {
   return {
     summary: clean(input.summary, 1_000),
     projectAlignment,
-    outputKind: ['document', 'spreadsheet', 'presentation', 'email', 'calendar', 'research'].includes(input.outputKind) ? input.outputKind : task.type,
+    outputKind: ['document', 'spreadsheet', 'presentation', 'email', 'calendar', 'research', 'project'].includes(input.outputKind) ? input.outputKind : task.type,
     deliverables: [...new Set(deliverables)],
     roles,
     steps,
@@ -192,12 +211,15 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
   const instructionFingerprint = task.suggestions.filter((suggestion) => (suggestion.goalVersionId || goal.id) === goal.id && suggestion.classification === 'support' && suggestion.status === 'routed').map((suggestion) => ({ id: suggestion.id, text: suggestion.text }));
   const projectRootGoalVersionId = task.projectRootGoalVersionId || goal.id;
   const projectRootInputFingerprint = task.projectRootInputFingerprint || null;
+  const workspaceScopeFingerprint = projectWorkspaceFingerprint(task);
+  const sourceSnapshotSha256 = task.projectWorkspace?.sourceSnapshotSha256 || null;
   const applicabilityFingerprintPart = applicability.policyActive
     ? { materialApplicabilityFingerprint: applicability.fingerprint }
     : {};
   const sourceContextFingerprint = crypto.createHash('sha256').update(JSON.stringify({
     goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint,
     ...applicabilityFingerprintPart, materialFingerprint, instructionFingerprint,
+    ...(workspaceScopeFingerprint ? { workspaceScopeFingerprint, sourceSnapshotSha256 } : {}),
   })).digest('hex');
   const fingerprintFor = (step) => {
     if (fingerprintByKey.has(step.key)) return fingerprintByKey.get(step.key);
@@ -205,6 +227,7 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
     const value = crypto.createHash('sha256').update(JSON.stringify({
       goalVersionId: goal.id, projectRootGoalVersionId, projectRootInputFingerprint,
       ...applicabilityFingerprintPart, step, materialFingerprint, instructionFingerprint, dependencyFingerprints,
+      ...(workspaceScopeFingerprint ? { workspaceScopeFingerprint, sourceSnapshotSha256 } : {}),
     })).digest('hex');
     fingerprintByKey.set(step.key, value);
     return value;
@@ -212,7 +235,8 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
   const workItems = validated.steps.map((step) => {
     const prior = previousByKey.get(step.key);
     const inputFingerprint = fingerprintFor(step);
-    const reused = Boolean(prior && !workItemUsesGeneratedEvidence(task, prior) && prior.kind === step.kind && prior.inputFingerprint === inputFingerprint && !['synthesis', 'review', 'delivery'].includes(step.kind));
+    const reused = Boolean(prior && !workItemUsesGeneratedEvidence(task, prior) && !(prior.tools || []).some((tool) => PROJECT_TOOL_NAMES.has(tool))
+      && prior.kind === step.kind && prior.inputFingerprint === inputFingerprint && !['synthesis', 'review', 'delivery'].includes(step.kind));
     return {
       id: idByKey.get(step.key), stepKey: step.key, title: step.title, kind: step.kind,
       role: step.role, agentId: roleMap.get(step.role).id,
@@ -221,6 +245,7 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
       projectRootInputFingerprint,
       inputMaterialIds: applicability.effectiveMaterials.map((material) => material.id),
       materialApplicabilityFingerprint: applicability.fingerprint,
+      ...(workspaceScopeFingerprint ? { workspaceScopeFingerprint, sourceSnapshotSha256 } : {}),
       inputSuggestionIds: task.suggestions.filter((suggestion) => (suggestion.goalVersionId || goal.id) === goal.id && suggestion.classification === 'support' && suggestion.status === 'routed').map((suggestion) => suggestion.id),
       dependsOn: step.dependsOn.map((key) => idByKey.get(key)), dependencyKeys: step.dependsOn,
       tools: step.tools, acceptanceCriteria: step.acceptanceCriteria, expectedResult: step.expectedResult, webScope: step.webScope,
@@ -257,6 +282,9 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
       projectRootGoalVersionId,
       projectRootInputFingerprint,
       materialApplicabilityFingerprint: applicability.fingerprint,
+      inputFingerprint: item.inputFingerprint,
+      sourceContextFingerprint: item.sourceContextFingerprint,
+      ...(workspaceScopeFingerprint ? { workspaceScopeFingerprint, sourceSnapshotSha256 } : {}),
       runId: null, attemptId: null, toolCalls: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
@@ -270,6 +298,7 @@ export function applyModelPlan(task, input, { reason = 'initial_model_plan', pre
     projectRootGoalVersionId,
     projectRootInputFingerprint,
     materialApplicabilityFingerprint: applicability.fingerprint,
+    ...(workspaceScopeFingerprint ? { workspaceScopeFingerprint, sourceSnapshotSha256 } : {}),
     outputKind: validated.outputKind, deliverables: validated.deliverables, projectAlignment: validated.projectAlignment, roleKeys: validated.roles.map((role) => role.key),
     stepKeys: validated.steps.map((step) => step.key), reason, createdAt: new Date().toISOString(),
   };
@@ -389,6 +418,224 @@ export function candidateDependencyEvidence(task, artifact) {
     });
 }
 
+function auditError(message = '代码执行审计缺失、被篡改或已经过期。') {
+  return Object.assign(new Error(message), { code: 'project_execution_audit_stale', status: 409 });
+}
+
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const instructionIds = (task) => task.suggestions.filter((item) => (item.goalVersionId || activeGoal(task).id) === activeGoal(task).id
+  && item.classification === 'support' && item.status === 'routed').map((item) => item.id).sort();
+
+function projectAuditBinding(task, item) {
+  return {
+    taskId: task.id,
+    goalVersionId: activeGoal(task).id,
+    projectRootGoalVersionId: task.projectRootGoalVersionId || activeGoal(task).id,
+    projectRootInputFingerprint: task.projectRootInputFingerprint || null,
+    materialApplicabilityFingerprint: materialContext(task, { includeGeneratedEvidence: false }).fingerprint,
+    instructionIds: instructionIds(task),
+    workspaceScopeFingerprint: projectWorkspaceFingerprint(task),
+    sourceSnapshotSha256: task.projectWorkspace?.sourceSnapshotSha256 || null,
+    inputFingerprint: item?.inputFingerprint || null,
+    sourceContextFingerprint: item?.sourceContextFingerprint || null,
+  };
+}
+
+const PROJECT_SESSION_BINDING_FIELDS = [
+  'goalVersionId', 'projectRootGoalVersionId', 'projectRootInputFingerprint', 'materialApplicabilityFingerprint',
+  'workspaceScopeFingerprint', 'sourceSnapshotSha256', 'inputFingerprint', 'sourceContextFingerprint',
+];
+
+function projectSessionBinding(item, binding) {
+  return {
+    goalVersionId: binding.goalVersionId,
+    projectRootGoalVersionId: binding.projectRootGoalVersionId,
+    projectRootInputFingerprint: binding.projectRootInputFingerprint,
+    materialApplicabilityFingerprint: binding.materialApplicabilityFingerprint,
+    workspaceScopeFingerprint: binding.workspaceScopeFingerprint,
+    sourceSnapshotSha256: binding.sourceSnapshotSha256,
+    inputFingerprint: item.inputFingerprint,
+    sourceContextFingerprint: item.sourceContextFingerprint,
+  };
+}
+
+function assertProjectItemBinding(item, binding) {
+  const expected = projectSessionBinding(item, binding);
+  const commonFields = PROJECT_SESSION_BINDING_FIELDS.slice(0, 6);
+  if (commonFields.some((field) => !Object.hasOwn(item, field) || (item[field] ?? null) !== (expected[field] ?? null))
+    || !Object.hasOwn(item, 'inputSuggestionIds')
+    || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(binding.instructionIds)) throw auditError();
+  return { ...expected, instructionIds: [...binding.instructionIds] };
+}
+
+function assertProjectSessionBinding(session, expected) {
+  if (!session || PROJECT_SESSION_BINDING_FIELDS.some((field) => !Object.hasOwn(session, field)
+    || (session[field] ?? null) !== (expected[field] ?? null))) throw auditError();
+  return { sessionId: session.id, ...expected };
+}
+
+function normalizedProjectRequest(request = {}) {
+  const args = request.args || {};
+  const common = {
+    tool: String(request.tool || ''),
+    path: typeof args.path === 'string' ? args.path : null,
+    expectedCandidateSha256: typeof args.expectedCandidateSha256 === 'string' ? args.expectedCandidateSha256 : null,
+  };
+  if (request.tool === 'workspace.read') return { ...common, view: args.view === 'source' ? 'source' : 'candidate' };
+  if (request.tool === 'workspace.write') {
+    const content = String(args.content ?? '');
+    return { ...common, expectedFileSha256: args.expectedFileSha256 || null, contentBytes: Buffer.byteLength(content), contentSha256: sha256(content) };
+  }
+  if (request.tool === 'workspace.check') return { ...common, checkId: args.checkId || null };
+  return common;
+}
+
+function normalizedProjectOutcome(entry = {}) {
+  if (entry.ok !== true) return { ok: false, outcomeCode: entry.code || 'tool_failed' };
+  const result = entry.result || {};
+  if (entry.tool === 'workspace.read') return { ok: true, path: result.path, view: result.view, bytes: result.bytes, fileSha256: result.fileSha256, candidateSha256: result.candidateSha256, sourceSnapshotSha256: result.sourceSnapshotSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint };
+  if (entry.tool === 'workspace.write') return { ok: true, path: result.path, fileSha256: result.fileSha256, candidateSha256: result.candidateSha256, mutationSequence: result.mutationSequence, diffSha256: result.diffSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint };
+  if (entry.tool === 'workspace.check') return { ok: true, checkId: result.checkId, passed: result.passed, caseTotal: result.caseTotal, casePassed: result.casePassed, resultDigest: result.resultDigest, candidateSha256: result.candidateSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint, sandboxCapabilityFingerprint: result.sandboxCapabilityFingerprint, runtimeFingerprint: result.runtimeFingerprint };
+  if (entry.tool === 'workspace.diff') return { ok: true, candidateSha256: result.candidateSha256, diffSha256: result.diffSha256, changes: (result.changes || []).map((change) => ({ path: change.path, beforeSha256: change.beforeSha256, afterSha256: change.afterSha256, bytes: change.bytes })), sourceSnapshotSha256: result.sourceSnapshotSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint, sourceIntegritySha256: result.sourceIntegrity?.integritySha256 || null, sourceUnchanged: result.sourceIntegrity?.allUnchanged === true };
+  return { ok: true };
+}
+
+export function stampProjectToolCall(task, item, session, request, entry, { runId, attemptId, round, batchOrdinal, requestOrdinal, sessionSequence }) {
+  const requestAudit = normalizedProjectRequest(request);
+  return {
+    ...entry,
+    requestAudit,
+    hostAudit: {
+      version: 1,
+      taskId: task.id,
+      runId,
+      planId: task.plan?.id || null,
+      planRevision: task.plan?.revision || null,
+      workItemId: item.id,
+      sessionId: session.id,
+      attemptId,
+      round,
+      batchOrdinal,
+      requestOrdinal,
+      sessionSequence,
+      binding: projectAuditBinding(task, item),
+      request: requestAudit,
+      outcome: normalizedProjectOutcome(entry),
+    },
+  };
+}
+
+export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifact = null } = {}) {
+  if (task.type !== 'project' || !task.plan || task.plan.source !== 'model') throw auditError();
+  if (artifact && !artifactInputIsCurrent(task, artifact)) throw auditError();
+  const items = task.workItems || [];
+  const planKeys = new Set(task.plan.stepKeys || []);
+  const planItems = items.filter((item) => planKeys.has(item.stepKey));
+  if (planItems.length !== planKeys.size) throw auditError();
+  const synthesis = synthesisWorkItemId
+    ? planItems.find((item) => item.id === synthesisWorkItemId && item.kind === 'synthesis')
+    : planItems.find((item) => item.kind === 'synthesis' && item.result?.artifactId === artifact?.id);
+  if (!synthesis) throw auditError();
+  const ownerItems = planItems.filter((item) => (item.tools || []).some((tool) => PROJECT_TOOL_NAMES.has(tool)));
+  const owner = ownerItems[0];
+  const exactTools = new Set(owner?.tools || []);
+  const downstream = ['synthesis', 'review', 'delivery'].map((kind) => planItems.find((item) => item.kind === kind));
+  if (ownerItems.length !== 1 || owner?.kind !== 'tool' || exactTools.size !== PROJECT_TOOL_NAMES.size || [...PROJECT_TOOL_NAMES].some((tool) => !exactTools.has(tool))
+    || downstream.some((item) => !item || (item.tools || []).length)
+    || !(synthesis.dependsOn || []).includes(owner.id)) throw auditError('当前计划不满足固定项目执行契约。');
+  const binding = projectAuditBinding(task, owner);
+  const itemBindings = planItems.map((item) => assertProjectItemBinding(item, projectAuditBinding(task, item)));
+  const planBindingFields = ['goalVersionId', 'projectRootGoalVersionId', 'projectRootInputFingerprint', 'materialApplicabilityFingerprint', 'workspaceScopeFingerprint', 'sourceSnapshotSha256'];
+  if (!binding.workspaceScopeFingerprint || !binding.sourceSnapshotSha256
+    || planBindingFields.some((field) => !Object.hasOwn(task.plan, field))
+    || task.plan.goalVersionId !== binding.goalVersionId
+    || task.plan.projectRootGoalVersionId !== binding.projectRootGoalVersionId
+    || (task.plan.projectRootInputFingerprint ?? null) !== binding.projectRootInputFingerprint
+    || (task.plan.materialApplicabilityFingerprint ?? null) !== binding.materialApplicabilityFingerprint
+    || (task.plan.workspaceScopeFingerprint ?? null) !== binding.workspaceScopeFingerprint
+    || (task.plan.sourceSnapshotSha256 ?? null) !== binding.sourceSnapshotSha256) throw auditError();
+  const auditRunId = artifact?.projectCandidate?.projectExecutionAudit?.execution?.runId || task.execution?.id;
+  const ownerSessions = (task.agentSessions || []).filter((candidate) => candidate.workItemId === owner.id
+    && candidate.runId === auditRunId && candidate.planRevision === task.plan.revision);
+  const session = ownerSessions.findLast((candidate) => candidate.status === 'completed');
+  if (!session) throw auditError('当前执行缺少已完成的项目工具会话。');
+  const ownerSessionBinding = projectSessionBinding(owner, binding);
+  const ownerSessionBindings = ownerSessions.map((candidate) => assertProjectSessionBinding(candidate, ownerSessionBinding));
+  const ownerCallRecords = ownerSessions.flatMap((candidate) => (candidate.toolCalls || []).map((call) => ({ call, session: candidate })));
+  const unexpectedCalls = ownerCallRecords.filter(({ call }) => !call.tool?.startsWith('workspace.') && call.tool !== 'protocol');
+  if (unexpectedCalls.length) throw auditError();
+  const protocolFeedback = ownerCallRecords.filter(({ call }) => call.tool === 'protocol').map(({ call }, index) => ({ sequence: index + 1, ok: call.ok === true, outcomeCode: call.ok === true ? 'unexpected_success' : 'protocol_rejected' }));
+  const workspaceRecords = ownerCallRecords.filter(({ call }) => call.tool?.startsWith('workspace.'));
+  const calls = workspaceRecords.map(({ call }) => call.hostAudit);
+  if (calls.length !== 4 || calls.some((call) => !call || call.version !== 1)) throw auditError();
+  const expectedTools = ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'];
+  const expectedRounds = [1, 2, 3, 3];
+  const expectedRequestOrdinals = [1, 1, 1, 2];
+  calls.forEach((call, index) => {
+    const { call: raw, session: recordedSession } = workspaceRecords[index];
+    if (call.taskId !== task.id || call.runId !== auditRunId || call.planId !== task.plan.id || call.planRevision !== task.plan.revision
+      || call.workItemId !== owner.id || call.sessionId !== recordedSession.id || call.attemptId !== `${auditRunId}:${owner.id}:${expectedRounds[index]}`
+      || call.round !== expectedRounds[index] || call.batchOrdinal !== expectedRounds[index] || call.requestOrdinal !== expectedRequestOrdinals[index]
+      || call.sessionSequence !== index + 1 || call.request?.tool !== expectedTools[index] || call.outcome?.ok !== true
+      || raw.tool !== call.request.tool || raw.ok !== call.outcome.ok
+      || JSON.stringify(raw.requestAudit) !== JSON.stringify(call.request)
+      || JSON.stringify(normalizedProjectOutcome(raw)) !== JSON.stringify(call.outcome)
+      || JSON.stringify(call.binding) !== JSON.stringify(binding)) throw auditError();
+  });
+  if (task.execution?.limits?.maxToolRoundsPerStep !== 3) throw auditError();
+  const candidateSha256 = task.projectWorkspace?.candidate?.candidateSha256;
+  if (calls[1].outcome.candidateSha256 !== candidateSha256 || calls[2].outcome.candidateSha256 !== candidateSha256
+    || calls[3].outcome.candidateSha256 !== candidateSha256 || calls[2].outcome.passed !== true
+    || calls[3].outcome.sourceUnchanged !== true) throw auditError();
+  if (artifact && (!(artifact.workResultIds || []).includes(owner.id)
+    || artifact.projectCandidate?.candidateSha256 !== candidateSha256)) throw auditError();
+  const synthesisSessions = (task.agentSessions || []).filter((candidate) => candidate.workItemId === synthesis.id
+    && candidate.runId === auditRunId && candidate.planRevision === task.plan.revision);
+  const synthesisSession = synthesisSessions.at(-1);
+  if (!synthesisSession || !['running', 'completed'].includes(synthesisSession.status)) throw auditError('当前执行缺少候选合成会话。');
+  const synthesisBinding = projectAuditBinding(task, synthesis);
+  const synthesisSessionBinding = projectSessionBinding(synthesis, synthesisBinding);
+  const synthesisSessionBindings = synthesisSessions.map((candidate) => assertProjectSessionBinding(candidate, synthesisSessionBinding));
+  const synthesisToolCalls = synthesisSessions.flatMap((candidate) => candidate.toolCalls || []);
+  const synthesisActualCalls = synthesisToolCalls.filter((call) => call.tool !== 'protocol');
+  if (synthesisActualCalls.length) throw auditError('候选合成步骤执行了未授权工具。');
+  const synthesisProtocolFeedback = synthesisToolCalls.filter((call) => call.tool === 'protocol').length;
+  const body = {
+    version: 1,
+    binding: { ...binding, candidateSha256 },
+    plan: {
+      id: task.plan.id,
+      revision: task.plan.revision,
+      source: task.plan.source,
+      goalVersionId: task.plan.goalVersionId,
+      projectRootGoalVersionId: task.plan.projectRootGoalVersionId,
+      projectRootInputFingerprint: task.plan.projectRootInputFingerprint ?? null,
+      materialApplicabilityFingerprint: task.plan.materialApplicabilityFingerprint ?? null,
+      workspaceScopeFingerprint: task.plan.workspaceScopeFingerprint ?? null,
+      sourceSnapshotSha256: task.plan.sourceSnapshotSha256 ?? null,
+      outputKind: task.plan.outputKind,
+      deliverables: [...(task.plan.deliverables || [])],
+      steps: planItems.map((item, index) => ({ workItemId: item.id, stepKey: item.stepKey, kind: item.kind, role: item.role, dependsOn: [...(item.dependsOn || [])], allowedTools: [...(item.tools || [])], binding: itemBindings[index] })),
+    },
+    lineage: { synthesisWorkItemId: synthesis.id, workspaceOwnerWorkItemId: owner.id, dependencyWorkItemIds: [...(synthesis.dependsOn || [])] },
+    execution: {
+      runId: auditRunId, sessionId: session.id, maxToolRounds: 3, toolRequestRounds: 3,
+      owner: { sessionBindings: ownerSessionBindings },
+      calls: calls.map((call) => structuredClone(call)), protocolFeedback,
+      synthesis: { sessionId: synthesisSession.id, sessionBindings: synthesisSessionBindings, actualToolCallCount: 0, protocolFeedbackCount: synthesisProtocolFeedback },
+    },
+  };
+  return { ...body, auditSha256: sha256(JSON.stringify(body)) };
+}
+
+export function assertProjectExecutionAuditCurrent(task, artifact) {
+  const stored = artifact?.projectCandidate?.projectExecutionAudit;
+  const storedSha = artifact?.projectCandidate?.projectExecutionAuditSha256;
+  const current = projectExecutionAudit(task, { artifact });
+  if (!stored || storedSha !== current.auditSha256 || stored.auditSha256 !== storedSha || JSON.stringify(stored) !== JSON.stringify(current)) throw auditError();
+  return current;
+}
+
 export function validateWorkResult(item, result, { toolCalls = [] } = {}) {
   const requests = Array.isArray(result?.toolRequests) ? result.toolRequests : [];
   const output = clean(result?.output, 1_500_000);
@@ -447,7 +694,9 @@ export function sessionInput(task, item, toolResults = [], memories = []) {
       sources: candidateArtifact.sources, claims: candidateArtifact.claims, derivations: candidateArtifact.derivations || [],
       deliverables: candidateArtifact.deliverables || [],
       nativeFiles: (candidateArtifact.nativeFiles || []).map((file) => ({ kind: file.kind, format: file.format, filename: file.filename, status: file.status, sha256: file.sha256, contentSha256: file.contentSha256, bytes: file.bytes, previewCount: file.previewPaths?.length || 0, error: file.error || null })),
+      projectCandidate: candidateArtifact.projectCandidate || null,
     } : null,
+    projectWorkspace: publicProjectWorkspace(task),
     toolResults, memories,
     instructions: task.suggestions.filter((suggestion) => item.inputSuggestionIds?.includes(suggestion.id)).map((suggestion) => ({ id: suggestion.id, text: suggestion.text })),
   };
@@ -456,7 +705,11 @@ export function sessionInput(task, item, toolResults = [], memories = []) {
 export function markSession(task, workItemId, status, patch = {}) {
   const session = workSession(task, workItemId);
   if (!session) return null;
-  Object.assign(session, patch, { status, updatedAt: new Date().toISOString() });
+  const item = task.workItems?.find((candidate) => candidate.id === workItemId);
+  Object.assign(session, patch, {
+    ...(item ? { inputFingerprint: item.inputFingerprint, sourceContextFingerprint: item.sourceContextFingerprint } : {}),
+    status, updatedAt: new Date().toISOString(),
+  });
   return session;
 }
 
@@ -467,7 +720,9 @@ export function assertSessionFresh(task, session, { runId = null, attemptId = nu
   const sessionProjectInputFingerprint = session?.projectRootInputFingerprint || (!task.projectRootTaskId ? projectRootInputFingerprint : null);
   if (!session || session.goalVersionId !== activeGoal(task).id || sessionProjectGoalVersionId !== projectRootGoalVersionId
     || sessionProjectInputFingerprint !== projectRootInputFingerprint || session.planRevision !== task.plan?.revision
-    || (session.materialApplicabilityFingerprint ?? null) !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint) {
+    || (session.materialApplicabilityFingerprint ?? null) !== materialContext(task, { includeGeneratedEvidence: false }).fingerprint
+    || (task.type === 'project' && (session.workspaceScopeFingerprint ?? null) !== projectWorkspaceFingerprint(task))
+    || (task.type === 'project' && (session.sourceSnapshotSha256 ?? null) !== (task.projectWorkspace?.sourceSnapshotSha256 || null))) {
     const error = new Error('代理会话属于旧目标或旧计划，结果已拒绝写入。');
     error.code = 'stale_result';
     throw error;

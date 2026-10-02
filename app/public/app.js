@@ -1,5 +1,5 @@
 import { synchronizedUrl } from './navigation-state.js';
-import { materialDecisionExpectation, planInputsChanged, shouldPollTask } from './task-input-state.js';
+import { materialDecisionExpectation, planInputsChanged, projectWorkspaceAttachExpectation, shouldPollTask } from './task-input-state.js';
 
 const initialQuery = new URLSearchParams(window.location.search);
 let requestedTaskId = initialQuery.get('task');
@@ -19,6 +19,7 @@ const state = {
   conversationRole: null,
   pendingAction: null,
   pendingActionTaskId: null,
+  projectCapabilities: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -75,6 +76,15 @@ function artifactInputIsCurrent(task, artifact) {
   if (artifact?.projectRootGoalVersionId && task?.projectRootGoalVersionId && artifact.projectRootGoalVersionId !== task.projectRootGoalVersionId) return false;
   if (artifact?.projectRootInputFingerprint && task?.projectRootInputFingerprint && artifact.projectRootInputFingerprint !== task.projectRootInputFingerprint) return false;
   if ((artifact?.materialApplicabilityFingerprint ?? null) !== (task?.materialContext?.fingerprint ?? null)) return false;
+  if (task?.type === 'project') {
+    const workspace = task.projectWorkspace;
+    const evidence = artifact?.projectCandidate;
+    if (!workspace || workspace.status !== 'ready' || !evidence) return false;
+    if (evidence.workspaceScopeFingerprint !== workspace.scopeFingerprint
+      || evidence.sourceSnapshotSha256 !== workspace.sourceSnapshotSha256
+      || evidence.candidateId !== workspace.candidate?.id
+      || evidence.candidateSha256 !== workspace.candidate?.candidateSha256) return false;
+  }
   return true;
 }
 
@@ -373,6 +383,44 @@ function renderMemory(task) {
   return `<label for="memory-policy-select">可搜索范围</label><select id="memory-policy-select" ${task.status === 'running' || planningBusy(task) ? 'disabled' : ''}><option value="task-only" ${task.memoryPolicy !== 'workspace-confirmed' ? 'selected' : ''}>只限当前任务</option><option value="workspace-confirmed" ${task.memoryPolicy === 'workspace-confirmed' ? 'selected' : ''}>其他任务中我已确认的成果</option></select><p class="field-note">候选稿不会自动进入记忆。只有你确认的版本可被搜索，并保留任务、版本和来源。</p>${entries.length ? `<div class="memory-register">${entries.slice().reverse().map((entry) => `<div class="memory-row"><div><strong>${esc(entry.title)}</strong><small>${esc(entry.source)} · ${esc(entry.status === 'active' ? '可用' : entry.status === 'conflict' ? '有冲突，暂停使用' : entry.status === 'superseded' ? '已被新版替代' : '已撤回')}</small></div>${['active','conflict'].includes(entry.status) ? `<button class="text-button" type="button" data-retract-memory="${esc(entry.id)}">撤回</button>` : ''}</div>`).join('')}</div>` : ''}`;
 }
 
+function renderProjectWorkspace(task) {
+  if (task.type !== 'project') return '';
+  const capability = state.projectCapabilities;
+  const fixture = capability?.fixtures?.[0];
+  const workspace = task.projectWorkspace;
+  const binding = {
+    goalVersionId: activeGoal(task)?.id || null,
+    projectRootGoalVersionId: task.projectRootGoalVersionId || activeGoal(task)?.id || null,
+    projectRootInputFingerprint: task.projectRootInputFingerprint || null,
+    materialApplicabilityFingerprint: task.materialContext?.fingerprint ?? null,
+  };
+  const capabilityText = !capability ? '正在读取本机隔离能力。'
+    : capability.available ? 'macOS 固定 Node 合约隔离可用；授权时仍会对实际候选路径运行正负探针。'
+      : capability.reason || '当前机器未通过固定隔离能力检查。';
+  const checks = workspace?.candidate?.checks || [];
+  const latestCheck = checks.at(-1);
+  const snapshot = {
+    expectedGoalVersionId: binding.goalVersionId,
+    expectedProjectRootGoalVersionId: binding.projectRootGoalVersionId,
+    expectedProjectRootInputFingerprint: binding.projectRootInputFingerprint,
+    expectedMaterialApplicabilityFingerprint: binding.materialApplicabilityFingerprint,
+    expectedPreviousScopeFingerprint: workspace?.scopeFingerprint || null,
+    expectedCapabilityFingerprint: capability?.fingerprint || null,
+  };
+  const status = workspace?.status === 'ready' ? '已授权且探针通过' : workspace ? workspace.reason || workspace.status : '尚未授权';
+  return `<section class="desk-sheet project-workspace-panel"><div class="sheet-heading"><h2>代码工作区</h2><span class="record-status" data-tone="${workspace?.status === 'ready' ? 'good' : 'warn'}">${esc(status)}</span></div><div class="sheet-body provider-line">
+    <p class="field-note">原项目始终只读；Irixi 只在本任务目录的隔离副本中修改一个明确文件。交付物是可下载 patch，不会写回原目录、运行 Git、发布或执行模型自选命令。</p>
+    <p><strong>公开行为</strong><br>${esc(fixture?.publicContract?.namedExport || 'greetName')}：${esc(fixture?.publicContract?.behavior || '去掉名称首尾空白并生成问候。')}</p>
+    <p class="field-note">可读：${esc((fixture?.readablePaths || workspace?.readablePaths || []).join('、') || '—')}<br>可改：${esc((fixture?.editablePaths || workspace?.editablePaths || []).join('、') || '—')}<br>固定检查：${esc(fixture?.checks?.[0]?.id || workspace?.checks?.[0]?.id || '—')}</p>
+    <p class="${capability?.available ? 'field-note' : 'demo-warning'}">${esc(capabilityText)}</p>
+    ${workspace ? `<p class="field-note">source ${esc(workspace.sourceSnapshotSha256 || '—')}<br>candidate ${esc(workspace.candidate?.candidateSha256 || '—')} · revision ${esc(workspace.candidate?.revision || '—')}${latestCheck ? `<br>检查 ${latestCheck.passed ? '通过' : '失败'}：${esc(latestCheck.casePassed)}/${esc(latestCheck.caseTotal)} cases · ${esc(latestCheck.resultDigest)}${(latestCheck.cases || []).some((entry) => entry.timedOut) ? ' · 含超时' : ''}${(latestCheck.cases || []).some((entry) => entry.truncated) ? ' · 输出超限' : ''}` : ''}</p>` : ''}
+    <form class="project-workspace-form" data-project-workspace-attach data-expected-snapshot="${esc(JSON.stringify(snapshot))}">
+      <input type="hidden" name="fixtureId" value="${esc(fixture?.id || 'node-single-file-v1')}">
+      <button class="secondary-button" type="submit" ${!capability?.available || task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${workspace?.status === 'ready' ? '按当前目标重新授权隔离副本' : '授权固定隔离副本'}</button>
+    </form>
+  </div></section>`;
+}
+
 function renderDesk() {
   const root = $('#desk-content');
   const task = state.task;
@@ -387,12 +435,13 @@ function renderDesk() {
   const execution = task.execution;
   const budgetLine = execution ? `<p class="field-note">本次运行：${task.provider === 'demo' ? '演示流程，不调用模型' : `${execution.modelCalls.length}/${execution.limits.maxModelCalls} 次模型调用 · 用量 ${execution.modelCalls.some((item) => item.usage !== 'unknown') ? '见调用记录' : '未知'}`} · 最长 ${Math.round(execution.limits.maxDurationMs / 60000)} 分钟 · 阶段 ${esc(execution.phase)}</p>` : '';
   root.innerHTML = `<div class="desk-columns"><div class="desk-stack">
+    ${renderProjectWorkspace(task)}
     <section class="desk-sheet"><div class="sheet-heading"><h2>材料账本</h2><button class="secondary-button" type="button" data-open-dialog="material-dialog">＋ 加入材料</button></div><div class="sheet-body">${renderMaterials(task)}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>新建议</h2><button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">＋ 记录建议</button></div><div class="sheet-body">${renderSuggestions(task)}</div></section>
   </div><aside class="desk-stack">
     <section class="desk-sheet"><div class="sheet-heading"><h2>续接状态</h2><button class="primary-button" type="button" data-action="continue" ${isRunning || isPlanning ? 'disabled' : ''}>继续工作</button></div><div class="sheet-body">${renderContinuity(task)}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>项目关联</h2></div><div class="sheet-body provider-line">${renderProject(task)}</div></section>
-    <section class="desk-sheet"><div class="sheet-heading"><h2>执行方式</h2></div><div class="sheet-body provider-line"><label for="provider-select">模型提供者</label><select id="provider-select" ${isRunning || isPlanning ? 'disabled' : ''}><option value="demo" ${task.provider === 'demo' ? 'selected' : ''}>演示提供者</option><option value="codex-cli" ${task.provider === 'codex-cli' ? 'selected' : ''}>Codex CLI · 真实模型</option></select>${task.provider === 'demo' ? '<p class="demo-warning">演示模式只验证流程，不代表真实智能产出。正式内容请切换 Codex。</p>' : '<p class="field-note">模型子进程关闭 shell、浏览器、应用与插件；材料、记忆和计算只由 Irixi 的授权工具提供。</p>'}</div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>执行方式</h2></div><div class="sheet-body provider-line"><label for="provider-select">模型提供者</label><select id="provider-select" ${isRunning || isPlanning || task.type === 'project' ? 'disabled' : ''}>${task.type === 'project' ? '<option value="codex-cli" selected>Codex CLI · 真实模型（代码项目固定）</option>' : `<option value="demo" ${task.provider === 'demo' ? 'selected' : ''}>演示提供者</option><option value="codex-cli" ${task.provider === 'codex-cli' ? 'selected' : ''}>Codex CLI · 真实模型</option>`}</select>${task.type === 'project' ? '<p class="field-note">Codex 只提出结构化 workspace 操作；宿主验证固定路径、版本、隔离检查和 diff。CLI shell 仍关闭。</p>' : task.provider === 'demo' ? '<p class="demo-warning">演示模式只验证流程，不代表真实智能产出。正式内容请切换 Codex。</p>' : '<p class="field-note">模型子进程关闭 shell、浏览器、应用与插件；材料、记忆和计算只由 Irixi 的授权工具提供。</p>'}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>记忆范围</h2></div><div class="sheet-body provider-line">${renderMemory(task)}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>本次团队</h2><span class="record-status">${esc(task.plan?.source === 'model' ? `计划 v${task.plan.revision}` : '固定流程')}</span></div><div class="sheet-body">${renderTeam(task)}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>工作步骤</h2><span class="record-status" data-tone="${isRunning || isPlanning ? 'active' : ''}">${esc(isPlanning ? '正在形成计划' : TASK_STATUS[task.status] || task.status)}</span></div><div class="sheet-body">${budgetLine}${needsReplan ? '<p class="demo-warning">材料或修改要求已变化。先按当前输入重新规划，原目标与旧版本都会保留。</p>' : ''}${renderWork(task)}<div class="inline-actions" style="margin-top:16px">${isPlanning ? '<button class="secondary-button" type="button" disabled>正在形成计划…</button><button class="danger-button" type="button" data-action="cancel">取消规划</button>' : !task.workItems.length ? '<button class="primary-button" type="button" data-action="plan">形成计划</button>' : isRunning ? '<button class="danger-button" type="button" data-action="cancel">取消运行</button>' : task.status === 'cancellation_unknown' ? '<button class="secondary-button" type="button" disabled>正在确认取消</button>' : needsReplan ? '<button class="primary-button" type="button" data-action="plan">按修改要求重新规划</button>' : '<button class="primary-button" type="button" data-action="run">生成候选成果</button>'}<button class="secondary-button" type="button" data-view-target="review">查看成果</button></div></div></section>
@@ -411,14 +460,16 @@ function exportLinks(task, artifact) {
   const approval = task.approvals.filter((item) => item.artifactId === artifact.id && item.status === 'confirmed').at(-1);
   if (!approval) return '';
   const base = `/api/tasks/${encodeURIComponent(task.id)}/artifacts/${encodeURIComponent(artifact.id)}/export?approval=${encodeURIComponent(approval.id)}`;
-  const links = [`<a class="export-link" href="${base}&format=md">下载 Markdown 新文件</a>`, `<a class="export-link" href="${base}&format=html">下载 HTML（可打印 PDF）</a>`];
+  const links = task.type === 'project'
+    ? [`<a class="export-link" href="${base}&format=patch">下载已确认 patch</a>`]
+    : [`<a class="export-link" href="${base}&format=md">下载 Markdown 新文件</a>`, `<a class="export-link" href="${base}&format=html">下载 HTML（可打印 PDF）</a>`];
   for (const file of artifact.nativeFiles || []) if (file.status === 'ready') {
     const label = { docx: 'Word 文档', xlsx: 'Excel 工作簿', pptx: 'PowerPoint 演示文稿' }[file.format] || file.format.toUpperCase();
     links.unshift(`<a class="export-link" href="${base}&format=${encodeURIComponent(file.format)}">下载 ${label}</a>`);
   }
   if (task.type === 'email') links.push(`<a class="export-link" href="${base}&format=eml">下载 EML 邮件草稿</a>`);
   if (task.type === 'calendar') links.push(`<a class="export-link" href="${base}&format=ics">下载 ICS 日历草稿</a>`);
-  return `<div class="review-panel"><h3>正式交付</h3><p class="field-note">每次点击只下载一份新文件，不发送、不发布、不覆盖来源。</p><div class="export-list">${links.join('')}</div></div>`;
+  return `<div class="review-panel"><h3>正式交付</h3><p class="field-note">${task.type === 'project' ? '下载的是经指定版本确认的候选 patch；不会自动应用、写回原项目、运行 Git 或发布。' : '每次点击只下载一份新文件，不发送、不发布、不覆盖来源。'}</p><div class="export-list">${links.join('')}</div></div>`;
 }
 
 function renderReview() {
@@ -439,7 +490,7 @@ function renderReview() {
   const onlyDeliverable = deliverables.length === 1 ? deliverables[0] : null;
   const structuredPayload = ['spreadsheet', 'presentation'].includes(onlyDeliverable?.kind);
   const summaryDiffersFromPayload = Boolean(onlyDeliverable && onlyDeliverable.kind !== 'document' && onlyDeliverable.content !== artifact.content);
-  const canEdit = artifact.status === 'candidate' && artifactInputIsCurrent(task, artifact)
+  const canEdit = task.type !== 'project' && artifact.status === 'candidate' && artifactInputIsCurrent(task, artifact)
     && !hasMultipleDeliverables && !structuredPayload && !summaryDiffersFromPayload;
   const editorContent = onlyDeliverable?.kind === 'document' ? onlyDeliverable.content : artifact.content;
   const nativeFiles = artifact.nativeFiles || [];
@@ -453,14 +504,17 @@ function renderReview() {
   }).join('');
   const nativePanel = artifact.deliverables?.some((entry) => ['document','spreadsheet','presentation'].includes(entry.kind))
     ? `<div class="review-panel"><h3>原生文件</h3>${nativeRows || '<p class="field-note">尚未生成原生候选文件，不能通过审阅。</p>'}</div>` : '';
+  const projectEvidence = artifact.projectCandidate;
+  const projectPanel = task.type === 'project' && projectEvidence ? `<div class="review-panel project-candidate-evidence"><h3>宿主代码证据</h3><p class="field-note">source ${esc(projectEvidence.sourceSnapshotSha256)}<br>candidate ${esc(projectEvidence.candidateSha256)}<br>diff ${esc(projectEvidence.diffSha256)}</p>${(projectEvidence.checks || []).map((check) => `<div class="check-row" data-passed="${check.passed}"><span class="check-mark">${check.passed ? '✓' : '×'}</span><div><strong>${esc(check.checkId)}</strong><p>${esc(check.casePassed)}/${esc(check.caseTotal)} cases · ${esc(check.resultDigest)} · ${check.timedOut ? '超时' : '未超时'}</p></div></div>`).join('')}<details class="compare-block" open><summary>候选 patch</summary><pre class="project-patch">${esc(projectEvidence.patch || '')}</pre></details></div>` : '';
   root.innerHTML = `<div class="version-bar" role="tablist" aria-label="候选版本">${currentArtifacts.map((item) => `<button class="version-tab ${item.id === artifact.id ? 'is-active' : ''}" type="button" data-artifact-id="${esc(item.id)}" data-confirmed="${item.status === 'confirmed'}">v${item.version} · ${esc(item.status === 'rejected' ? '已拒绝应用' : item.reviewStatus === 'passed' ? '已核对' : item.reviewStatus === 'failed' ? '有问题' : '待核对')}</button>`).join('')}</div>
     <div class="proof-grid"><article class="artifact-paper"><header class="artifact-header"><span class="eyebrow">${artifact.status === 'confirmed' ? 'CONFIRMED EDITION' : 'CANDIDATE EDITION'}</span><h2>${esc(artifact.title)}</h2><div class="artifact-meta"><span>版本 v${artifact.version}</span><span>目标 ${esc(activeGoal(task)?.id === artifact.goalVersionId ? `v${activeGoal(task).version}（当前）` : '历史版本')}</span><span>生成角色 ${esc(artifact.createdByRole === 'user' ? '用户' : '写作角色')}</span><span>提供者 ${esc(artifact.provider)}</span><span>${esc(dateLabel(artifact.createdAt))}</span></div></header>
       <textarea id="artifact-editor" class="artifact-content" aria-label="${canEdit ? '成果正文' : '成果概要（只读）'}" ${canEdit ? '' : 'readonly'}>${esc(editorContent)}</textarea>
       ${previous ? `<details class="compare-block"><summary>与 v${previous.version} 并排比较</summary><div class="compare-columns"><pre>${esc(previous.content)}</pre><pre>${esc(artifact.content)}</pre></div></details>` : ''}
     </article><aside class="review-sidebar">
-      <div class="review-panel"><h3>版本操作</h3><p class="field-note">任何修改都会保存为新候选版本，不会覆盖这一版，也不会继承正式确认。重新生成本地文件不会改正文，但已有核对会失效。</p><div class="button-stack">${artifactBusy ? '<button class="secondary-button" type="button" disabled>正在处理当前版本…</button>' : ''}${!artifactBusy && artifact.status === 'candidate' && nativeFiles.length ? '<button class="secondary-button" type="button" data-action="refresh-native">重新生成本地文件</button>' : ''}${!artifactBusy && canEdit ? '<button class="secondary-button" type="button" data-action="save-revision">保存为新版本</button>' : ''}${!artifactBusy && artifact.status === 'candidate' ? '<button class="secondary-button" type="button" data-action="review-artifact">重新独立核对</button>' : ''}${!artifactBusy && artifact.reviewStatus === 'passed' && review?.passed && artifact.status === 'candidate' ? '<button class="primary-button" type="button" data-action="confirm-artifact">确认这个指定版本</button><button class="danger-button" type="button" data-action="reject-artifact">拒绝应用这个版本</button>' : ''}</div></div>
+      <div class="review-panel"><h3>版本操作</h3><p class="field-note">${task.type === 'project' ? '代码正文不能在审阅台直接覆盖；修改要求会产生新的隔离候选，并重新固定检查、审阅和确认。' : '任何修改都会保存为新候选版本，不会覆盖这一版，也不会继承正式确认。重新生成本地文件不会改正文，但已有核对会失效。'}</p><div class="button-stack">${artifactBusy ? '<button class="secondary-button" type="button" disabled>正在处理当前版本…</button>' : ''}${!artifactBusy && artifact.status === 'candidate' && nativeFiles.length ? '<button class="secondary-button" type="button" data-action="refresh-native">重新生成本地文件</button>' : ''}${!artifactBusy && canEdit ? '<button class="secondary-button" type="button" data-action="save-revision">保存为新版本</button>' : ''}${!artifactBusy && artifact.status === 'candidate' ? '<button class="secondary-button" type="button" data-action="review-artifact">重新独立核对</button>' : ''}${!artifactBusy && artifact.reviewStatus === 'passed' && review?.passed && artifact.status === 'candidate' ? '<button class="primary-button" type="button" data-action="confirm-artifact">确认这个指定版本</button><button class="danger-button" type="button" data-action="reject-artifact">拒绝应用这个版本</button>' : ''}</div></div>
       ${(hasMultipleDeliverables || structuredPayload || summaryDiffersFromPayload) && artifact.status !== 'confirmed' ? `<div class="review-panel"><h3>通过同事修改真正成果</h3><p class="field-note">上方是只读概要，不会用普通文本覆盖${hasMultipleDeliverables ? '多份交付物' : structuredPayload ? '结构化电子表格或演示文稿' : '与概要不同的真正交付内容'}。请在同事对话中提交修改要求并重新运行，以产生结构完整的新版本。</p><button class="secondary-button" type="button" data-view-target="desk">回到任务书桌</button></div>` : ''}
       ${reviewPanel(review, artifact)}
+      ${projectPanel}
       ${nativePanel}
       <div class="review-panel"><h3>来源账目</h3><p class="field-note">${artifact.sources.length ? artifact.sources.map((source) => `• ${esc(source)}`).join('<br>') : '没有记录外部来源。'}</p>${review?.sourceEvidence?.length ? review.sourceEvidence.map((source) => `<div class="check-row" data-passed="true"><span class="check-mark">↳</span><div><strong>${esc(source.sourceName)} · ${esc(source.locator)}</strong><p>${esc(source.quote)}</p></div></div>`).join('') : ''}</div>
       ${exportLinks(task, artifact)}
@@ -489,6 +543,10 @@ function renderAll() {
 }
 
 async function loadTasks({ preserve = true } = {}) {
+  if (!state.projectCapabilities) {
+    try { state.projectCapabilities = (await api('/api/project-capabilities')).project; }
+    catch { state.projectCapabilities = { available: false, reason: '无法核对本机固定代码隔离能力。', fixtures: [] }; }
+  }
   const result = await api('/api/tasks');
   state.tasks = result.tasks;
   const remembered = preserve ? requestedTaskId || state.task?.id || localStorage.getItem('irixi.activeTask') : null;
@@ -679,6 +737,13 @@ document.addEventListener('change', async (event) => {
     $$('[data-material-panel]').forEach((panel) => { panel.hidden = panel.dataset.materialPanel !== event.target.value; });
     return;
   }
+  if (event.target.matches('#task-form [name="type"]')) {
+    const project = event.target.value === 'project';
+    const provider = $('#task-form [name="provider"]');
+    if (project) provider.value = 'codex-cli';
+    provider.disabled = project;
+    return;
+  }
   if (event.target.matches('[data-suggestion-classification]')) {
     try { await postTaskAction(`suggestions/${event.target.dataset.suggestionClassification}/classification`, { classification: event.target.value }); announce('建议分类已更正，计划需要重新核对。'); }
     catch (error) { announce(error.message, 'error'); }
@@ -705,6 +770,18 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('submit', async (event) => {
+  const projectForm = event.target.closest('[data-project-workspace-attach]');
+  if (projectForm) {
+    event.preventDefault();
+    const snapshot = projectWorkspaceAttachExpectation(projectForm);
+    const fixtureId = new FormData(projectForm).get('fixtureId');
+    try {
+      await postTaskAction('project-workspace/attach', { fixtureId, ...snapshot });
+      announce('固定代码工作区已复制并完成实际路径隔离探针；原项目保持只读。');
+      await loadTasks({ preserve: true });
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   const materialForm = event.target.closest('[data-material-applicability]');
   if (materialForm) {
     event.preventDefault();
@@ -745,6 +822,7 @@ $('#task-form').addEventListener('submit', async (event) => {
   const element = event.currentTarget;
   const form = new FormData(element);
   const body = Object.fromEntries(form);
+  if (body.type === 'project') body.provider = 'codex-cli';
   body.successCriteria = String(body.successCriteria || '').split(/\r?\n/).filter(Boolean);
   body.boundaries = String(body.boundaries || '').split(/\r?\n/).filter(Boolean);
   try {

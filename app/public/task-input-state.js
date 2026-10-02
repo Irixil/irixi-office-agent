@@ -6,7 +6,9 @@ export function planInputsChanged(task) {
   const suggestionIds = (task.suggestions || []).filter((item) => (item.goalVersionId || goalId) === goalId && item.classification === 'support' && item.status === 'routed').map((item) => item.id).sort();
   return task.workItems.some((item) => (item.materialApplicabilityFingerprint ?? null) !== materialApplicabilityFingerprint
     || JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(materialIds)
-    || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(suggestionIds));
+    || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(suggestionIds)
+    || (task.type === 'project' && (item.workspaceScopeFingerprint ?? null) !== (task.projectWorkspace?.scopeFingerprint ?? null))
+    || (task.type === 'project' && (item.sourceSnapshotSha256 ?? null) !== (task.projectWorkspace?.sourceSnapshotSha256 ?? null)));
 }
 
 export function shouldPollTask(task, { pendingAction = null, pendingActionTaskId = null, planning = false, conversation = false } = {}) {
@@ -20,5 +22,17 @@ export function materialDecisionExpectation(form) {
     expectedFingerprint: JSON.parse(form.dataset.expectedFingerprint),
     expectedScope: JSON.parse(form.dataset.expectedScope),
     expectedContentSha256: JSON.parse(form.dataset.expectedContentSha256),
+  };
+}
+
+export function projectWorkspaceAttachExpectation(form) {
+  const value = JSON.parse(form.dataset.expectedSnapshot || '{}');
+  return {
+    expectedGoalVersionId: value.expectedGoalVersionId ?? null,
+    expectedProjectRootGoalVersionId: value.expectedProjectRootGoalVersionId ?? null,
+    expectedProjectRootInputFingerprint: value.expectedProjectRootInputFingerprint ?? null,
+    expectedMaterialApplicabilityFingerprint: value.expectedMaterialApplicabilityFingerprint ?? null,
+    expectedPreviousScopeFingerprint: value.expectedPreviousScopeFingerprint ?? null,
+    expectedCapabilityFingerprint: value.expectedCapabilityFingerprint ?? null,
   };
 }

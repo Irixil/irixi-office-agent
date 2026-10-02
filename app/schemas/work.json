@@ -14,12 +14,12 @@
       "criterion": { "type": "string" }, "passed": { "type": "boolean" }, "evidence": { "type": "string" }
     }, "required": ["criterion", "passed", "evidence"], "additionalProperties": false } },
     "deliverables": { "type": "array", "maxItems": 4, "items": { "type": "object", "properties": {
-      "kind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research"] },
+      "kind": { "type": "string", "enum": ["document", "spreadsheet", "presentation", "email", "calendar", "research", "project_patch"] },
       "title": { "type": "string" }, "content": { "type": "string" }
     }, "required": ["kind", "title", "content"], "additionalProperties": false } },
     "toolRequests": { "type": "array", "maxItems": 6, "items": { "type": "object", "properties": {
       "id": { "type": "string" },
-      "tool": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read"] },
+      "tool": { "type": "string", "enum": ["materials.read", "materials.search", "memory.search", "calculate", "web.search", "web.read", "workspace.read", "workspace.write", "workspace.diff", "workspace.check"] },
       "args": { "anyOf": [
         { "type": "object", "properties": { "materialIds": { "type": "array", "items": { "type": "string" } } }, "required": ["materialIds"], "additionalProperties": false },
         { "type": "object", "properties": {
@@ -35,7 +35,25 @@
           "inputs": { "type": "array", "items": { "type": "object", "properties": {
             "name": { "type": "string" }, "value": { "type": "number" }, "sourceRef": { "type": "string" }
           }, "required": ["name", "value", "sourceRef"], "additionalProperties": false } }
-        }, "required": ["expression", "inputs"], "additionalProperties": false }
+        }, "required": ["expression", "inputs"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "path": { "type": "string" },
+          "view": { "type": "string", "enum": ["source", "candidate"] },
+          "expectedCandidateSha256": { "type": "string" }
+        }, "required": ["path", "view", "expectedCandidateSha256"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "path": { "type": "string" },
+          "expectedFileSha256": { "type": "string" },
+          "expectedCandidateSha256": { "type": "string" },
+          "content": { "type": "string" }
+        }, "required": ["path", "expectedFileSha256", "expectedCandidateSha256", "content"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "expectedCandidateSha256": { "type": "string" }
+        }, "required": ["expectedCandidateSha256"], "additionalProperties": false },
+        { "type": "object", "properties": {
+          "checkId": { "type": "string" },
+          "expectedCandidateSha256": { "type": "string" }
+        }, "required": ["checkId", "expectedCandidateSha256"], "additionalProperties": false }
       ] },
       "reason": { "type": "string" }
     }, "required": ["id", "tool", "args", "reason"], "additionalProperties": false } }

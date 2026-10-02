@@ -10,8 +10,14 @@ import {
   materialContext,
   registerAddedMaterial,
 } from './material-applicability.mjs';
+import {
+  assertProjectArtifactCurrent,
+  projectArtifactIsCurrent,
+  projectCandidateFingerprint,
+  publicProjectWorkspace,
+} from './project-workspace.mjs';
 
-const VALID_TASK_TYPES = new Set(['general', 'document', 'research', 'spreadsheet', 'presentation', 'email', 'calendar']);
+const VALID_TASK_TYPES = new Set(['general', 'document', 'research', 'spreadsheet', 'presentation', 'email', 'calendar', 'project']);
 const VALID_SUGGESTIONS = new Set(['support', 'replace', 'deviate', 'unclear']);
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{5,80}$/;
 
@@ -60,6 +66,11 @@ function archiveCurrentPlan(task, reason) {
 
 export function invalidateCurrentWork(task, reason, message) {
   archiveCurrentPlan(task, reason);
+  if (task.projectWorkspace) {
+    if (task.projectWorkspace.candidate?.status === 'ready') task.projectWorkspace.candidate.status = 'historical';
+    task.projectWorkspace.status = 'reauthorization_required';
+    task.projectWorkspace.reason = '目标、材料、项目关联或已接受交代已变化，请重新明确授权当前代码工作区。';
+  }
   for (const item of task.workItems || []) if (!['completed', 'cancelled', 'stale'].includes(item.status)) item.status = 'stale';
   for (const session of task.agentSessions || []) {
     if (session.goalVersionId === activeGoal(task).id && !['completed', 'cancelled', 'stale'].includes(session.status)) session.status = 'stale';
@@ -127,7 +138,7 @@ export function createTask(input = {}) {
     type,
     status: 'idle',
     activeRole: 'coordinator',
-    provider: input.provider === 'codex-cli' ? 'codex-cli' : 'demo',
+    provider: type === 'project' || input.provider === 'codex-cli' ? 'codex-cli' : 'demo',
     goal: { activeVersionId: goalVersion.id, versions: [goalVersion] },
     projectRootTaskId: null,
     projectRootGoalVersionId: goalVersion.id,
@@ -195,7 +206,7 @@ export function addSuggestion(task, input = {}) {
     pauseForGoalDecision(task);
     setTaskState(task, 'waiting_user', 'coordinator', '发现可能替代当前目标的建议，已暂停受影响工作。');
   } else {
-    if (classification === 'support' && (task.plan || task.workItems?.length)) invalidateCurrentWork(task, 'accepted_instruction_changed', '已接受新的工作交代；旧计划与在途结果已失效，需要按当前输入重新规划。');
+    if (classification === 'support' && (task.projectWorkspace || task.plan || task.workItems?.length)) invalidateCurrentWork(task, 'accepted_instruction_changed', '已接受新的工作交代；旧计划、代码工作区授权与在途结果已失效，需要按当前输入重新规划。');
     else event(task, 'suggestion.routed', `建议已归入“${classification}”。`, { suggestionId: suggestion.id, classification });
   }
   return suggestion;
@@ -218,10 +229,10 @@ export function correctSuggestion(task, suggestionId, classification) {
     classification,
   });
   if (classification === 'replace') {
-    if (classification !== previous && previous === 'support' && (task.plan || task.workItems?.length)) invalidateCurrentWork(task, 'accepted_instruction_changed', '已接受的工作交代发生变化；旧计划与在途结果已失效，需要重新规划。');
+    if (classification !== previous && previous === 'support' && (task.projectWorkspace || task.plan || task.workItems?.length)) invalidateCurrentWork(task, 'accepted_instruction_changed', '已接受的工作交代发生变化；旧计划与代码工作区授权已失效，需要重新规划。');
     pauseForGoalDecision(task);
     setTaskState(task, 'waiting_user', 'coordinator', '发现可能替代当前目标的建议，已暂停受影响工作。');
-  } else if (classification !== previous && (classification === 'support' || previous === 'support') && (task.plan || task.workItems?.length)) {
+  } else if (classification !== previous && (classification === 'support' || previous === 'support') && (task.projectWorkspace || task.plan || task.workItems?.length)) {
     invalidateCurrentWork(task, 'accepted_instruction_changed', '已接受的工作交代发生变化；旧计划与在途结果已失效，需要重新规划。');
   }
   else if (previous === 'replace' && !task.suggestions.some((item) => item.id !== suggestionId && item.classification === 'replace' && item.status === 'waiting_user')) {
@@ -242,6 +253,7 @@ export function acceptGoalReplacement(task, suggestionId, input = {}) {
   if (!nextSuccessCriteria.length) throw new Error('请明确填写新目标的成功条件；不会自动继承旧条件。');
   if (!nextBoundaries.length) throw new Error('请明确填写新目标的工作边界；不会自动继承旧边界。');
   ensureMaterialPolicy(task, 'goal_replaced');
+  if (task.projectWorkspace) invalidateCurrentWork(task, 'goal_replaced', '新目标已接受；旧代码工作区授权、计划与候选已失效，需要按完整新输入重新授权。');
   for (const item of task.events || []) {
     if (!item.type?.startsWith('conversation.') || item.detail?.goalVersionId) continue;
     item.detail ??= {};
@@ -305,7 +317,7 @@ export function addMaterial(task, input = {}) {
   task.materials.push(material);
   if (readyUserMaterial) registerAddedMaterial(task, material);
   event(task, 'material.added', `${material.name} 已进入材料账本。`, { materialId: material.id, status: material.status });
-  if (readyUserMaterial && (task.plan || task.workItems?.length || task.artifacts?.some((artifact) => ['candidate', 'confirmed'].includes(artifact.status)))) {
+  if (readyUserMaterial && (task.projectWorkspace || task.plan || task.workItems?.length || task.artifacts?.some((artifact) => ['candidate', 'confirmed'].includes(artifact.status)))) {
     invalidateCurrentWork(task, 'material_input_changed', '材料输入已变化；旧计划、在途结果和候选资格已失效，需要按当前材料重新规划。');
   }
   return material;
@@ -380,6 +392,7 @@ export function createArtifact(task, result, provider, expectedGoalVersionId = a
       kind: cleanText(entry.kind, 40), title: cleanText(entry.title, 200), content: cleanText(entry.content, 1_500_000),
     })).filter((entry) => entry.kind && entry.content) : [],
     nativeFiles: [],
+    ...(task.type === 'project' && result.projectCandidate ? { projectCandidate: structuredClone(result.projectCandidate) } : {}),
     provider,
     createdByRole: provider === 'human-edit' ? 'user' : 'writer',
     goalVersionId: goal.id,
@@ -394,6 +407,7 @@ export function createArtifact(task, result, provider, expectedGoalVersionId = a
     createdAt: now(),
   };
   if (!artifact.content) throw new Error('提供者没有返回可用的候选内容。');
+  if (task.type === 'project' && !artifact.projectCandidate) throw new Error('代码候选缺少宿主生成的真实 diff 与固定检查证据。');
   task.artifacts.push(artifact);
   event(task, 'artifact.created', `候选成果 v${version} 已生成。`, { artifactId: artifact.id, provider });
   return artifact;
@@ -405,6 +419,7 @@ export function reviseArtifact(task, artifactId, input = {}) {
   if (base.goalVersionId !== activeGoal(task).id) throw new Error('旧目标下的成果不能直接改成当前目标成果。');
   assertArtifactInputCurrent(task, base);
   if (!['candidate', 'confirmed'].includes(base.status)) throw new Error('只有当前有效候选或已确认版本可以保存人工修改。');
+  if (task.type === 'project') throw new Error('代码候选不能用正文编辑器覆盖；请提交修改要求并重新运行受控工作区流程。');
   const baseDeliverables = base.deliverables || [];
   if (baseDeliverables.length > 1) throw new Error('这个候选包含多份交付物，请在同事对话中提交修改要求后重新运行，以免覆盖其他交付物。');
   const onlyDeliverable = baseDeliverables[0] || null;
@@ -427,7 +442,7 @@ export function reviseArtifact(task, artifactId, input = {}) {
   }, 'human-edit');
 }
 
-export function recordReview(task, artifactId, result) {
+export function recordReview(task, artifactId, result, { projectReviewFacts = null } = {}) {
   const artifact = task.artifacts.find((item) => item.id === artifactId);
   if (!artifact) throw new Error('找不到要核对的候选成果。');
   assertArtifactInputCurrent(task, artifact);
@@ -478,6 +493,18 @@ export function recordReview(task, artifactId, result) {
       blocking: true,
     },
     {
+      name: '代码候选宿主证据守卫',
+      passed: task.type !== 'project' || projectArtifactIsCurrent(task, artifact)
+        && artifact.projectCandidate.changes?.length > 0
+        && artifact.projectCandidate.checks?.some((entry) => entry.passed && entry.candidateSha256 === artifact.projectCandidate.candidateSha256),
+      evidence: task.type !== 'project'
+        ? '这个候选不是代码项目。'
+        : projectArtifactIsCurrent(task, artifact)
+          ? '宿主记录的当前 source、candidate、diff、固定检查与任务输入一致。'
+          : '代码候选已不匹配当前工作区或任务输入。',
+      blocking: true,
+    },
+    {
       name: '原生文件可用性守卫',
       passed: (artifact.deliverables || []).filter((entry) => ['document', 'spreadsheet', 'presentation'].includes(entry.kind))
         .every((entry) => artifact.nativeFiles?.some((file) => file.kind === entry.kind && file.status === 'ready')),
@@ -502,7 +529,7 @@ export function recordReview(task, artifactId, result) {
           : claimProblems.slice(0, 8).join('；'),
       blocking: true,
     },
-    ...groundingChecks(task, artifact),
+    ...groundingChecks(task, artifact, { projectReviewFacts }),
   ];
   const checks = [...providedChecks, ...deterministicChecks];
   const passed = checks.length > 0 && checks.every((item) => item.passed || !item.blocking);
@@ -523,6 +550,7 @@ export function recordReview(task, artifactId, result) {
     nativeFiles: (artifact.nativeFiles || []).filter((file) => file.status === 'ready').map((file) => ({
       kind: file.kind, sha256: file.sha256 || null, contentSha256: file.contentSha256 || null, generatorRevision: file.generatorRevision || null,
     })),
+    projectCandidateFingerprint: projectCandidateFingerprint(artifact.projectCandidate),
     createdAt: now(),
   };
   task.reviews.push(review);
@@ -554,6 +582,9 @@ export function confirmArtifact(task, artifactId) {
     })));
     if (reviewed !== current) throw new Error('本地文件已在上次核对后变化，请重新独立核对。');
   }
+  if (task.type === 'project' && latestReview.projectCandidateFingerprint !== projectCandidateFingerprint(artifact.projectCandidate)) {
+    throw new Error('代码候选证据已在独立审阅后变化，请重新审阅。');
+  }
   const missingNative = (artifact.deliverables || []).filter((entry) => ['document', 'spreadsheet', 'presentation'].includes(entry.kind)
     && !artifact.nativeFiles?.some((file) => file.kind === entry.kind && file.status === 'ready'));
   if (missingNative.length) throw new Error(`候选原生文件尚未生成并验证：${missingNative.map((entry) => entry.kind).join('、')}。`);
@@ -562,11 +593,12 @@ export function confirmArtifact(task, artifactId) {
   artifact.confirmedAt = now();
   const approval = {
     id: makeId('approval'),
-    action: 'export-new-file',
+    action: task.type === 'project' ? 'export-project-patch' : 'export-new-file',
     artifactId,
     artifactVersion: artifact.version,
     goalVersionId: artifact.goalVersionId,
     materialApplicabilityFingerprint: artifact.materialApplicabilityFingerprint ?? null,
+    projectCandidateFingerprint: projectCandidateFingerprint(artifact.projectCandidate),
     status: 'confirmed',
     decidedAt: now(),
   };
@@ -620,9 +652,13 @@ export function assertExportAllowed(task, artifactId, approvalId) {
     })));
     if (reviewed !== current) throw new Error('本地文件已在确认后变化，必须重新核对并确认。');
   }
+  if (task.type === 'project' && latestReview.projectCandidateFingerprint !== projectCandidateFingerprint(artifact.projectCandidate)) {
+    throw new Error('代码候选证据已在确认后变化，必须重新核对并确认。');
+  }
   const approval = task.approvals.find((item) => {
     if (item.id !== approvalId || item.artifactId !== artifactId || item.status !== 'confirmed') return false;
-    if (item.goalVersionId === artifact.goalVersionId) return item.materialApplicabilityFingerprint === artifact.materialApplicabilityFingerprint;
+    if (item.goalVersionId === artifact.goalVersionId) return item.materialApplicabilityFingerprint === artifact.materialApplicabilityFingerprint
+      && (task.type !== 'project' || item.projectCandidateFingerprint === projectCandidateFingerprint(artifact.projectCandidate));
     return item.goalVersionId === undefined
       && projectRootId(task) === task.id
       && artifact.projectRootGoalVersionId === undefined
@@ -635,6 +671,8 @@ export function assertExportAllowed(task, artifactId, approvalId) {
 
 export function publicTask(task) {
   const result = structuredClone(task);
+  delete result.projectWorkspaceHistory;
+  if (Object.hasOwn(result, 'projectWorkspace')) result.projectWorkspace = publicProjectWorkspace(task);
   const materials = materialContext(task);
   const planningMaterials = materialContext(task, { includeGeneratedEvidence: false });
   result.materialContext = {
@@ -662,6 +700,7 @@ export function assertArtifactInputCurrent(task, artifact) {
   }
   if (projectRootId(task) !== task.id && !artifact.projectRootInputFingerprint) throw new Error('这个候选没有绑定当前项目输入，请重新规划。');
   if (!applicabilityFingerprintMatches(task, artifact.materialApplicabilityFingerprint)) throw new Error('材料内容或适用决定已变化，请按当前材料重新规划、生成和核对。');
+  assertProjectArtifactCurrent(task, artifact);
 }
 
 export function artifactInputIsCurrent(task, artifact) {
@@ -677,6 +716,7 @@ export function artifactInputIsCurrent(task, artifact) {
   }
   if (projectRootId(task) !== task.id && !artifact.projectRootInputFingerprint) return false;
   if (!applicabilityFingerprintMatches(task, artifact.materialApplicabilityFingerprint)) return false;
+  if (!projectArtifactIsCurrent(task, artifact)) return false;
   return true;
 }
 

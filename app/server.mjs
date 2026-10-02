@@ -34,10 +34,13 @@ import {
 import { createProviders } from './providers.mjs';
 import {
   applyModelPlan,
+  assertProjectExecutionAuditCurrent,
   assertSessionFresh,
   markSession,
   readyWorkItems,
   sessionInput,
+  projectExecutionAudit,
+  stampProjectToolCall,
   validateWorkResult,
   validateModelPlan,
   workSession,
@@ -58,6 +61,7 @@ import {
   beginWorkItem,
   completeWork,
   completeWorkItem,
+  createTrustedProjectReviewFacts,
   failWork,
   failWorkItem,
   finishModelCall,
@@ -72,6 +76,7 @@ import {
   validateClaim,
   validateResearchResult,
 } from './execution.mjs';
+import { createProjectWorkspaceHost, projectWorkspaceFingerprint, projectWorkspaceIsCurrent } from './project-workspace.mjs';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(moduleDir, '..');
@@ -625,7 +630,7 @@ async function callProviderStep(store, providers, taskId, role, method, signal, 
   }
 }
 
-async function callDynamicWork(store, providers, taskId, workItemId, signal, runId) {
+async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, workItemId, signal, runId) {
   let toolResults = [];
   const seenRequestIds = new Set();
   for (let round = 0; round < 4; round += 1) {
@@ -651,6 +656,10 @@ async function callDynamicWork(store, providers, taskId, workItemId, signal, run
         linkedTaskContext: providerTask.linkedTaskContext,
         continuity: deriveTaskContinuity(providerTask),
       };
+      if (providerTask.type === 'project' && prepared.result.item.kind === 'synthesis') {
+        providerInput.projectSourceIntegrity = await projectWorkspaceHost.currentSourceIntegrity(providerTask, store.taskDir(taskId));
+        providerInput.projectExecutionAudit = projectExecutionAudit(providerTask, { synthesisWorkItemId: prepared.result.item.id });
+      }
       await store.mutate(taskId, async (task) => {
         await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
         const session = workSession(task, workItemId);
@@ -707,13 +716,21 @@ async function callDynamicWork(store, providers, taskId, workItemId, signal, run
           },
         };
       };
-      const executed = await runAuthorizedTools(store, latest, item, requests, { signal, onHostedSearchStart });
+      const executed = await runAuthorizedTools(store, latest, item, requests, { signal, onHostedSearchStart, projectWorkspaceHost });
       const feedback = protocolError ? [{ requestId: `protocol-${round + 1}`, tool: 'protocol', ok: false, error: protocolError, sources: [] }] : [];
       toolResults = [...toolResults, ...executed, ...feedback];
       await store.mutate(taskId, (task) => {
         const session = workSession(task, workItemId);
         assertSessionFresh(task, session, { runId, attemptId: prepared.result.attemptId });
-        session.toolCalls.push(...[...executed, ...feedback].map((entry) => ({ ...entry, at: new Date().toISOString() })));
+        const current = task.workItems.find((candidate) => candidate.id === workItemId);
+        let sequence = session.toolCalls.filter((entry) => entry.hostAudit).length;
+        const recorded = executed.map((entry, index) => entry.tool?.startsWith('workspace.')
+          ? stampProjectToolCall(task, current, session, requests[index], entry, {
+            runId, attemptId: prepared.result.attemptId, round: round + 1, batchOrdinal: round + 1,
+            requestOrdinal: index + 1, sessionSequence: ++sequence,
+          })
+          : entry);
+        session.toolCalls.push(...[...recorded, ...feedback].map((entry) => ({ ...entry, at: new Date().toISOString() })));
         event(task, 'tool.batch_completed', `${item.title} 的 ${executed.length} 个受控工具请求已完成。`, { workItemId, agentId: item.agentId, requests: executed.map((entry) => ({ requestId: entry.requestId, tool: entry.tool, ok: entry.ok, sources: entry.sources })) });
       });
     } catch (error) {
@@ -799,6 +816,13 @@ function artifactContentSha256(artifact) {
     content: artifact.content,
     deliverables: (artifact.deliverables || []).map((entry) => ({ kind: entry.kind, title: entry.title, content: entry.content })),
   })).digest('hex');
+}
+
+async function trustedReviewOptions(task, artifact, taskDir, projectWorkspaceHost) {
+  if (task.type !== 'project') return {};
+  await projectWorkspaceHost.assertArtifactFilesCurrent(task, taskDir, artifact);
+  assertProjectExecutionAuditCurrent(task, artifact);
+  return { projectReviewFacts: createTrustedProjectReviewFacts(task, artifact) };
 }
 
 function recoverableNativeCandidate(task) {
@@ -916,7 +940,7 @@ async function handleDynamicWorkFailure(store, taskId, itemSnapshot, error, runI
   });
 }
 
-async function runDynamicTask(store, providers, taskId, controller, runInfo) {
+async function runDynamicTask(store, providers, projectWorkspaceHost, taskId, controller, runInfo) {
   if (runInfo.resumeNative) await resumeNativeCandidate(store, taskId, controller, runInfo);
   while (true) {
     await answerOneQueuedConversation(store, providers, taskId, controller.signal);
@@ -953,9 +977,9 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
           setTaskState(draft, 'running', item.role, `${agent?.name || item.role}正在处理“${item.title}”。`);
         });
         try {
-          const result = await callDynamicWork(store, providers, taskId, item.id, controller.signal, runInfo.runId);
+          const result = await callDynamicWork(store, providers, projectWorkspaceHost, taskId, item.id, controller.signal, runInfo.runId);
           if (String(result.gap || '').trim()) throw Object.assign(new Error(result.gap), { code: 'work_gap' });
-          const staged = await store.mutate(taskId, (draft) => {
+          const staged = await store.mutate(taskId, async (draft) => {
             const current = draft.workItems.find((candidate) => candidate.id === item.id);
             const session = workSession(draft, item.id);
             assertSessionFresh(draft, session, { runId: runInfo.runId });
@@ -967,7 +991,12 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
               const missingKinds = requiredKinds.filter((kind) => !deliverables.some((entry) => entry.kind === kind && String(entry.content || '').trim()));
               if (missingKinds.length) throw Object.assign(new Error(`候选成果缺少交付物：${missingKinds.join('、')}。`), { code: 'work_gap' });
               const derivations = (draft.agentSessions || []).flatMap((session) => session.toolCalls || []).filter((entry) => entry.tool === 'calculate' && entry.ok);
-              const artifact = createArtifact(draft, { title: `${draft.title}｜候选成果`, summary: result.summary, content: result.output, sources: result.sources, claims: result.claims, caveats: result.caveats, deliverables, derivations }, draft.provider, runInfo.goalVersionId);
+              const projectCandidate = draft.type === 'project' ? await projectWorkspaceHost.buildArtifactEvidence(draft, store.taskDir(taskId)) : null;
+              if (projectCandidate) {
+                projectCandidate.projectExecutionAudit = projectExecutionAudit(draft, { synthesisWorkItemId: current.id });
+                projectCandidate.projectExecutionAuditSha256 = projectCandidate.projectExecutionAudit.auditSha256;
+              }
+              const artifact = createArtifact(draft, { title: `${draft.title}｜候选成果`, summary: result.summary, content: result.output, sources: result.sources, claims: result.claims, caveats: result.caveats, deliverables, derivations, projectCandidate }, draft.provider, runInfo.goalVersionId);
               artifactId = artifact.id;
               storedResult = { ...storedResult, artifactId: artifact.id, version: artifact.version };
               session.nativeCandidate = {
@@ -988,7 +1017,7 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
             return { artifactId: null, storedResult };
           });
           if (staged.result.artifactId) {
-            await generateNativeCandidateFiles(store, taskId, staged.result.artifactId, { signal: controller.signal, runId: runInfo.runId, workItemId: item.id });
+            if (staged.task.type !== 'project') await generateNativeCandidateFiles(store, taskId, staged.result.artifactId, { signal: controller.signal, runId: runInfo.runId, workItemId: item.id });
             await store.mutate(taskId, (draft) => {
               const session = workSession(draft, item.id);
               assertSessionFresh(draft, session, { runId: runInfo.runId });
@@ -1031,10 +1060,14 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
     if (reviewItem) {
       const artifact = task.artifacts.filter((item) => item.goalVersionId === runInfo.goalVersionId).at(-1);
       if (!artifact) throw new Error('独立审阅前缺少候选成果。');
+      if (task.type === 'project') {
+        await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(taskId), artifact);
+        assertProjectExecutionAuditCurrent(task, artifact);
+      }
       await store.mutate(taskId, (draft) => { beginWorkItem(draft, reviewItem.id); draft.activeAgentId = reviewItem.agentId; markSession(draft, reviewItem.id, 'running', { runId: runInfo.runId }); if (draft.execution.phase === 'executing') transitionExecution(draft, 'reviewing'); setTaskState(draft, 'running', reviewItem.role, '独立审阅角色正在逐项核对候选成果。'); });
       let checked;
       try {
-        const reviewEvidence = await callDynamicWork(store, providers, taskId, reviewItem.id, controller.signal, runInfo.runId);
+        const reviewEvidence = await callDynamicWork(store, providers, projectWorkspaceHost, taskId, reviewItem.id, controller.signal, runInfo.runId);
         await store.mutate(taskId, (draft) => {
           const session = workSession(draft, reviewItem.id);
           assertSessionFresh(draft, session, { runId: runInfo.runId });
@@ -1042,8 +1075,10 @@ async function runDynamicTask(store, providers, taskId, controller, runInfo) {
           session.updatedAt = new Date().toISOString();
         });
         const result = await callDynamicReview(store, providers, taskId, reviewItem, artifact.id, controller.signal, runInfo.runId);
-        checked = await store.mutate(taskId, (draft) => {
-          const review = recordReview(draft, artifact.id, result);
+        checked = await store.mutate(taskId, async (draft) => {
+          const currentArtifact = draft.artifacts.find((entry) => entry.id === artifact.id);
+          const reviewOptions = await trustedReviewOptions(draft, currentArtifact, store.taskDir(taskId), projectWorkspaceHost);
+          const review = recordReview(draft, artifact.id, result, reviewOptions);
           completeWorkItem(draft, reviewItem.id, { reviewId: review.id, passed: review.passed, summary: review.summary });
           markSession(draft, reviewItem.id, 'completed', { output: { reviewId: review.id, passed: review.passed } });
           readyWorkItems(draft);
@@ -1109,6 +1144,10 @@ function planInputFingerprint(task, projectRootGoalVersionId) {
     materials: applicability.effectiveMaterials.map((item) => [item.id, item.status, item.createdAt, item.bytes, materialContentSha256(item)]),
     suggestions: task.suggestions.map((item) => [item.id, item.classification, item.status, item.correctedAt]),
     provider: task.provider,
+    ...(task.type === 'project' ? {
+      workspaceScopeFingerprint: projectWorkspaceFingerprint(task),
+      sourceSnapshotSha256: task.projectWorkspace?.sourceSnapshotSha256 || null,
+    } : {}),
   });
 }
 
@@ -1120,11 +1159,19 @@ function modelPlanInputsChanged(task) {
   const suggestionIds = task.suggestions.filter((item) => (item.goalVersionId || goal.id) === goal.id && item.classification === 'support' && item.status === 'routed').map((item) => item.id).sort();
   return task.workItems.some((item) => (item.materialApplicabilityFingerprint ?? null) !== applicability.fingerprint
     || JSON.stringify([...(item.inputMaterialIds || [])].sort()) !== JSON.stringify(materialIds)
-    || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(suggestionIds));
+    || JSON.stringify([...(item.inputSuggestionIds || [])].sort()) !== JSON.stringify(suggestionIds)
+    || (task.type === 'project' && (item.workspaceScopeFingerprint ?? null) !== projectWorkspaceFingerprint(task))
+    || (task.type === 'project' && (item.sourceSnapshotSha256 ?? null) !== (task.projectWorkspace?.sourceSnapshotSha256 || null)));
 }
 
 async function planTask(store, providers, taskId) {
   const snapshot = await store.get(taskId);
+  if (snapshot.type === 'project' && !projectWorkspaceIsCurrent(snapshot)) {
+    return store.mutate(taskId, (task) => {
+      setTaskState(task, 'waiting_user', 'coordinator', task.projectWorkspace?.reason || '请先明确授权固定代码工作区；授权前不会调用模型。');
+      return [];
+    });
+  }
   if (snapshot.provider !== 'codex-cli' || typeof providers.plan !== 'function') {
     return store.mutate(taskId, async (task) => {
       await assertProjectGoalFresh(store, task);
@@ -1170,7 +1217,7 @@ async function planTask(store, providers, taskId) {
   }
 }
 
-async function runTask(store, providers, taskId) {
+async function runTask(store, providers, projectWorkspaceHost, taskId) {
   if (activeJobs.has(taskId)) throw new Error('这项任务正在运行。');
   const controller = new AbortController();
   const entry = { controller, promise: null };
@@ -1179,13 +1226,17 @@ async function runTask(store, providers, taskId) {
   try {
     const prepared = await store.mutate(taskId, async (task) => {
       await assertProjectGoalFresh(store, task);
+      if (task.type === 'project' && !projectWorkspaceIsCurrent(task)) throw new Error(task.projectWorkspace?.reason || '请先明确授权固定代码工作区。');
       const goal = activeGoal(task);
       const currentProjectGoal = task.projectRootGoalVersionId || goal.id;
       const planProjectGoal = task.plan?.projectRootGoalVersionId || (!task.projectRootTaskId ? currentProjectGoal : null);
       const currentProjectInput = task.projectRootInputFingerprint || projectInputFingerprint(task);
       const planProjectInput = task.plan?.projectRootInputFingerprint || (!task.projectRootTaskId ? currentProjectInput : null);
       const dynamic = task.plan?.source === 'model' && task.plan.goalVersionId === goal.id && planProjectGoal === currentProjectGoal
-        && planProjectInput === currentProjectInput && task.workItems.some((item) => item.stepKey);
+        && planProjectInput === currentProjectInput
+        && (task.type !== 'project' || task.plan.workspaceScopeFingerprint === projectWorkspaceFingerprint(task))
+        && (task.type !== 'project' || task.plan.sourceSnapshotSha256 === task.projectWorkspace?.sourceSnapshotSha256)
+        && task.workItems.some((item) => item.stepKey);
       if (task.projectRootTaskId && !dynamic) throw new Error('关联任务必须先由真实规划器核对项目根目标与任务目标，再开始执行。');
       if (task.plan?.source === 'model' && !dynamic) throw new Error('当前计划不再匹配任务目标或项目根目标，请先重新规划。');
       const resumeNative = dynamic ? recoverableNativeCandidate(task) : null;
@@ -1213,6 +1264,10 @@ async function runTask(store, providers, taskId) {
             projectRootGoalVersionId: task.projectRootGoalVersionId || goal.id,
             projectRootInputFingerprint: task.projectRootInputFingerprint || null,
             materialApplicabilityFingerprint: applicability.fingerprint,
+            workspaceScopeFingerprint: item.workspaceScopeFingerprint ?? null,
+            sourceSnapshotSha256: item.sourceSnapshotSha256 ?? null,
+            inputFingerprint: item.inputFingerprint,
+            sourceContextFingerprint: item.sourceContextFingerprint,
             runId: execution.id, attemptId: null, toolCalls: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
             resumedFromRunId: task.executionHistory.at(-1)?.id || null,
           });
@@ -1250,7 +1305,7 @@ async function runTask(store, providers, taskId) {
   const job = (async () => {
     try {
       if (runInfo.dynamic) {
-        await runDynamicTask(store, providers, taskId, controller, runInfo);
+        await runDynamicTask(store, providers, projectWorkspaceHost, taskId, controller, runInfo);
         return;
       }
       if (runInfo.firstRole === 'researcher') {
@@ -1284,9 +1339,11 @@ async function runTask(store, providers, taskId) {
       });
 
       const reviewResult = await callProviderStep(store, providers, taskId, 'reviewer', 'review', controller.signal, created.result.id);
-      await store.mutate(taskId, (task) => {
+      await store.mutate(taskId, async (task) => {
         if (activeGoal(task).id !== runInfo.goalVersionId || task.execution?.id !== runInfo.runId) throw Object.assign(new Error('审阅结果属于旧目标或旧运行。'), { code: 'stale_result' });
-        const review = recordReview(task, created.result.id, reviewResult);
+        const artifact = task.artifacts.find((entry) => entry.id === created.result.id);
+        const reviewOptions = await trustedReviewOptions(task, artifact, store.taskDir(taskId), projectWorkspaceHost);
+        const review = recordReview(task, created.result.id, reviewResult, reviewOptions);
         completeWork(task, 'reviewer', { reviewId: review.id, passed: review.passed, summary: review.summary, sourceEvidenceCount: review.sourceEvidence.length });
         const steward = task.workItems.find((item) => item.role === 'steward');
         if (steward) steward.status = review.passed ? 'waiting_user' : 'blocked';
@@ -1514,17 +1571,19 @@ async function writeOfficeLayout(file, layout) {
   return layout;
 }
 
-export async function createIrixiServer({ root = dataRoot, providers: providedProviders = null, publicPageReader = readPublicPage } = {}) {
+export async function createIrixiServer({ root = dataRoot, providers: providedProviders = null, publicPageReader = readPublicPage, projectWorkspaceHost: providedProjectWorkspaceHost = null } = {}) {
   const store = createStore(root);
   await store.init();
   await reconcileProjectInputs(store);
   const providers = providedProviders || createProviders({ projectRoot, store });
+  const projectWorkspaceHost = providedProjectWorkspaceHost || createProjectWorkspaceHost({ projectRoot });
   const layoutFile = path.join(store.root, '.office-layout.json');
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const pathname = decodeURIComponent(url.pathname);
     try {
       if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, version: '1.0.0' });
+      if (req.method === 'GET' && pathname === '/api/project-capabilities') return json(res, 200, { project: await projectWorkspaceHost.capabilities() });
       if (req.method === 'GET' && pathname === '/api/tasks') {
         const tasks = await store.list();
         return json(res, 200, { tasks: await Promise.all(tasks.map(async (task) => publicTaskWithRuntime(await hydrateProjectContext(store, task)))) });
@@ -1547,6 +1606,11 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
       }
       const taskMatch = pathname.match(/^\/api\/tasks\/([a-z0-9-]+)$/);
       if (req.method === 'GET' && taskMatch) return json(res, 200, { task: publicTaskWithRuntime(await hydrateProjectContext(store, await store.get(taskMatch[1]))) });
+      const workspaceMatch = pathname.match(/^\/api\/tasks\/([a-z0-9-]+)\/project-workspace$/);
+      if (req.method === 'GET' && workspaceMatch) {
+        const task = await store.get(workspaceMatch[1]);
+        return json(res, 200, { projectWorkspace: projectWorkspaceHost.publicState(task) });
+      }
       const previewMatch = pathname.match(/^\/api\/tasks\/([a-z0-9-]+)\/artifacts\/([a-z0-9-]+)\/previews\/(\d+)$/);
       if (req.method === 'GET' && previewMatch) {
         const task = await store.get(previewMatch[1]);
@@ -1571,6 +1635,13 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           if (activeJobs.has(exportMatch[1])) throw new Error('任务仍有工作在进行，不能使用旧核对结果导出。');
           await assertProjectGoalFresh(store, task);
           const artifact = assertExportAllowed(task, exportMatch[2], url.searchParams.get('approval'));
+          if (task.type === 'project' && format !== 'patch') throw new Error('代码项目只交付已确认的 patch，不提供正文或办公文件导出。');
+          if (format === 'patch') {
+            if (task.type !== 'project') throw new Error('只有代码项目候选支持 patch 下载。');
+            const bytes = await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(task.id), artifact);
+            assertProjectExecutionAuditCurrent(task, artifact);
+            return { task, artifact, patch: true, bytes };
+          }
           if (!['docx', 'xlsx', 'pptx'].includes(format)) return { task, artifact };
           const native = artifact.nativeFiles?.find((entry) => entry.format === format && entry.status === 'ready');
           if (!native) throw new Error('这个指定版本没有已验证的该格式原生文件。');
@@ -1582,7 +1653,9 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           return { task, artifact, native, bytes };
         });
         if (prepared.bytes) {
-          res.writeHead(200, { 'Content-Type': MIME[`.${format}`], 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(prepared.native.filename)}`, 'Content-Length': prepared.bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+          const filename = prepared.patch ? `${safeFilename(prepared.artifact.title)}-v${prepared.artifact.version}.patch` : prepared.native.filename;
+          const type = prepared.patch ? 'text/x-diff; charset=utf-8' : MIME[`.${format}`];
+          res.writeHead(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`, 'Content-Length': prepared.bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
           return res.end(prepared.bytes);
         }
         const result = exportBody(prepared.task, prepared.artifact, format);
@@ -1617,6 +1690,22 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
       if (req.method === 'POST' && actionMatch) {
         const [, taskId, action] = actionMatch;
         const body = await readJson(req);
+        if (action === 'project-workspace/attach') {
+          if (activeJobs.has(taskId)) return problem(res, 409, '任务运行期间不能更换代码工作区。', 'already_running');
+          const changed = await store.mutate(taskId, async (task) => {
+            if (task.plan || task.workItems?.length || task.execution) invalidateCurrentWork(task, 'project_workspace_changed', '代码工作区授权已变化；旧计划、结果与候选保留为历史。');
+            const attached = await projectWorkspaceHost.attachDraft(task, store.taskDir(taskId), body);
+            event(task, 'project_workspace.attached', '已明确授权固定代码工作区；原项目保持只读，候选只保存在任务目录。', {
+              fixtureId: attached.fixtureId, scopeFingerprint: attached.scopeFingerprint,
+              sourceSnapshotSha256: attached.sourceSnapshotSha256, sandboxAvailable: attached.sandboxCapability?.available === true,
+            });
+            setTaskState(task, attached.status === 'ready' ? 'idle' : 'waiting_user', 'coordinator', attached.status === 'ready'
+              ? '固定代码工作区已复制并通过隔离探针，可以形成计划。'
+              : attached.reason || '固定检查隔离未通过，已停止。');
+            return attached;
+          });
+          return json(res, 201, { task: publicTask(changed.task), projectWorkspace: changed.result });
+        }
         if (action === 'conversation/cancel') {
           const queuedReply = activeQueuedReplies.get(taskId);
           if (queuedReply) {
@@ -1808,7 +1897,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             const nextRootId = requestedRootId === taskId ? null : requestedRootId;
             if (projectRootId(child) === (nextRootId || child.id)) return child;
             ensureMaterialPolicy(child, 'project_link_changed');
-            if (child.plan || child.workItems?.length || child.execution) invalidateCurrentWork(child, 'project_link_changed', '项目关联已改变；原任务目标和历史保留，旧计划已失效。');
+            if (child.projectWorkspace || child.plan || child.workItems?.length || child.execution) invalidateCurrentWork(child, 'project_link_changed', '项目关联已改变；原任务目标和历史保留，旧代码工作区授权与计划已失效。');
             child.projectRootTaskId = nextRootId;
             child.projectRootGoalVersionId = activeGoal(root).id;
             child.projectRootInputFingerprint = projectInputFingerprint(root);
@@ -1870,6 +1959,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           }
           if (!['demo', 'codex-cli'].includes(body.provider)) throw new Error('未知的模型提供者。');
           const changed = await store.mutate(taskId, (task) => {
+            if (task.type === 'project' && body.provider !== 'codex-cli') throw new Error('代码项目固定使用 Codex；演示提供者不能获得项目工作区。');
             task.provider = body.provider;
             event(task, 'provider.changed', body.provider === 'demo' ? '已切换到演示提供者。' : '已选择 Codex CLI；运行时会发送当前目标与选定材料。', { provider: body.provider });
           });
@@ -1920,12 +2010,12 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               return json(res, 200, { task: publicTask(await hydrateProjectContext(store, snapshot)), action: 'await_user', message: deriveTaskContinuity(snapshot).progress.nextStep });
             }
           }
-          await runTask(store, providers, taskId);
+          await runTask(store, providers, projectWorkspaceHost, taskId);
           return json(res, 202, { task: publicTask(await hydrateProjectContext(store, await store.get(taskId))), action: 'running', accepted: true });
         }
         if (action === 'run') {
           if (activeJobs.has(taskId)) return problem(res, 409, '这项任务正在运行。', 'already_running');
-          await runTask(store, providers, taskId);
+          await runTask(store, providers, projectWorkspaceHost, taskId);
           return json(res, 202, { task: publicTask(await store.get(taskId)), accepted: true });
         }
         if (action === 'cancel') {
@@ -1976,6 +2066,10 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               if (!artifact) throw new Error('找不到要审阅的候选成果。');
               if (artifact.goalVersionId !== activeGoal(task).id || artifact.status !== 'candidate') throw new Error('只能重新审阅当前目标下未确认的候选版本。');
               assertArtifactInputCurrent(task, artifact);
+              if (task.type === 'project') {
+                await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(taskId), artifact);
+                assertProjectExecutionAuditCurrent(task, artifact);
+              }
               artifact.reviewStatus = 'pending';
               event(task, 'artifact.review_started', `候选成果 v${artifact.version} 正在重新独立核对；旧核对保留为历史，但不能用于确认。`, { artifactId: artifact.id });
               startExecution(task, activeGoal(task).id);
@@ -2004,6 +2098,13 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
                   goalVersionId: activeGoal(task).id, planRevision: task.plan.revision, status: 'planned', input: null, output: null,
                   projectRootGoalVersionId: task.projectRootGoalVersionId || activeGoal(task).id,
                   projectRootInputFingerprint: task.projectRootInputFingerprint || null,
+                  materialApplicabilityFingerprint: materialContext(task, { includeGeneratedEvidence: false }).fingerprint,
+                  inputFingerprint: reviewer.inputFingerprint,
+                  sourceContextFingerprint: reviewer.sourceContextFingerprint,
+                  ...(task.type === 'project' ? {
+                    workspaceScopeFingerprint: projectWorkspaceFingerprint(task),
+                    sourceSnapshotSha256: task.projectWorkspace?.sourceSnapshotSha256 || null,
+                  } : {}),
                   runId: task.execution.id, attemptId: null, toolCalls: [], manualReviewOfArtifactId: artifact.id,
                   createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
                 });
@@ -2026,7 +2127,8 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
               await assertProjectGoalFresh(store, draft, prepared.task.projectRootGoalVersionId, prepared.task.projectRootInputFingerprint);
               const artifact = draft.artifacts.find((item) => item.id === reviewMatch[1]);
               if (!artifact || artifactContentSha256(artifact) !== reviewContext.artifactHash) throw Object.assign(new Error('候选成果在审阅期间已变化，这次结果不能写入。'), { code: 'stale_result' });
-              const review = recordReview(draft, reviewMatch[1], result);
+              const reviewOptions = await trustedReviewOptions(draft, artifact, store.taskDir(taskId), projectWorkspaceHost);
+              const review = recordReview(draft, reviewMatch[1], result, reviewOptions);
               const storedResult = { reviewId: review.id, passed: review.passed, summary: review.summary, sourceEvidenceCount: review.sourceEvidence.length };
               if (reviewContext.dynamic) {
                 completeWorkItem(draft, reviewContext.reviewerId, storedResult);
@@ -2109,6 +2211,11 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           const changed = await store.mutate(taskId, async (task) => {
             if (activeJobs.has(taskId)) throw new Error('任务仍有工作在进行，不能使用旧核对结果确认。');
             await assertProjectGoalFresh(store, task);
+            if (task.type === 'project') {
+              const artifact = task.artifacts.find((entry) => entry.id === confirmMatch[1]);
+              await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(taskId), artifact);
+              assertProjectExecutionAuditCurrent(task, artifact);
+            }
             return confirmArtifact(task, confirmMatch[1]);
           });
           return json(res, 200, { task: publicTask(changed.task), approval: changed.result });
@@ -2122,14 +2229,14 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
       problem(res, 404, '找不到这个操作。', 'not_found');
     } catch (error) {
       const status = error.code === 'ENOENT' ? 404 : error.status || (/(找不到|不存在)/.test(error.message) ? 404 : 400);
-      problem(res, status, error.message || '请求失败。');
+      problem(res, status, error.message || '请求失败。', error.publicSafe ? error.code : 'request_failed');
     }
   });
-  return { server, store, providers };
+  return { server, store, providers, projectWorkspaceHost };
 }
 
-export async function start({ port = Number(process.env.PORT || 3847), host = '127.0.0.1', root = dataRoot, providers: providedProviders = null, publicPageReader = readPublicPage } = {}) {
-  const { server, store, providers } = await createIrixiServer({ root, providers: providedProviders, publicPageReader });
+export async function start({ port = Number(process.env.PORT || 3847), host = '127.0.0.1', root = dataRoot, providers: providedProviders = null, publicPageReader = readPublicPage, projectWorkspaceHost = null } = {}) {
+  const { server, store, providers, projectWorkspaceHost: runningProjectWorkspaceHost } = await createIrixiServer({ root, providers: providedProviders, publicPageReader, projectWorkspaceHost });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
   for (const task of await store.list()) {
     const hasInterruptedRun = task.status === 'running'
@@ -2169,7 +2276,7 @@ export async function start({ port = Number(process.env.PORT || 3847), host = '1
     if ((await store.get(task.id)).conversationQueue?.some((item) => item.status === 'pending')) setImmediate(() => drainConversationQueue(store, providers, task.id).catch(() => {}));
   }
   const address = server.address();
-  return { server, store, providers, url: `http://${host}:${address.port}` };
+  return { server, store, providers, projectWorkspaceHost: runningProjectWorkspaceHost, url: `http://${host}:${address.port}` };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
