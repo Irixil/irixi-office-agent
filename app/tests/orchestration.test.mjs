@@ -134,6 +134,58 @@ function projectAuditFixture() {
   return { task, owner, synthesis, session, synthesisSession };
 }
 
+function transactionProjectAuditFixture() {
+  const fixture = projectAuditFixture();
+  const { task, owner, session } = fixture;
+  task.projectWorkspace.executionMode = 'host_fixed_transaction_v1';
+  task.projectWorkspace.publicContractFingerprint = 'contract-current';
+  session.projectTransaction = {
+    id: 'transaction-current', mode: 'host_fixed_transaction_v1', status: 'passed', modelInvocationCount: 1,
+    publicContractFingerprint: 'contract-current', workspaceScopeFingerprint: task.projectWorkspace.scopeFingerprint,
+    sourceSnapshotSha256: task.projectWorkspace.sourceSnapshotSha256,
+  };
+  const actors = ['host', 'model', 'host', 'host'];
+  const steps = ['read', 'write', 'check', 'diff'];
+  session.toolCalls = session.toolCalls.map((entry, index) => ({
+    ...entry,
+    hostAudit: {
+      ...entry.hostAudit,
+      attemptId: `${task.execution.id}:${owner.id}:transaction`, round: 1,
+      batchOrdinal: index + 1, requestOrdinal: 1, sessionSequence: index + 1,
+      actor: actors[index], transactionId: session.projectTransaction.id, transactionStep: steps[index],
+    },
+  }));
+  return fixture;
+}
+
+test('宿主固定项目事务审计区分 actor 并只记一次候选生成调用', () => {
+  const fixture = transactionProjectAuditFixture();
+  const audit = projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id });
+  assert.equal(audit.execution.mode, 'host_fixed_transaction_v1');
+  assert.equal(audit.execution.toolRequestRounds, 1);
+  assert.equal(audit.execution.transaction.modelInvocationCount, 1);
+  assert.deepEqual(audit.execution.calls.map((call) => [call.actor, call.transactionStep, call.round, call.batchOrdinal, call.requestOrdinal]), [
+    ['host', 'read', 1, 1, 1], ['model', 'write', 1, 2, 1], ['host', 'check', 1, 3, 1], ['host', 'diff', 1, 4, 1],
+  ]);
+});
+
+test('宿主固定项目事务拒绝伪造 actor、步骤、合约绑定或额外调用', () => {
+  const mutations = [
+    (fixture) => { fixture.session.projectTransaction.modelInvocationCount = 2; },
+    (fixture) => { fixture.session.projectTransaction.publicContractFingerprint = 'old-contract'; },
+    (fixture) => { fixture.session.toolCalls[0].hostAudit.actor = 'model'; },
+    (fixture) => { fixture.session.toolCalls[1].hostAudit.transactionStep = 'read'; },
+    (fixture) => { fixture.session.toolCalls[2].hostAudit.transactionId = 'other-transaction'; },
+    (fixture) => { fixture.session.toolCalls[3].hostAudit.batchOrdinal = 3; },
+    (fixture) => { fixture.session.toolCalls.push(structuredClone(fixture.session.toolCalls[0])); },
+  ];
+  for (const mutate of mutations) {
+    const fixture = transactionProjectAuditFixture();
+    mutate(fixture);
+    assert.throws(() => projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
+  }
+});
+
 test('项目执行审计只接受当前计划三批四调用并移除正文与重复 patch', () => {
   const { task, synthesis } = projectAuditFixture();
   const audit = projectExecutionAudit(task, { synthesisWorkItemId: synthesis.id });

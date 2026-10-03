@@ -20,6 +20,7 @@ const state = {
   pendingAction: null,
   pendingActionTaskId: null,
   projectCapabilities: null,
+  projectFixtureSelections: {},
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -338,8 +339,10 @@ function renderContinuity(task) {
   const stoppedBecause = busyText ? '当前正在工作，没有停下。' : value.progress.stoppedBecause || '没有停下，当前记录可以继续。';
   const nextStep = busyText || value.progress.nextStep;
   const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;
-  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : 'Irixi 可继续';
-  const tone = busyText ? 'active' : value.progress.needsUserDecision ? 'bad' : 'good';
+  const requiresAttention = ['failed', 'partial', 'cancelled', 'cancellation_unknown'].includes(task.status)
+    && ['budget_exhausted', 'permanent_error', 'same_error_exhausted', 'project_verification_failed', 'project_transaction_failed'].includes(task.execution?.stopReason);
+  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : requiresAttention ? '需要先处理' : 'Irixi 可继续';
+  const tone = busyText ? 'active' : value.progress.needsUserDecision || requiresAttention ? 'bad' : 'good';
   return `<div class="continuity-grid"><div><strong>已经做成</strong>${list(value.progress.done, '还没有完成且仍有效的步骤。')}</div><div><strong>尚未完成</strong>${list(incomplete, '当前没有未完成步骤。')}</div><div><strong>为什么停下</strong><p>${esc(stoppedBecause)}</p></div><div><strong>下一步</strong><p>${esc(nextStep)}</p><span class="record-status" data-tone="${tone}">${badge}</span></div></div>`;
 }
 
@@ -386,8 +389,11 @@ function renderMemory(task) {
 function renderProjectWorkspace(task) {
   if (task.type !== 'project') return '';
   const capability = state.projectCapabilities;
-  const fixture = capability?.fixtures?.[0];
   const workspace = task.projectWorkspace;
+  const fixtures = capability?.fixtures || [];
+  const selectedFixtureId = state.projectFixtureSelections[task.id] || workspace?.fixtureId || fixtures[0]?.id || 'node-single-file-v1';
+  const fixture = fixtures.find((item) => item.id === selectedFixtureId) || fixtures[0];
+  const workspaceMatchesSelection = workspace?.fixtureId === fixture?.id;
   const binding = {
     goalVersionId: activeGoal(task)?.id || null,
     projectRootGoalVersionId: task.projectRootGoalVersionId || activeGoal(task)?.id || null,
@@ -397,7 +403,7 @@ function renderProjectWorkspace(task) {
   const capabilityText = !capability ? '正在读取本机隔离能力。'
     : capability.available ? 'macOS 固定 Node 合约隔离可用；授权时仍会对实际候选路径运行正负探针。'
       : capability.reason || '当前机器未通过固定隔离能力检查。';
-  const checks = workspace?.candidate?.checks || [];
+  const checks = workspaceMatchesSelection ? workspace?.candidate?.checks || [] : [];
   const latestCheck = checks.at(-1);
   const snapshot = {
     expectedGoalVersionId: binding.goalVersionId,
@@ -407,16 +413,19 @@ function renderProjectWorkspace(task) {
     expectedPreviousScopeFingerprint: workspace?.scopeFingerprint || null,
     expectedCapabilityFingerprint: capability?.fingerprint || null,
   };
-  const status = workspace?.status === 'ready' ? '已授权且探针通过' : workspace ? workspace.reason || workspace.status : '尚未授权';
-  return `<section class="desk-sheet project-workspace-panel"><div class="sheet-heading"><h2>代码工作区</h2><span class="record-status" data-tone="${workspace?.status === 'ready' ? 'good' : 'warn'}">${esc(status)}</span></div><div class="sheet-body provider-line">
+  const status = workspaceMatchesSelection && workspace?.status === 'ready' ? '已授权且探针通过'
+    : workspaceMatchesSelection && workspace ? workspace.reason || workspace.status
+      : workspace ? `当前另有已授权项目；“${fixture?.label || selectedFixtureId}”需明确重新授权` : '尚未授权';
+  return `<section class="desk-sheet project-workspace-panel"><div class="sheet-heading"><h2>代码工作区</h2><span class="record-status" data-tone="${workspaceMatchesSelection && workspace?.status === 'ready' ? 'good' : 'warn'}">${esc(status)}</span></div><div class="sheet-body provider-line">
     <p class="field-note">原项目始终只读；Irixi 只在本任务目录的隔离副本中修改一个明确文件。交付物是可下载 patch，不会写回原目录、运行 Git、发布或执行模型自选命令。</p>
-    <p><strong>公开行为</strong><br>${esc(fixture?.publicContract?.namedExport || 'greetName')}：${esc(fixture?.publicContract?.behavior || '去掉名称首尾空白并生成问候。')}</p>
+    <p><strong>公开行为</strong><br>${esc(fixture?.publicContract?.entrypoint || fixture?.publicContract?.namedExport || 'greetName')}：${esc(fixture?.publicContract?.behavior || '去掉名称首尾空白并生成问候。')}</p>
+    ${fixture?.publicContract?.writeScope ? `<p class="field-note">${esc(fixture.publicContract.writeScope)}</p>` : ''}
     <p class="field-note">可读：${esc((fixture?.readablePaths || workspace?.readablePaths || []).join('、') || '—')}<br>可改：${esc((fixture?.editablePaths || workspace?.editablePaths || []).join('、') || '—')}<br>固定检查：${esc(fixture?.checks?.[0]?.id || workspace?.checks?.[0]?.id || '—')}</p>
     <p class="${capability?.available ? 'field-note' : 'demo-warning'}">${esc(capabilityText)}</p>
-    ${workspace ? `<p class="field-note">source ${esc(workspace.sourceSnapshotSha256 || '—')}<br>candidate ${esc(workspace.candidate?.candidateSha256 || '—')} · revision ${esc(workspace.candidate?.revision || '—')}${latestCheck ? `<br>检查 ${latestCheck.passed ? '通过' : '失败'}：${esc(latestCheck.casePassed)}/${esc(latestCheck.caseTotal)} cases · ${esc(latestCheck.resultDigest)}${(latestCheck.cases || []).some((entry) => entry.timedOut) ? ' · 含超时' : ''}${(latestCheck.cases || []).some((entry) => entry.truncated) ? ' · 输出超限' : ''}` : ''}</p>` : ''}
+    ${workspaceMatchesSelection && workspace ? `<p class="field-note">source ${esc(workspace.sourceSnapshotSha256 || '—')}<br>candidate ${esc(workspace.candidate?.candidateSha256 || '—')} · revision ${esc(workspace.candidate?.revision || '—')}${latestCheck ? `<br>检查 ${latestCheck.passed ? '通过' : '失败'}：${esc(latestCheck.casePassed)}/${esc(latestCheck.caseTotal)} cases · ${esc(latestCheck.resultDigest)}${(latestCheck.cases || []).some((entry) => entry.timedOut) ? ' · 含超时' : ''}${(latestCheck.cases || []).some((entry) => entry.truncated) ? ' · 输出超限' : ''}` : ''}</p>` : ''}
     <form class="project-workspace-form" data-project-workspace-attach data-expected-snapshot="${esc(JSON.stringify(snapshot))}">
-      <input type="hidden" name="fixtureId" value="${esc(fixture?.id || 'node-single-file-v1')}">
-      <button class="secondary-button" type="submit" ${!capability?.available || task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${workspace?.status === 'ready' ? '按当前目标重新授权隔离副本' : '授权固定隔离副本'}</button>
+      <label>固定项目<select name="fixtureId" data-project-fixture-select ${task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${fixtures.map((item) => `<option value="${esc(item.id)}" ${item.id === selectedFixtureId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>
+      <button class="secondary-button" type="submit" ${!capability?.available || task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${workspaceMatchesSelection && workspace?.status === 'ready' ? '按当前目标重新授权隔离副本' : '授权所选固定隔离副本'}</button>
     </form>
   </div></section>`;
 }
@@ -744,6 +753,14 @@ document.addEventListener('change', async (event) => {
     provider.disabled = project;
     return;
   }
+  if (event.target.matches('[data-project-fixture-select]')) {
+    if (!state.task || state.task.type !== 'project') return;
+    const fixture = state.projectCapabilities?.fixtures?.find((item) => item.id === event.target.value);
+    if (!fixture) { renderDesk(); return; }
+    state.projectFixtureSelections[state.task.id] = fixture.id;
+    renderDesk();
+    return;
+  }
   if (event.target.matches('[data-suggestion-classification]')) {
     try { await postTaskAction(`suggestions/${event.target.dataset.suggestionClassification}/classification`, { classification: event.target.value }); announce('建议分类已更正，计划需要重新核对。'); }
     catch (error) { announce(error.message, 'error'); }
@@ -777,6 +794,7 @@ document.addEventListener('submit', async (event) => {
     const fixtureId = new FormData(projectForm).get('fixtureId');
     try {
       await postTaskAction('project-workspace/attach', { fixtureId, ...snapshot });
+      delete state.projectFixtureSelections[state.task.id];
       announce('固定代码工作区已复制并完成实际路径隔离探针；原项目保持只读。');
       await loadTasks({ preserve: true });
     } catch (error) { announce(error.message, 'error'); }

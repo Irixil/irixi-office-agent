@@ -189,7 +189,7 @@ test('同错达到尝试上限与永久错误不再重试，不同错误仍交�
   assert.equal(permanent.retryable, false);
 });
 
-test('永久错误与同错耗尽的进度不承诺直接恢复', () => {
+test('永久错误、同错耗尽与项目事务终止的进度不承诺直接恢复', () => {
   const task = createTask({ goal: '验证终止后的下一步' });
   buildPlan(task);
   const item = task.workItems[0];
@@ -203,6 +203,13 @@ test('永久错误与同错耗尽的进度不承诺直接恢复', () => {
   item.error = '同一个临时错误';
   task.execution.stopReason = 'same_error_exhausted';
   assert.match(deriveTaskContinuity(task).progress.nextStep, /同一错误.*重试上限.*改变/);
+  assert.doesNotMatch(deriveTaskContinuity(task).progress.nextStep, /从未完成.*恢复/);
+
+  task.execution.stopReason = 'project_verification_failed';
+  assert.match(deriveTaskContinuity(task).progress.nextStep, /固定业务检查未通过.*工作要求.*重新授权.*重新规划/);
+  assert.doesNotMatch(deriveTaskContinuity(task).progress.nextStep, /从未完成.*恢复/);
+  task.execution.stopReason = 'project_transaction_failed';
+  assert.match(deriveTaskContinuity(task).progress.nextStep, /固定项目事务未完成.*工作要求.*重新授权.*重新规划/);
   assert.doesNotMatch(deriveTaskContinuity(task).progress.nextStep, /从未完成.*恢复/);
 });
 

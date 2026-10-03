@@ -500,7 +500,10 @@ function normalizedProjectOutcome(entry = {}) {
   return { ok: true };
 }
 
-export function stampProjectToolCall(task, item, session, request, entry, { runId, attemptId, round, batchOrdinal, requestOrdinal, sessionSequence }) {
+export function stampProjectToolCall(task, item, session, request, entry, {
+  runId, attemptId, round, batchOrdinal, requestOrdinal, sessionSequence,
+  actor = 'model', transactionId = null, transactionStep = null,
+}) {
   const requestAudit = normalizedProjectRequest(request);
   return {
     ...entry,
@@ -518,6 +521,9 @@ export function stampProjectToolCall(task, item, session, request, entry, { runI
       batchOrdinal,
       requestOrdinal,
       sessionSequence,
+      actor,
+      transactionId,
+      transactionStep,
       binding: projectAuditBinding(task, item),
       request: requestAudit,
       outcome: normalizedProjectOutcome(entry),
@@ -569,14 +575,27 @@ export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifa
   const calls = workspaceRecords.map(({ call }) => call.hostAudit);
   if (calls.length !== 4 || calls.some((call) => !call || call.version !== 1)) throw auditError();
   const expectedTools = ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'];
-  const expectedRounds = [1, 2, 3, 3];
-  const expectedRequestOrdinals = [1, 1, 1, 2];
+  const transactionMode = task.projectWorkspace?.executionMode === 'host_fixed_transaction_v1';
+  const transaction = transactionMode ? session.projectTransaction : null;
+  if (transactionMode && (!transaction || transaction.status !== 'passed' || transaction.modelInvocationCount !== 1
+    || transaction.publicContractFingerprint !== task.projectWorkspace.publicContractFingerprint
+    || transaction.workspaceScopeFingerprint !== binding.workspaceScopeFingerprint
+    || transaction.sourceSnapshotSha256 !== binding.sourceSnapshotSha256)) throw auditError();
+  const expectedRounds = transactionMode ? [1, 1, 1, 1] : [1, 2, 3, 3];
+  const expectedBatchOrdinals = transactionMode ? [1, 2, 3, 4] : [1, 2, 3, 3];
+  const expectedRequestOrdinals = transactionMode ? [1, 1, 1, 1] : [1, 1, 1, 2];
+  const expectedActors = transactionMode ? ['host', 'model', 'host', 'host'] : ['model', 'model', 'model', 'model'];
+  const expectedSteps = transactionMode ? ['read', 'write', 'check', 'diff'] : [null, null, null, null];
   calls.forEach((call, index) => {
     const { call: raw, session: recordedSession } = workspaceRecords[index];
     if (call.taskId !== task.id || call.runId !== auditRunId || call.planId !== task.plan.id || call.planRevision !== task.plan.revision
-      || call.workItemId !== owner.id || call.sessionId !== recordedSession.id || call.attemptId !== `${auditRunId}:${owner.id}:${expectedRounds[index]}`
-      || call.round !== expectedRounds[index] || call.batchOrdinal !== expectedRounds[index] || call.requestOrdinal !== expectedRequestOrdinals[index]
+      || call.workItemId !== owner.id || call.sessionId !== recordedSession.id
+      || call.attemptId !== (transactionMode ? `${auditRunId}:${owner.id}:transaction` : `${auditRunId}:${owner.id}:${expectedRounds[index]}`)
+      || call.round !== expectedRounds[index] || call.batchOrdinal !== expectedBatchOrdinals[index] || call.requestOrdinal !== expectedRequestOrdinals[index]
       || call.sessionSequence !== index + 1 || call.request?.tool !== expectedTools[index] || call.outcome?.ok !== true
+      || call.actor !== expectedActors[index]
+      || (transactionMode && (call.transactionId !== transaction.id || call.transactionStep !== expectedSteps[index]))
+      || (!transactionMode && (call.transactionId !== null || call.transactionStep !== null))
       || raw.tool !== call.request.tool || raw.ok !== call.outcome.ok
       || JSON.stringify(raw.requestAudit) !== JSON.stringify(call.request)
       || JSON.stringify(normalizedProjectOutcome(raw)) !== JSON.stringify(call.outcome)
@@ -619,7 +638,16 @@ export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifa
     },
     lineage: { synthesisWorkItemId: synthesis.id, workspaceOwnerWorkItemId: owner.id, dependencyWorkItemIds: [...(synthesis.dependsOn || [])] },
     execution: {
-      runId: auditRunId, sessionId: session.id, maxToolRounds: 3, toolRequestRounds: 3,
+      runId: auditRunId, sessionId: session.id, mode: transactionMode ? 'host_fixed_transaction_v1' : 'model_tool_rounds_v1',
+      maxToolRounds: 3, toolRequestRounds: transactionMode ? 1 : 3,
+      transaction: transactionMode ? {
+        id: transaction.id,
+        status: transaction.status,
+        modelInvocationCount: transaction.modelInvocationCount,
+        publicContractFingerprint: transaction.publicContractFingerprint,
+        workspaceScopeFingerprint: transaction.workspaceScopeFingerprint,
+        sourceSnapshotSha256: transaction.sourceSnapshotSha256,
+      } : null,
       owner: { sessionBindings: ownerSessionBindings },
       calls: calls.map((call) => structuredClone(call)), protocolFeedback,
       synthesis: { sessionId: synthesisSession.id, sessionBindings: synthesisSessionBindings, actualToolCallCount: 0, protocolFeedbackCount: synthesisProtocolFeedback },

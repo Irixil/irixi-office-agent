@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const request = JSON.parse(await new Promise((resolve, reject) => {
   let body = '';
@@ -16,7 +17,13 @@ async function denied(operation) {
 }
 
 let passed = false;
-if (request.action === 'positive-read') passed = (await fs.readFile(request.path, 'utf8')).includes('export function');
+if (request.action === 'positive-read') {
+  const bytes = await fs.readFile(request.path);
+  passed = Number.isSafeInteger(request.expectedBytes) && request.expectedBytes >= 0
+    && typeof request.expectedSha256 === 'string' && /^[a-f0-9]{64}$/.test(request.expectedSha256)
+    && bytes.length === request.expectedBytes
+    && crypto.createHash('sha256').update(bytes).digest('hex') === request.expectedSha256;
+}
 else if (request.action === 'denied-read') passed = await denied(() => fs.readFile(request.path));
 else if (request.action === 'denied-write') passed = await denied(() => fs.writeFile(request.path, 'forbidden'));
 else if (request.action === 'denied-spawn') {

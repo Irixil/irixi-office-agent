@@ -53,9 +53,9 @@ async function request(base, pathname, options = {}) {
   return { status: response.status, value };
 }
 
-function attachBody(task, capability) {
+function attachBody(task, capability, fixtureId = 'node-single-file-v1') {
   return {
-    fixtureId: 'node-single-file-v1',
+    fixtureId,
     expectedGoalVersionId: task.goal.activeVersionId,
     expectedProjectRootGoalVersionId: task.projectRootGoalVersionId,
     expectedProjectRootInputFingerprint: task.projectRootInputFingerprint,
@@ -63,6 +63,33 @@ function attachBody(task, capability) {
     expectedPreviousScopeFingerprint: task.projectWorkspace?.scopeFingerprint || null,
     expectedCapabilityFingerprint: capability.fingerprint,
   };
+}
+
+function passingContinuityCandidate(source) {
+  if (source.includes('const requiresAttention =') && source.includes('task.execution?.stopReason')) {
+    assert.equal((source.match(/\brequiresAttention\b/g) || []).length, 3);
+    const renamed = source.replaceAll('requiresAttention', 'terminalBlocked');
+    assert.notEqual(renamed, source);
+    assert.equal((renamed.match(/\bterminalBlocked\b/g) || []).length, 3);
+    return renamed;
+  }
+  const repaired = source
+    .replace("  const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;\n", "  const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;\n  const terminalBlocked = ['failed', 'partial', 'cancelled', 'cancellation_unknown'].includes(task.status)\n    && ['budget_exhausted', 'permanent_error', 'same_error_exhausted', 'project_verification_failed', 'project_transaction_failed'].includes(task.execution?.stopReason);\n")
+    .replace("  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : 'Irixi 可继续';\n  const tone = busyText ? 'active' : value.progress.needsUserDecision ? 'bad' : 'good';", "  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : terminalBlocked ? '需要先处理' : 'Irixi 可继续';\n  const tone = busyText ? 'active' : value.progress.needsUserDecision || terminalBlocked ? 'bad' : 'good';");
+  assert.notEqual(repaired, source);
+  assert.equal((repaired.match(/task\.execution\?\.stopReason/g) || []).length, 1);
+  return repaired;
+}
+
+function wrongStopReasonCandidate(source) {
+  const passing = source.includes('需要先处理') ? source : passingContinuityCandidate(source);
+  assert.equal((passing.match(/task\.execution\?\.stopReason/g) || []).length, 1);
+  assert.equal((passing.match(/task\.stopReason/g) || []).length, 0);
+  const wrong = passing.replace('task.execution?.stopReason', 'task.stopReason');
+  assert.notEqual(wrong, passing);
+  assert.equal((wrong.match(/task\.execution\?\.stopReason/g) || []).length, 0);
+  assert.equal((wrong.match(/task\.stopReason/g) || []).length, 1);
+  return wrong;
 }
 
 function materialDecisionBody(task, materialId) {
@@ -218,6 +245,55 @@ test('HTTP 项目在授权前零模型，迟到授权 409，当前授权跨重�
   });
   assert.equal(reattached.value.task.projectWorkspace.status, 'ready');
   assert.equal(planCalls, 0);
+});
+
+test('HTTP continuity 旧序列化 grant 缺执行模式与合约指纹时重启后零模型等待重授权', { timeout: 20_000 }, async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  let planCalls = 0;
+  const plan = {
+    summary: '固定项目计划。', projectAlignment: { status: 'standalone', explanation: '独立任务。' }, outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '执行员', mission: '修改候选', capabilities: ['workspace'], recruitmentReason: '形成代码差异' },
+      { key: 'author', name: '汇总员', mission: '汇总证据', capabilities: ['summary'], recruitmentReason: '形成候选' },
+      { key: 'auditor', name: '审阅员', mission: '独立审阅', capabilities: ['review'], recruitmentReason: '审阅边界' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['delivery'], recruitmentReason: '交付边界' },
+    ],
+    steps: [
+      { key: 'code', title: '受控修改', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['通过固定检查'], expectedResult: '宿主证据' },
+      { key: 'synthesize', title: '汇总', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['绑定证据'], expectedResult: '候选' },
+      { key: 'review', title: '审阅', kind: 'review', role: 'auditor', dependsOn: ['synthesize'], tools: [], acceptanceCriteria: ['独立核对'], expectedResult: '审阅记录' },
+      { key: 'deliver', title: '交付', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['指定版本'], expectedResult: '待确认 patch' },
+    ],
+  };
+  const providers = {
+    async status() { return { demo: { id: 'demo', available: true }, codex: { id: 'codex-cli', available: true } }; },
+    async plan() { planCalls += 1; return structuredClone(plan); },
+  };
+  let running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  t.after(() => running.server.close());
+  const created = await request(running.url, '/api/tasks', { method: 'POST', body: JSON.stringify({ title: '旧 grant', goal: '修复续接显示', type: 'project', successCriteria: ['固定检查通过'], boundaries: ['只改 renderContinuity'] }) });
+  const capability = (await request(running.url, '/api/project-capabilities')).value.project;
+  const attached = await request(running.url, `/api/tasks/${created.value.task.id}/project-workspace/attach`, { method: 'POST', body: JSON.stringify(attachBody(created.value.task, capability, 'irixi-continuity-ui-v1')) });
+  assert.equal(attached.status, 201);
+  await running.store.mutate(created.value.task.id, (task) => {
+    delete task.projectWorkspace.executionMode;
+    delete task.projectWorkspace.publicContractFingerprint;
+  });
+  await new Promise((resolve) => running.server.close(resolve));
+  running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  const legacy = (await request(running.url, `/api/tasks/${created.value.task.id}`)).value.task;
+  assert.equal(legacy.projectWorkspace.status, 'reauthorization_required');
+  assert.match(legacy.projectWorkspace.reason, /公开输入接口|执行模式/);
+  const blockedPlan = await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' });
+  assert.equal(blockedPlan.status, 200);
+  assert.equal(blockedPlan.value.task.status, 'waiting_user');
+  assert.equal(planCalls, 0);
+  const reattached = await request(running.url, `/api/tasks/${created.value.task.id}/project-workspace/attach`, { method: 'POST', body: JSON.stringify(attachBody(legacy, capability, 'irixi-continuity-ui-v1')) });
+  assert.equal(reattached.status, 201);
+  assert.equal(reattached.value.task.projectWorkspace.status, 'ready');
+  assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' })).status, 200);
+  assert.equal(planCalls, 1);
 });
 
 test('HTTP 当前计划以三批四个真实 workspace 工具形成 artifact，并把完整规范审计交给 final review', { timeout: 45_000 }, async (t) => {
@@ -406,4 +482,273 @@ test('HTTP 当前计划以三批四个真实 workspace 工具形成 artifact，�
   const oldApprovalExport = await fetch(`${running.url}/api/tasks/${created.value.task.id}/artifacts/${afterRestart.artifacts[0].id}/export?format=patch&approval=${approvalId}`);
   assert.equal(oldApprovalExport.status, 400);
   assert.match((await oldApprovalExport.json()).error.message, /旧目标|当前目标|过期/);
+});
+
+test('HTTP continuity 固定事务由宿主完成检查差异、独立审阅、重启确认下载并在目标变化后撤旧', { timeout: 45_000 }, async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const originalPath = path.resolve('app/public/app.js');
+  const originalBytes = await fs.readFile(originalPath);
+  let reviewCapture;
+  const reviewSeen = new Promise((resolve) => { reviewCapture = resolve; });
+  const plan = {
+    summary: '在固定函数区域修正续接状态徽标并执行宿主检查。',
+    projectAlignment: { status: 'standalone', explanation: '独立的小范围真实项目修复。' },
+    outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '代码执行员', mission: '修改固定函数区域', capabilities: ['固定工作区'], recruitmentReason: '需要真实候选差异。' },
+      { key: 'author', name: '候选汇总员', mission: '汇总宿主证据', capabilities: ['说明'], recruitmentReason: '形成候选说明。' },
+      { key: 'auditor', name: '独立审阅员', mission: '核对宿主证据', capabilities: ['审阅'], recruitmentReason: '确认前独立审阅。' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['交付'], recruitmentReason: '只交付指定版本。' },
+    ],
+    steps: [
+      { key: 'code', title: '修改并检查续接状态候选', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['只改固定函数并通过固定检查'], expectedResult: '宿主代码证据' },
+      { key: 'synthesize', title: '形成代码候选', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['绑定宿主证据'], expectedResult: 'project patch 候选' },
+      { key: 'review', title: '独立核对', kind: 'review', role: 'auditor', dependsOn: ['synthesize'], tools: [], acceptanceCriteria: ['核对固定证据'], expectedResult: '审阅记录' },
+      { key: 'deliver', title: '等待确认', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['只下载确认 patch'], expectedResult: '待确认 patch' },
+    ],
+  };
+  const providers = {
+    async status() { return { demo: { id: 'demo', available: true }, codex: { id: 'codex-cli', available: true } }; },
+    async plan() { return structuredClone(plan); },
+    async executeWork(task, item, input, { signal }) {
+      if (item.stepKey === 'code') {
+        assert.equal(input.projectTransaction.mode, 'host_fixed_transaction_v1');
+        assert.equal(input.projectTransaction.publicContractFingerprint, task.projectWorkspace.publicContractFingerprint);
+        assert.equal(input.projectTransaction.requiredModelAction, 'one_workspace_write');
+        assert.deepEqual(input.projectTransaction.hostNextActions, ['workspace.check', 'workspace.diff']);
+        const prompt = providerTest.workPrompt(task, item, input);
+        assert.match(prompt, /只有这一次候选生成/);
+        assert.doesNotMatch(prompt, /最多三轮/);
+        const read = input.projectTransaction.readResult;
+        assert.equal(read.contentScope, 'render-continuity-function-v1');
+        const repaired = passingContinuityCandidate(read.content);
+        return {
+          summary: '', output: '', sources: [], claims: [], gap: '', caveats: [], deliverables: [], acceptanceChecks: [],
+          toolRequests: [{ id: 'write-continuity', tool: 'workspace.write', reason: '只替换完整固定函数', args: { path: 'app/public/app.js', expectedFileSha256: read.fileSha256, expectedCandidateSha256: read.candidateSha256, content: repaired } }],
+        };
+      }
+      if (item.kind === 'synthesis') {
+        assert.equal(input.projectSourceIntegrity.fileCount, 3);
+        assert.equal(input.projectSourceIntegrity.allUnchanged, true);
+        assert.deepEqual(input.projectExecutionAudit.execution.calls.map((entry) => entry.request.tool), ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff']);
+        return { summary: '续接状态候选已绑定当前宿主证据。', output: '候选只调整终止状态的徽标与颜色，现有结构和其他状态保持不变。', sources: [], claims: [], gap: '', caveats: [], toolRequests: [], acceptanceChecks: item.acceptanceCriteria.map((criterion) => ({ criterion, passed: true, evidence: '源完整性、固定检查和执行审计均为当前版本' })), deliverables: [{ kind: 'project_patch', title: '续接状态修复候选', content: '候选 patch 只包含已授权固定函数区域内的终止状态提示修复，等待独立审阅和指定版本确认。' }] };
+      }
+      if (item.kind === 'review') return { summary: '预检查完成', output: '候选与宿主证据已交给独立审阅。', sources: [], claims: [], gap: '', caveats: [], deliverables: [], toolRequests: [], acceptanceChecks: item.acceptanceCriteria.map((criterion) => ({ criterion, passed: true, evidence: '未调用工具' })) };
+      if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }));
+    },
+    async review(task, artifact, { signal }) {
+      reviewCapture({ task: structuredClone(task), artifact: structuredClone(artifact), prompt: providerTest.reviewPrompt(task, artifact) });
+      if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+      return passingProjectReview();
+    },
+  };
+  let running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  t.after(() => running.server.close());
+  const created = await request(running.url, '/api/tasks', { method: 'POST', body: JSON.stringify({ title: '续接状态小修复', goal: '修复终止状态错误显示为可继续', type: 'project', successCriteria: ['固定状态矩阵通过'], boundaries: ['只改 renderContinuity', '原项目只读'] }) });
+  const capability = (await request(running.url, '/api/project-capabilities')).value.project;
+  const continuityFixture = capability.fixtures.find((entry) => entry.id === 'irixi-continuity-ui-v1');
+  assert.ok(continuityFixture);
+  assert.equal(continuityFixture.checks[0].id, 'render-continuity-terminal-state-v1');
+  assert.equal(continuityFixture.executionMode, 'host_fixed_transaction_v1');
+  assert.match(continuityFixture.publicContractFingerprint, /^[a-f0-9]{64}$/);
+  assert.deepEqual(continuityFixture.publicContract.inputInterface.fields.map((field) => field.path), [
+    'task.status', 'task.execution.stopReason', 'task.runtime.activeJob', 'task.continuity.candidate.confirmed',
+    'task.continuity.progress.done', 'task.continuity.progress.incomplete', 'task.continuity.progress.stoppedBecause',
+    'task.continuity.progress.nextStep', 'task.continuity.progress.needsUserDecision',
+  ]);
+  const attached = await request(running.url, `/api/tasks/${created.value.task.id}/project-workspace/attach`, { method: 'POST', body: JSON.stringify(attachBody(created.value.task, capability, continuityFixture.id)) });
+  assert.equal(attached.status, 201);
+  assert.equal(attached.value.task.projectWorkspace.fixtureId, continuityFixture.id);
+  assert.equal(attached.value.task.projectWorkspace.executionMode, 'host_fixed_transaction_v1');
+  assert.equal(attached.value.task.projectWorkspace.publicContractFingerprint, continuityFixture.publicContractFingerprint);
+  assert.equal(attached.value.task.projectWorkspace.publicContract.entrypoint, 'renderContinuity');
+  assert.deepEqual(attached.value.task.projectWorkspace.readablePaths, ['app/public/app.js']);
+  assert.deepEqual(attached.value.task.projectWorkspace.editablePaths, ['app/public/app.js']);
+  assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' })).status, 200);
+  const continued = await request(running.url, `/api/tasks/${created.value.task.id}/continue`, { method: 'POST', body: '{}' });
+  assert.equal(continued.status, 202);
+  const observed = await Promise.race([reviewSeen, new Promise((_resolve, reject) => setTimeout(() => reject(new Error('continuity final review timeout')), 20_000))]);
+  const audit = observed.artifact.projectCandidate.projectExecutionAudit;
+  assert.equal(audit.execution.mode, 'host_fixed_transaction_v1');
+  assert.equal(audit.execution.transaction.modelInvocationCount, 1);
+  assert.deepEqual(audit.execution.calls.map((call) => [call.actor, call.transactionStep, call.batchOrdinal, call.request.tool]), [
+    ['host', 'read', 1, 'workspace.read'], ['model', 'write', 2, 'workspace.write'],
+    ['host', 'check', 3, 'workspace.check'], ['host', 'diff', 4, 'workspace.diff'],
+  ]);
+  assert.equal(audit.execution.synthesis.actualToolCallCount, 0);
+  assert.match(observed.prompt, /render-continuity-terminal-state-v1/);
+  assert.match(observed.prompt, /宿主真实预读取.*唯一一次模型候选 write.*宿主固定 check.*宿主局部 diff/);
+  assert.match(observed.prompt, /host\/model\/host\/host/);
+  assert.match(observed.prompt, /read\/write\/check\/diff/);
+  assert.doesNotMatch(observed.prompt, /同一第三批/);
+  assert.match(observed.prompt, /--- a\/app\/public\/app\.js/);
+  assert.match(observed.prompt, /需要先处理/);
+  assert.match(observed.prompt, /"regionIntegrity"/);
+  assert.match(observed.prompt, /"outsideUnchanged": true/);
+  assert.doesNotMatch(observed.artifact.projectCandidate.patch, /@@ -1,/);
+  assert.doesNotMatch(observed.artifact.projectCandidate.patch, /^[-+]import /m);
+  assert.equal(observed.artifact.projectCandidate.regionIntegrity.outsideUnchanged, true);
+  assert.equal(observed.artifact.projectCandidate.regionIntegrity.patchSha256, observed.artifact.projectCandidate.patchSha256);
+  assert.equal(observed.artifact.projectCandidate.regionIntegritySha256, observed.artifact.projectCandidate.regionIntegrity.integritySha256);
+  assert.equal(observed.prompt.includes(root), false);
+  let stored;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    stored = await running.store.get(created.value.task.id);
+    if (stored.artifacts[0]?.reviewStatus === 'passed' && stored.status === 'waiting_user') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(stored.artifacts[0].reviewStatus, 'passed');
+  assert.equal(stored.projectWorkspace.candidate.checks.at(-1).caseTotal, 23);
+  assert.equal(stored.projectWorkspace.candidate.checks.at(-1).casePassed, 23);
+  assert.equal(stored.artifacts[0].projectCandidate.regionIntegrity.candidateWhole.sha256, stored.projectWorkspace.candidate.manifest.find((entry) => entry.path === 'app/public/app.js').sha256);
+  assert.deepEqual(await fs.readFile(originalPath), originalBytes);
+
+  await new Promise((resolve) => running.server.close(resolve));
+  running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  const restarted = await running.store.get(created.value.task.id);
+  assert.equal(restarted.artifacts[0].projectCandidate.projectExecutionAuditSha256, audit.auditSha256);
+  const confirmed = await request(running.url, `/api/tasks/${created.value.task.id}/artifacts/${restarted.artifacts[0].id}/confirm`, { method: 'POST', body: '{}' });
+  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.value));
+  const downloaded = await fetch(`${running.url}/api/tasks/${created.value.task.id}/artifacts/${restarted.artifacts[0].id}/export?format=patch&approval=${confirmed.value.approval.id}`);
+  assert.equal(downloaded.status, 200);
+  const patch = await downloaded.text();
+  assert.equal(patch, restarted.artifacts[0].projectCandidate.patch);
+  assert.match(patch, /需要先处理/);
+  const replacement = await request(running.url, `/api/tasks/${created.value.task.id}/suggestions`, { method: 'POST', body: JSON.stringify({ text: '替换为另一个代码目标', classification: 'replace' }) });
+  const changed = await request(running.url, `/api/tasks/${created.value.task.id}/suggestions/${replacement.value.suggestion.id}/accept-goal`, { method: 'POST', body: JSON.stringify({ statement: '另一个代码目标', successCriteria: ['另行确认'], boundaries: ['不沿用旧候选'] }) });
+  assert.equal(changed.status, 200);
+  const oldExport = await fetch(`${running.url}/api/tasks/${created.value.task.id}/artifacts/${restarted.artifacts[0].id}/export?format=patch&approval=${confirmed.value.approval.id}`);
+  assert.equal(oldExport.status, 400);
+  assert.deepEqual(await fs.readFile(originalPath), originalBytes);
+});
+
+test('HTTP continuity 固定检查失败保留候选与四步宿主记录，零重试零重规划且重启后仍阻断', { timeout: 30_000 }, async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const projectPlan = {
+    summary: '在固定函数区域修正续接状态徽标并执行宿主检查。',
+    projectAlignment: { status: 'standalone', explanation: '独立的小范围项目。' }, outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '代码执行员', mission: '修改固定函数区域', capabilities: ['固定工作区'], recruitmentReason: '需要真实候选差异。' },
+      { key: 'author', name: '候选汇总员', mission: '汇总宿主证据', capabilities: ['说明'], recruitmentReason: '形成候选说明。' },
+      { key: 'auditor', name: '独立审阅员', mission: '核对宿主证据', capabilities: ['审阅'], recruitmentReason: '确认前独立审阅。' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['交付'], recruitmentReason: '只交付指定版本。' },
+    ],
+    steps: [
+      { key: 'code', title: '修改并检查续接状态候选', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['只改固定函数并通过固定检查'], expectedResult: '宿主代码证据' },
+      { key: 'synthesize', title: '形成代码候选', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['绑定宿主证据'], expectedResult: 'project patch 候选' },
+      { key: 'review', title: '独立核对', kind: 'review', role: 'auditor', dependsOn: ['synthesize'], tools: [], acceptanceCriteria: ['核对固定证据'], expectedResult: '审阅记录' },
+      { key: 'deliver', title: '等待确认', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['只下载确认 patch'], expectedResult: '待确认 patch' },
+    ],
+  };
+  let planCalls = 0; let workCalls = 0; let reviewCalls = 0;
+  const providers = {
+    async status() { return { demo: { id: 'demo', available: true }, codex: { id: 'codex-cli', available: true } }; },
+    async plan() { planCalls += 1; return structuredClone(projectPlan); },
+    async executeWork(currentTask, item, input) {
+      workCalls += 1;
+      assert.equal(item.kind, 'tool');
+      const read = input.projectTransaction.readResult;
+      if (currentTask.title.includes('顺序违例')) return {
+        summary: '', output: '', sources: [], claims: [], gap: '', caveats: [], deliverables: [], acceptanceChecks: [],
+        toolRequests: [{ id: 'duplicate-read', tool: 'workspace.read', reason: '受控协议违例', args: { path: read.path, view: 'candidate', expectedCandidateSha256: read.candidateSha256 } }],
+      };
+      const wrongField = wrongStopReasonCandidate(read.content);
+      return { summary: '', output: '', sources: [], claims: [], gap: '', caveats: [], deliverables: [], acceptanceChecks: [], toolRequests: [{
+        id: 'wrong-field-write', tool: 'workspace.write', reason: '受控失败候选',
+        args: { path: 'app/public/app.js', expectedFileSha256: read.fileSha256, expectedCandidateSha256: read.candidateSha256, content: wrongField },
+      }] };
+    },
+    async review() { reviewCalls += 1; throw new Error('review must not run after a failed fixed check'); },
+  };
+  let running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  t.after(() => running.server.close());
+  const created = await request(running.url, '/api/tasks', { method: 'POST', body: JSON.stringify({ title: '受控失败项目', goal: '修复终止状态徽标', type: 'project', successCriteria: ['固定状态矩阵通过'], boundaries: ['只改 renderContinuity'] }) });
+  const capability = (await request(running.url, '/api/project-capabilities')).value.project;
+  const attached = await request(running.url, `/api/tasks/${created.value.task.id}/project-workspace/attach`, { method: 'POST', body: JSON.stringify(attachBody(created.value.task, capability, 'irixi-continuity-ui-v1')) });
+  assert.equal(attached.status, 201);
+  assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' })).status, 200);
+  assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/continue`, { method: 'POST', body: '{}' })).status, 202);
+  let failed;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    failed = await running.store.get(created.value.task.id);
+    if (failed.status === 'partial' && failed.execution?.stopReason === 'project_verification_failed') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(failed.status, 'partial');
+  assert.equal(failed.execution.stopReason, 'project_verification_failed');
+  assert.equal(planCalls, 1);
+  assert.equal(workCalls, 1);
+  assert.equal(reviewCalls, 0);
+  assert.equal(failed.artifacts.length, 0);
+  assert.equal(failed.execution.modelCalls.length, 1);
+  assert.equal(failed.execution.modelCalls.every((entry) => entry.status === 'completed'), true);
+  const owner = failed.workItems.find((item) => item.kind === 'tool');
+  assert.equal(owner.attempts.length, 1);
+  const session = failed.agentSessions.findLast((entry) => entry.workItemId === owner.id && entry.runId === failed.execution.id);
+  assert.equal(session.projectTransaction.status, 'failed');
+  assert.equal(session.projectTransaction.errorCode, 'project_verification_failed');
+  assert.deepEqual(session.toolCalls.map((entry) => [entry.hostAudit.actor, entry.hostAudit.transactionStep, entry.ok]), [
+    ['host', 'read', true], ['model', 'write', true], ['host', 'check', true], ['host', 'diff', true],
+  ]);
+  assert.equal(session.toolCalls[2].result.passed, false);
+  assert.equal(session.toolCalls[2].result.casePassed, 9);
+  assert.equal(session.toolCalls[2].result.caseTotal, 23);
+  assert.ok(session.toolCalls[3].result.regionIntegrity);
+  const continuity = (await request(running.url, `/api/tasks/${created.value.task.id}`)).value.task.continuity;
+  assert.match(continuity.progress.nextStep, /固定业务检查未通过/);
+  const blocked = await request(running.url, `/api/tasks/${created.value.task.id}/continue`, { method: 'POST', body: '{}' });
+  assert.equal(blocked.status, 200);
+  assert.equal(blocked.value.action, 'blocked');
+  assert.equal(workCalls, 1);
+  await new Promise((resolve) => running.server.close(resolve));
+  running = await start({ port: 0, root, providers, projectWorkspaceHost: createProjectWorkspaceHost({ capabilityOverride: override }) });
+  const restarted = (await request(running.url, `/api/tasks/${created.value.task.id}`)).value.task;
+  assert.equal(restarted.status, 'partial');
+  assert.equal(restarted.execution.stopReason, 'project_verification_failed');
+  assert.match(restarted.continuity.progress.nextStep, /固定业务检查未通过/);
+  assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/continue`, { method: 'POST', body: '{}' })).value.action, 'blocked');
+  assert.equal(planCalls, 1);
+  assert.equal(workCalls, 1);
+
+  const recoveryInstruction = await request(running.url, `/api/tasks/${created.value.task.id}/suggestions`, {
+    method: 'POST', body: JSON.stringify({ text: '修正停止原因取值路径并保留其他续接行为', classification: 'support' }),
+  });
+  assert.equal(recoveryInstruction.status, 201);
+  assert.equal(recoveryInstruction.value.task.projectWorkspace.status, 'reauthorization_required');
+  const recoveryAttach = await request(running.url, `/api/tasks/${created.value.task.id}/project-workspace/attach`, {
+    method: 'POST', body: JSON.stringify(attachBody(recoveryInstruction.value.task, capability, 'irixi-continuity-ui-v1')),
+  });
+  assert.equal(recoveryAttach.status, 201);
+  assert.equal(recoveryAttach.value.task.projectWorkspace.status, 'ready');
+  const recoveryPlan = await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' });
+  assert.equal(recoveryPlan.status, 200);
+  assert.equal(planCalls, 2);
+  assert.equal(workCalls, 1);
+
+  const protocolTask = await request(running.url, '/api/tasks', { method: 'POST', body: JSON.stringify({ title: '顺序违例项目', goal: '修复终止状态徽标', type: 'project', successCriteria: ['固定状态矩阵通过'], boundaries: ['只改 renderContinuity'] }) });
+  const protocolAttached = await request(running.url, `/api/tasks/${protocolTask.value.task.id}/project-workspace/attach`, { method: 'POST', body: JSON.stringify(attachBody(protocolTask.value.task, capability, 'irixi-continuity-ui-v1')) });
+  assert.equal(protocolAttached.status, 201);
+  assert.equal((await request(running.url, `/api/tasks/${protocolTask.value.task.id}/plan`, { method: 'POST', body: '{}' })).status, 200);
+  assert.equal((await request(running.url, `/api/tasks/${protocolTask.value.task.id}/continue`, { method: 'POST', body: '{}' })).status, 202);
+  let protocolFailed;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    protocolFailed = await running.store.get(protocolTask.value.task.id);
+    if (protocolFailed.status === 'partial') break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(protocolFailed.execution.stopReason, 'project_transaction_failed');
+  assert.equal(protocolFailed.artifacts.length, 0);
+  assert.equal(protocolFailed.execution.modelCalls.length, 1);
+  const protocolOwner = protocolFailed.workItems.find((item) => item.kind === 'tool');
+  assert.equal(protocolOwner.attempts.length, 1);
+  const protocolSession = protocolFailed.agentSessions.findLast((entry) => entry.workItemId === protocolOwner.id && entry.runId === protocolFailed.execution.id);
+  assert.equal(protocolSession.projectTransaction.errorCode, 'project_transaction_failed');
+  assert.deepEqual(protocolSession.toolCalls.map((entry) => [entry.hostAudit.actor, entry.hostAudit.transactionStep]), [['host', 'read']]);
+  assert.equal((await request(running.url, `/api/tasks/${protocolTask.value.task.id}/continue`, { method: 'POST', body: '{}' })).value.action, 'blocked');
+  assert.equal(planCalls, 3);
+  assert.equal(workCalls, 2);
+  assert.equal(reviewCalls, 0);
 });

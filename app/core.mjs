@@ -766,9 +766,11 @@ export function deriveTaskContinuity(task) {
   else if (materialDecisions.length) nextStep = `可继续规划和不依赖它的研究；形成候选前需决定：${materialDecisions[0].name}（${materialDecisions[0].reason}）`;
   else if (readyForDownload) nextStep = '下载已确认的指定版本。';
   else if (['failed', 'partial', 'cancelled', 'cancellation_unknown'].includes(task.status)
-    && ['budget_exhausted', 'permanent_error', 'same_error_exhausted'].includes(task.execution?.stopReason)) {
+    && ['budget_exhausted', 'permanent_error', 'same_error_exhausted', 'project_verification_failed', 'project_transaction_failed'].includes(task.execution?.stopReason)) {
     if (task.execution?.stopReason === 'budget_exhausted') nextStep = '现有预算已用尽；调整预算或范围后再继续。';
     else if (task.execution?.stopReason === 'permanent_error') nextStep = '当前原因不可自动重试；先解除权限或环境阻碍，或调整输入与范围后再重新开始。';
+    else if (task.execution?.stopReason === 'project_verification_failed') nextStep = '固定业务检查未通过，候选与诊断已保留；补充或修改工作要求后，重新授权工作区并重新规划。';
+    else if (task.execution?.stopReason === 'project_transaction_failed') nextStep = '固定项目事务未完成；补充或修改工作要求后，重新授权工作区并重新规划。';
     else nextStep = '同一错误已达到重试上限；请改变输入、范围或运行条件后再重新开始。';
   }
   else if (!task.plan || !task.workItems?.length) nextStep = '按当前目标、材料和已接受交代重新形成计划。';

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,10 +15,27 @@ const safeCapability = {
   probes: [],
 };
 const tempPrefix = path.join(process.cwd(), '.project-test-');
+const LEGACY_CONTINUITY_SHA256 = '90c82c08cf046b1460f7d4df94993f589e55905817ea46b9b2d6971892cf0ae2';
+const LEGACY_CONTINUITY_FUNCTION = `function renderContinuity(task) {
+  const value = task.continuity;
+  if (!value) return '<p class="empty-ledger">正在从任务记录整理续接状态。</p>';
+  const list = (items, empty) => items.length ? \`<ul>\${items.map((item) => \`<li>\${esc(item)}</li>\`).join('')}</ul>\` : \`<p class="field-note">\${esc(empty)}</p>\`;
+  const activeJob = task.runtime?.activeJob;
+  const busyText = activeJob?.kind === 'planning' ? '正在形成计划，等待本次规划结果。'
+    : activeJob?.kind === 'conversation' ? '正在回复当前对话，完成后会写回同一任务。'
+      : activeJob ? '正在处理当前工作，完成后会写回同一任务。' : null;
+  const incomplete = busyText ? [busyText, ...value.progress.incomplete] : value.progress.incomplete;
+  const stoppedBecause = busyText ? '当前正在工作，没有停下。' : value.progress.stoppedBecause || '没有停下，当前记录可以继续。';
+  const nextStep = busyText || value.progress.nextStep;
+  const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;
+  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : 'Irixi 可继续';
+  const tone = busyText ? 'active' : value.progress.needsUserDecision ? 'bad' : 'good';
+  return \`<div class="continuity-grid"><div><strong>已经做成</strong>\${list(value.progress.done, '还没有完成且仍有效的步骤。')}</div><div><strong>尚未完成</strong>\${list(incomplete, '当前没有未完成步骤。')}</div><div><strong>为什么停下</strong><p>\${esc(stoppedBecause)}</p></div><div><strong>下一步</strong><p>\${esc(nextStep)}</p><span class="record-status" data-tone="\${tone}">\${badge}</span></div></div>\`;
+}`;
 
-function expectedAttach(task, capabilities, previous = null) {
+function expectedAttach(task, capabilities, previous = null, fixtureId = 'node-single-file-v1') {
   return {
-    fixtureId: 'node-single-file-v1',
+    fixtureId,
     expectedGoalVersionId: task.goal.activeVersionId,
     expectedProjectRootGoalVersionId: task.projectRootGoalVersionId,
     expectedProjectRootInputFingerprint: task.projectRootInputFingerprint,
@@ -25,6 +43,24 @@ function expectedAttach(task, capabilities, previous = null) {
     expectedPreviousScopeFingerprint: previous,
     expectedCapabilityFingerprint: capabilities.fingerprint,
   };
+}
+
+function continuityRegion(text) {
+  const startMarker = 'function renderContinuity(task) {';
+  const endMarker = '\n}\n\nfunction renderProject(task) {';
+  const start = text.indexOf(startMarker);
+  const endStart = text.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0 && endStart >= 0);
+  return { prefix: text.slice(0, start), content: text.slice(start, endStart + 2), suffix: text.slice(endStart + 2) };
+}
+
+function repairedLegacyContinuity(source) {
+  assert.equal(crypto.createHash('sha256').update(source).digest('hex'), LEGACY_CONTINUITY_SHA256);
+  const repaired = source
+    .replace("  const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;\n", "  const readyForDownload = task.status === 'ready_to_export' && value.candidate?.confirmed;\n  const terminalBlocked = ['failed', 'partial', 'cancelled', 'cancellation_unknown'].includes(task.status)\n    && ['budget_exhausted', 'permanent_error', 'same_error_exhausted', 'project_verification_failed', 'project_transaction_failed'].includes(task.execution?.stopReason);\n")
+    .replace("  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : 'Irixi 可继续';\n  const tone = busyText ? 'active' : value.progress.needsUserDecision ? 'bad' : 'good';", "  const badge = busyText ? '正在工作' : readyForDownload ? '可以下载' : value.progress.needsUserDecision ? '需要你的决定' : terminalBlocked ? '需要先处理' : 'Irixi 可继续';\n  const tone = busyText ? 'active' : value.progress.needsUserDecision || terminalBlocked ? 'bad' : 'good';");
+  assert.notEqual(repaired, source);
+  return repaired;
 }
 
 function memoryStore(task, taskDir) {
@@ -64,6 +100,19 @@ test('项目授权公开投影不泄漏本机路径且迟到 scope 被拒绝', a
   assert.equal(unavailable.reason, '固定隔离探针未通过。');
 });
 
+test('旧 greet grant 缺新合约指纹仍按原固定流程可读，continuity 专用事务不借此放宽', async (t) => {
+  const { taskDir, task, host, store } = await setupWithOverride();
+  t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
+  delete task.projectWorkspace.executionMode;
+  delete task.projectWorkspace.publicContractFingerprint;
+  assert.equal(publicTask(task).projectWorkspace.status, 'ready');
+  const read = await host.runTool(store, task.id, 'work-unit', {
+    tool: 'workspace.read', args: { path: 'src/greeting.mjs', view: 'candidate', expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  });
+  assert.equal(read.path, 'src/greeting.mjs');
+  assert.equal(read.view, 'candidate');
+});
+
 test('patch 对文件末尾换行状态给出合法整文件 unified diff', () => {
   assert.equal(__test.unifiedPatch([{ path: 'src/x.mjs', before: 'old\n', after: 'new\n' }]),
     '--- a/src/x.mjs\n+++ b/src/x.mjs\n@@ -1,1 +1,1 @@\n-old\n+new\n');
@@ -71,6 +120,58 @@ test('patch 对文件末尾换行状态给出合法整文件 unified diff', () =
     '--- a/src/x.mjs\n+++ b/src/x.mjs\n@@ -1,1 +1,1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n');
   assert.equal(__test.unifiedPatch([{ path: 'src/x.mjs', before: '', after: 'new\n' }]),
     '--- a/src/x.mjs\n+++ b/src/x.mjs\n@@ -1,0 +1,1 @@\n+new\n');
+});
+
+test('固定区域 patch 是局部合法 hunk 且可精确重建整文件', async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, 'source');
+  const candidateRoot = path.join(root, 'candidate');
+  await fs.mkdir(sourceRoot, { recursive: true });
+  await fs.mkdir(candidateRoot, { recursive: true });
+  const before = ['const untouched = true;', '', 'function target(value) {', '  return value;', '}', '', 'function later() {', '  return untouched;', '}', ''].join('\n');
+  const after = before.replace('  return value;', '  return String(value).trim();');
+  await fs.writeFile(path.join(sourceRoot, 'app.js'), before);
+  await fs.writeFile(path.join(candidateRoot, 'app.js'), after);
+  const fixture = {
+    region: { path: 'app.js', id: 'target-v1', startMarker: 'function target(value) {', endMarker: '\n}\n\nfunction later() {', maxBytes: 4096 },
+  };
+  const diff = await __test.diffCandidate(sourceRoot, candidateRoot, ['app.js'], fixture);
+  assert.match(diff.patch, /^@@ -\d+,\d+ \+\d+,\d+ @@$/m);
+  assert.doesNotMatch(diff.patch, /^[-+]const untouched/m);
+  assert.equal(__test.applySingleHunk(before, diff.patch, true), after);
+  assert.equal(diff.regionIntegrity.outsideUnchanged, true);
+  assert.equal(diff.regionIntegrity.patchSha256, diff.diffSha256);
+  assert.equal(diff.regionIntegrity.reconstructedCandidateSha256, crypto.createHash('sha256').update(after).digest('hex'));
+});
+
+test('注册 UI 按任务选择固定 fixture 且目标函数边界唯一', async () => {
+  const source = await fs.readFile(path.resolve('app/public/app.js'), 'utf8');
+  const region = continuityRegion(source);
+  assert.equal(source.split('function renderContinuity(task) {').length - 1, 1);
+  assert.equal(source.split('\n}\n\nfunction renderProject(task) {').length - 1, 1);
+  assert.match(region.content, /^function renderContinuity\(task\) \{/);
+  assert.match(source, /projectFixtureSelections: \{\}/);
+  assert.match(source, /state\.projectFixtureSelections\[task\.id\] \|\| workspace\?\.fixtureId/);
+  assert.match(source, /name="fixtureId" data-project-fixture-select/);
+  assert.match(source, /state\.projectFixtureSelections\[state\.task\.id\] = fixture\.id/);
+});
+
+test('capability positive-read 只接受实际 bytes 与 SHA-256 同时精确匹配', async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sample = path.join(root, 'sample.js');
+  const bytes = Buffer.from('browser script without module exports\n');
+  await fs.writeFile(sample, bytes);
+  const wrapper = path.resolve('app/project-runtime/capability-probe-wrapper.mjs');
+  const request = (expectedBytes, expectedSha256) => `${JSON.stringify({ action: 'positive-read', path: sample, expectedBytes, expectedSha256, probeId: 'probe-exact', nonce: 'a'.repeat(32) })}\n`;
+  const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+  const accepted = await __test.runChild(process.execPath, [wrapper], { input: request(bytes.length, digest), cwd: root });
+  assert.equal(JSON.parse(accepted.stdout).passed, true);
+  const wrongLength = await __test.runChild(process.execPath, [wrapper], { input: request(bytes.length + 1, digest), cwd: root });
+  assert.equal(JSON.parse(wrongLength.stdout).passed, false);
+  const wrongHash = await __test.runChild(process.execPath, [wrapper], { input: request(bytes.length, '0'.repeat(64)), cwd: root });
+  assert.equal(JSON.parse(wrongHash.stdout).passed, false);
 });
 
 test('授权根目录链接被拒绝且不会在外部创建暂存副本', async (t) => {
@@ -128,6 +229,16 @@ test('旧 grant 不能靠新 candidate binding 隐式升级后继续使用工具
   await assert.rejects(host.runTool(store, task.id, 'work-unit', {
     tool: 'workspace.diff', args: { expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
   }), (error) => error.status === 409 && error.code === 'project_workspace_stale');
+});
+
+test('旧宿主 verifier hash 的 grant 不能为新候选生成通过记录', async (t) => {
+  const { taskDir, task, host, store } = await setupWithOverride();
+  t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
+  task.projectWorkspace.checks[0].hostVerifierSha256 = '0'.repeat(64);
+  await assert.rejects(host.runTool(store, task.id, 'work-unit', {
+    tool: 'workspace.check', args: { checkId: 'greet-name-contract-v1', expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  }), (error) => error.status === 409 && error.code === 'project_check_changed');
+  assert.equal(task.projectWorkspace.candidate.checks.length, 0);
 });
 
 test('候选写入逐段拒绝 symlink 与 hardlink，外部 canary 不变', async (t) => {
@@ -234,6 +345,180 @@ test('生产 timeout 与 cancel 终止进程组，不留下继续写入的 Node'
   await assert.rejects(pending, (error) => error.code === 'cancelled');
   await new Promise((resolve) => setTimeout(resolve, 450));
   await assert.rejects(fs.stat(marker), { code: 'ENOENT' });
+});
+
+test('默认 continuity fixture 的当前产品函数原生固定检查 23/23', { skip: process.platform !== 'darwin', timeout: 30_000 }, async (t) => {
+  const taskDir = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
+  const task = createTask({ title: '当前续接状态', goal: '核对当前产品续接状态', type: 'project', successCriteria: ['固定状态矩阵通过'], boundaries: ['只读当前 renderContinuity'] });
+  task.plan = { id: 'plan-current-continuity', revision: 1 };
+  const host = createProjectWorkspaceHost({ capabilityOverride: safeCapability });
+  const capabilities = await host.capabilities();
+  const fixture = capabilities.fixtures.find((entry) => entry.id === 'irixi-continuity-ui-v1');
+  await host.attachDraft(task, taskDir, expectedAttach(task, capabilities, null, fixture.id));
+  task.execution = { id: 'run-current-continuity' };
+  task.workItems = [{ id: 'work-current-continuity', status: 'running', role: 'project_developer' }];
+  task.agentSessions = [];
+  const read = await host.runTool(memoryStore(task, taskDir), task.id, 'work-current-continuity', {
+    tool: 'workspace.read', args: { path: 'app/public/app.js', view: 'candidate', expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  });
+  const currentRegion = continuityRegion(await fs.readFile(path.resolve('app/public/app.js'), 'utf8')).content;
+  assert.equal(read.bytes, Buffer.byteLength(currentRegion));
+  assert.equal(read.fileSha256, crypto.createHash('sha256').update(currentRegion).digest('hex'));
+  const checked = await host.runTool(memoryStore(task, taskDir), task.id, 'work-current-continuity', {
+    tool: 'workspace.check', args: { checkId: fixture.checks[0].id, expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  });
+  assert.equal(checked.caseTotal, 23);
+  assert.equal(checked.casePassed, 23);
+  assert.equal(checked.passed, true);
+});
+
+test('独立 legacy continuity sourceRoot 严格保留 9/23 基线，修复后完整矩阵与区域证据通过', { skip: process.platform !== 'darwin', timeout: 45_000 }, async (t) => {
+  const taskDir = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
+  const ownedSourceRoot = path.join(taskDir, 'owned-legacy-source');
+  const originalFile = path.join(ownedSourceRoot, 'app/public/app.js');
+  await fs.mkdir(path.dirname(originalFile), { recursive: true });
+  await fs.mkdir(path.join(ownedSourceRoot, 'app/project-fixtures/irixi-continuity-ui-v1/checks'), { recursive: true });
+  const currentSource = await fs.readFile(path.resolve('app/public/app.js'), 'utf8');
+  const currentParts = continuityRegion(currentSource);
+  const legacySource = `${currentParts.prefix}${LEGACY_CONTINUITY_FUNCTION}${currentParts.suffix}`;
+  await fs.writeFile(originalFile, legacySource);
+  await fs.copyFile(path.resolve('package.json'), path.join(ownedSourceRoot, 'package.json'));
+  await fs.copyFile(path.resolve('app/project-fixtures/irixi-continuity-ui-v1/checks/check.mjs'), path.join(ownedSourceRoot, 'app/project-fixtures/irixi-continuity-ui-v1/checks/check.mjs'));
+  const originalBytes = await fs.readFile(originalFile);
+  const originalParts = continuityRegion(originalBytes.toString('utf8'));
+  assert.equal(crypto.createHash('sha256').update(originalParts.content).digest('hex'), LEGACY_CONTINUITY_SHA256);
+  const task = createTask({ title: '续接状态小修复', goal: '修复终止状态的继续提示', type: 'project', successCriteria: ['固定状态矩阵通过'], boundaries: ['只改 renderContinuity'] });
+  task.plan = { id: 'plan-continuity-region', revision: 1 };
+  const fixtureDefinition = structuredClone(__test.DEFAULT_FIXTURES['irixi-continuity-ui-v1']);
+  fixtureDefinition.sourceRoot = ownedSourceRoot;
+  const host = createProjectWorkspaceHost({ capabilityOverride: safeCapability, fixtures: { continuity: fixtureDefinition } });
+  const capabilities = await host.capabilities();
+  const fixture = capabilities.fixtures.find((entry) => entry.id === 'irixi-continuity-ui-v1');
+  assert.ok(fixture);
+  assert.equal(fixture.publicContract.entrypoint, 'renderContinuity');
+  assert.equal(fixture.readablePaths.join(','), 'app/public/app.js');
+  assert.equal(fixture.editablePaths.join(','), 'app/public/app.js');
+  const workspace = await host.attachDraft(task, taskDir, expectedAttach(task, capabilities, null, fixture.id));
+  assert.equal(workspace.status, 'ready');
+  assert.equal(workspace.publicContract.id, 'render-continuity-terminal-state-v1');
+  assert.equal(task.projectWorkspace.sourceManifest.length, 3);
+  task.execution = { id: 'run-continuity' };
+  task.workItems = [{ id: 'work-continuity', status: 'running', role: 'project_developer' }];
+  task.agentSessions = [];
+  const store = memoryStore(task, taskDir);
+
+  const read = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.read', args: { path: 'app/public/app.js', view: 'candidate', expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  });
+  assert.equal(read.contentScope, 'render-continuity-function-v1');
+  assert.equal(read.bytes, 1767);
+  assert.equal(read.fileSha256, '90c82c08cf046b1460f7d4df94993f589e55905817ea46b9b2d6971892cf0ae2');
+  assert.equal(read.wholeFileBytes, originalBytes.length);
+  assert.notEqual(read.wholeFileSha256, read.fileSha256);
+  assert.equal(read.content, originalParts.content);
+  await assert.rejects(host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.write', args: { path: 'app/public/app.js', expectedFileSha256: read.fileSha256, expectedCandidateSha256: read.candidateSha256, content: `${read.content}\n` },
+  }), (error) => error.code === 'project_region_invalid');
+  await assert.rejects(host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.write', args: { path: 'app/public/app.js', expectedFileSha256: '0'.repeat(64), expectedCandidateSha256: read.candidateSha256, content: read.content },
+  }), (error) => error.status === 409);
+  assert.deepEqual(await fs.readFile(originalFile), originalBytes);
+
+  const before = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.check', args: { checkId: fixture.checks[0].id, expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
+  });
+  assert.equal(before.caseTotal, 23);
+  assert.equal(before.casePassed, 9);
+  assert.equal(before.passed, false);
+  assert.deepEqual(before.cases.filter((entry) => !entry.passed).map((entry) => entry.caseId), [
+    'budget_exhausted-failed-blocked', 'budget_exhausted-partial-blocked', 'budget_exhausted-cancelled-blocked', 'budget_exhausted-cancellation_unknown-blocked',
+    'permanent_error-failed-blocked', 'permanent_error-partial-blocked', 'permanent_error-cancelled-blocked', 'permanent_error-cancellation_unknown-blocked',
+    'same_error_exhausted-failed-blocked', 'same_error_exhausted-partial-blocked', 'same_error_exhausted-cancelled-blocked', 'same_error_exhausted-cancellation_unknown-blocked',
+    'project_verification_failed-partial-blocked', 'project_transaction_failed-partial-blocked',
+  ]);
+
+  const repaired = repairedLegacyContinuity(read.content);
+  const candidateRoot = path.join(taskDir, ...task.projectWorkspace.candidate.relativeRoot.split('/'));
+  const candidateFile = path.join(candidateRoot, 'app/public/app.js');
+  const fixedBody = repaired.slice('function renderContinuity(task) {'.length, -1);
+  const commaExpressionBypass = `${repaired}, function forgedRender(task) {${fixedBody}}`;
+  const bypassWritten = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.write', args: { path: 'app/public/app.js', expectedFileSha256: read.fileSha256, expectedCandidateSha256: read.candidateSha256, content: commaExpressionBypass },
+  });
+  const invalidWholeFile = await __test.runChild(process.execPath, ['--check', candidateFile], { cwd: candidateRoot });
+  assert.notEqual(invalidWholeFile.code, 0);
+  const bypassCheck = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.check', args: { checkId: fixture.checks[0].id, expectedCandidateSha256: bypassWritten.candidateSha256 },
+  });
+  assert.equal(bypassCheck.passed, false);
+  assert.equal(bypassCheck.casePassed, 0);
+  const reread = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.read', args: { path: 'app/public/app.js', view: 'candidate', expectedCandidateSha256: bypassWritten.candidateSha256 },
+  });
+  const written = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.write', args: { path: 'app/public/app.js', expectedFileSha256: reread.fileSha256, expectedCandidateSha256: reread.candidateSha256, content: repaired },
+  });
+  assert.equal(written.contentScope, 'render-continuity-function-v1');
+  assert.equal(written.bytes, Buffer.byteLength(repaired));
+  assert.match(written.fileSha256, /^[a-f0-9]{64}$/);
+  assert.notEqual(written.wholeFileSha256, read.wholeFileSha256);
+  const validWholeFile = await __test.runChild(process.execPath, ['--check', candidateFile], { cwd: candidateRoot });
+  assert.equal(validWholeFile.code, 0);
+  const candidateParts = continuityRegion(await fs.readFile(candidateFile, 'utf8'));
+  assert.equal(candidateParts.prefix, originalParts.prefix);
+  assert.equal(candidateParts.suffix, originalParts.suffix);
+  assert.equal(candidateParts.content, repaired);
+  assert.deepEqual(await fs.readFile(originalFile), originalBytes);
+
+  const passed = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.check', args: { checkId: fixture.checks[0].id, expectedCandidateSha256: written.candidateSha256 },
+  });
+  assert.equal(passed.passed, true);
+  assert.equal(passed.casePassed, 23);
+  assert.equal(passed.caseTotal, 23);
+  assert.equal(passed.cases.every((entry) => !Object.hasOwn(entry, 'value') && !Object.hasOwn(entry, 'stdout')), true);
+  const diff = await host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.diff', args: { expectedCandidateSha256: written.candidateSha256 },
+  });
+  assert.deepEqual(diff.changes.map((entry) => entry.path), ['app/public/app.js']);
+  assert.equal(diff.sourceIntegrity.fileCount, 3);
+  assert.equal(diff.sourceIntegrity.allUnchanged, true);
+  assert.ok(diff.regionIntegrity);
+  assert.equal(diff.regionIntegrity.path, 'app/public/app.js');
+  assert.equal(diff.regionIntegrity.regionId, 'render-continuity-function-v1');
+  assert.equal(diff.regionIntegrity.outsideUnchanged, true);
+  assert.equal(diff.regionIntegrity.sourceWhole.bytes, originalBytes.length);
+  assert.equal(diff.regionIntegrity.sourceRegion.sha256, read.fileSha256);
+  assert.equal(diff.regionIntegrity.candidateRegion.sha256, written.fileSha256);
+  assert.equal(diff.regionIntegrity.patchSha256, diff.diffSha256);
+  assert.equal(diff.regionIntegrity.reconstructedCandidateSha256, written.wholeFileSha256);
+  assert.doesNotMatch(diff.patch, /@@ -1,/);
+  assert.doesNotMatch(diff.patch, /^[-+]import /m);
+  assert.match(diff.patch, /^@@ -\d+,\d+ \+\d+,\d+ @@$/m);
+  assert.equal(__test.applySingleHunk(originalBytes.toString('utf8'), diff.patch, originalBytes.toString('utf8').endsWith('\n')), await fs.readFile(candidateFile, 'utf8'));
+
+  const evidence = await host.buildArtifactEvidence(task, taskDir);
+  evidence.projectExecutionAudit = { auditSha256: 'continuity-region-audit', plan: { id: task.plan.id, revision: task.plan.revision } };
+  evidence.projectExecutionAuditSha256 = evidence.projectExecutionAudit.auditSha256;
+  assert.deepEqual(evidence.regionIntegrity, diff.regionIntegrity);
+  assert.equal(evidence.regionIntegritySha256, diff.regionIntegrity.integritySha256);
+  assert.equal((await host.assertArtifactFilesCurrent(task, taskDir, { projectCandidate: evidence })).toString('utf8'), diff.patch);
+  const tamperedRegion = structuredClone(evidence);
+  tamperedRegion.regionIntegrity.prefix.sha256 = '0'.repeat(64);
+  await assert.rejects(host.assertArtifactFilesCurrent(task, taskDir, { projectCandidate: tamperedRegion }), (error) => error.status === 400 || error.status === 409);
+  const missingRegion = structuredClone(evidence);
+  delete missingRegion.regionIntegrity;
+  delete missingRegion.regionIntegritySha256;
+  await assert.rejects(host.assertArtifactFilesCurrent(task, taskDir, { projectCandidate: missingRegion }), (error) => error.status === 400 || error.status === 409);
+
+  const tampered = await fs.readFile(candidateFile, 'utf8');
+  await fs.writeFile(candidateFile, ` ${tampered.slice(1)}`);
+  await assert.rejects(host.runTool(store, task.id, 'work-continuity', {
+    tool: 'workspace.check', args: { checkId: fixture.checks[0].id, expectedCandidateSha256: written.candidateSha256 },
+  }), (error) => error.code === 'project_region_outside_changed');
+  assert.deepEqual(await fs.readFile(originalFile), originalBytes);
 });
 
 test('实际 macOS sandbox 对固定 greetName 合约执行父侧 verifier 并拒绝欺骗输出', { skip: process.platform !== 'darwin', timeout: 45_000 }, async (t) => {

@@ -135,10 +135,14 @@ function workPrompt(task, item, input) {
     '网页的 fetchedAt、HTTP 状态、内容哈希和抓取方式是宿主采集元数据：可以按工具结果原样写在来源说明，但不要把它们伪造成材料事实 claim。网页正文事实的 claim 只能使用 web.read 归档后返回的真实 materialId 和带编号 excerpt；绝不能用 task:、URL 或自造值填 materialId。',
     '需要工具时，只能从 workItem.allowedTools 选择，在 toolRequests 返回结构化请求，并保持 summary、output、gap 为空字符串，sources、claims、caveats、acceptanceChecks、deliverables 为空数组；宿主会校验计划授权并返回结果，再让你继续。材料搜索 args 为 {query}；材料读取为 {materialIds}，如果返回 truncated:true，用 {materialIds,startLine:nextStartLine,maxLines}继续读取；记忆搜索为 {query,scope}；公开搜索为 {query}；读公开页为 {url}。materialDirectory 只提供材料目录，正文仍需通过授权工具取得。',
     task.type === 'project'
-      ? '项目工具参数固定为：workspace.read {path,view:"source"|"candidate",expectedCandidateSha256}；workspace.write {path,expectedFileSha256,expectedCandidateSha256,content}；workspace.check {checkId,expectedCandidateSha256}；workspace.diff {expectedCandidateSha256}。每次使用宿主上次返回的精确 hash，不能猜测或沿用旧 hash。workspace.diff.sourceIntegrity 是宿主在该次调用中重新读取 original 与 task source snapshot 后生成的固定三文件证明：只含相对路径、bytes、授权时/current original/task snapshot SHA、聚合 SHA 和 unchanged 结果；宿主也把同一证据放入后继输入的 projectWorkspace.candidate.sourceIntegrity，并在 synthesis 调用前再次实读生成 projectSourceIntegrity。projectExecutionAudit 是宿主按当前计划、会话与实际工具批次写入并重新核对的执行审计；它和 sourceIntegrity 都是宿主元数据，不是材料事实，不得为它们伪造 materialId 或 claims。以 synthesis 的 projectSourceIntegrity 与 projectExecutionAudit 为最新必要证明；不要为取得正文、绝对路径或另一个工具而报 gap。固定检查只返回父 verifier 的规范 verdict、case 计数、退出状态和有界输出元数据，不返回 candidate 原始 stdout/stderr 或父侧 expected。'
+      ? input.projectTransaction
+        ? '当前是 hash 绑定的固定项目事务。宿主已真实执行 workspace.read，projectTransaction.readResult 含授权函数片段和当前 CAS hash；projectWorkspace.publicContract.inputInterface 是可依赖的公开输入形状。你只能返回一个 workspace.write 请求，使用该读取结果的 path、fileSha256 和 candidateSha256，content 是完整替换函数。不得请求 read/check/diff 或第二次 write；写入后的固定检查与局部 diff 由宿主确定执行。父 verifier expected、原始输出和绝对路径不会提供。'
+        : '项目工具参数固定为：workspace.read {path,view:"source"|"candidate",expectedCandidateSha256}；workspace.write {path,expectedFileSha256,expectedCandidateSha256,content}；workspace.check {checkId,expectedCandidateSha256}；workspace.diff {expectedCandidateSha256}。每次使用宿主上次返回的精确 hash，不能猜测或沿用旧 hash。workspace.diff.sourceIntegrity 是宿主在该次调用中重新读取 original 与 task source snapshot 后生成的固定三文件证明；projectExecutionAudit 是宿主按当前计划、会话与实际工具批次写入并重新核对的执行审计。它们是宿主元数据，不是材料事实。固定检查不返回 candidate 原始 stdout/stderr 或父侧 expected。'
       : '',
     'calculate 的 args 必须是 {expression,inputs:[{name,value,sourceRef}]}，expression 用输入名写算式；每个数值 sourceRef 必须是 material:<id>#Lx-Ly，宿主会核对原文并确定性计算。不能自行心算代替工具。',
-    `只有 toolRequests 为空的最终结果阶段才完成 output。若当前步骤是 synthesis，deliverables 必须逐项覆盖计划要求 ${JSON.stringify(task.plan?.deliverables || [task.type])}；其他步骤 deliverables 返回空数组。最终阶段逐条照抄当前验收标准到 acceptanceChecks，并给出是否通过及具体证据；任何一条未通过都写入 gap。不得重复同一 request id。若工具或协议校验失败，阅读返回错误后在同一会话中修正；最多三轮。`,
+    input.projectTransaction
+      ? '当前固定项目事务只有这一次候选生成：只返回一个 workspace.write，不返回 output、gap、acceptanceChecks 或 deliverables。宿主检查失败会保留候选并终止，不会把错误送回同一会话重试。'
+      : `只有 toolRequests 为空的最终结果阶段才完成 output。若当前步骤是 synthesis，deliverables 必须逐项覆盖计划要求 ${JSON.stringify(task.plan?.deliverables || [task.type])}；其他步骤 deliverables 返回空数组。最终阶段逐条照抄当前验收标准到 acceptanceChecks，并给出是否通过及具体证据；任何一条未通过都写入 gap。不得重复同一 request id。若工具或协议校验失败，阅读返回错误后在同一会话中修正；最多三轮。`,
     '原生交付物内容约定：document 用 Markdown，Markdown 表格会转成 Word 真实表格；spreadsheet 优先用 JSON 字符串 {"sheets":[{"name":"表名","rows":[[单元格...]]}]}，可用 = 开头的真实公式；presentation 用 JSON 字符串 {"slides":[{"title":"标题","body":"正文","notes":"可选备注"}]}。不得把 JSON/Markdown 文本冒充成原生文件。',
     '业务交付物只写业务事实、结论、限制和“候选供用户审阅”边界；不要在文档、表格或幻灯片中写“尚未生成原生文件”、“已导出”、“已确认”等会随宿主阶段立即过期的系统状态。原生生成、渲染、审阅、确认与导出状态只由宿主元数据和界面表达。',
     '只有当输入不足以达到当前步骤明示验收标准或用户目标时，才在 gap 写阻断性缺口；税费、规格、起算日等未被目标/验收要求的信息应放在 caveats 作为非阻断限制，不得擅自扩大目标。没有阻断性缺口时 gap 为空字符串；禁止用猜测补齐。严格按 JSON Schema 返回。',
@@ -243,13 +247,16 @@ function reviewPrompt(task, artifact) {
     externalActionEvents: task.events.filter((item) => /export|send|publish|delete|payment|permission/i.test(item.type)).map((item) => ({ type: item.type, at: item.at, message: item.message })),
   };
   const dynamicReviewEvidence = task.agentSessions?.filter((session) => session.workItemId === task.workItems?.find((item) => item.kind === 'review' && item.status === 'running')?.id).at(-1) || null;
+  const projectReviewContract = projectExecution?.execution?.mode === 'host_fixed_transaction_v1'
+    ? '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest、sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权与完整宿主固定事务。事务顺序必须是宿主真实预读取、唯一一次模型候选 write、宿主固定 check、宿主局部 diff；四条记录必须具有同一 transactionId，actor 依次为 host/model/host/host，transactionStep 依次为 read/write/check/diff，sessionSequence 依次为 1/2/3/4。不得声称模型请求或执行了宿主 read/check/diff。synthesis/review/delivery tools=[] 且 synthesis 实际工具数为 0。'
+    : '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest，sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权、read→write→同一第三批 check+diff 的宿主记录和 synthesis/review/delivery tools=[]。batch 内 requestOrdinal 只用于稳定规范化，不代表并发调用的真实先后。';
   return [
     '你是独立审阅角色，不继承起草者的完成结论。逐项检查目标符合度、完整性、来源可追溯、边界遵守和文件可用性。',
     '若这是关联任务，checks 必须另列一项，名称明确写“项目根目标符合度”，以 projectContext.rootGoal 为上位约束核对任务目标、候选和 projectContext.acceptedInstructions；任何冲突或漏掉根任务有效交代都属于阻塞项，不能并入普通“目标符合度”后通过。',
     '每项检查必须给出证据。事实或关键材料不足时应失败。对候选事实与引用中的每条 claim，必须返回且只返回一个 claimChecks 项：claimIndex 使用从 0 开始的原顺序，materialId 和 locator 必须照抄对应 claim；逐句判断 statement 的主体、数值和关系是否由该行原文支持。supported 表示原文支持完整主张，unsupported 表示不支持或错配，uncertain 表示原文不足以判断；unsupported 或 uncertain 都必须阻止通过。文件名只是来源标签，不能当作内容主体证据；即使一句话同时出现多个名称和正确数字，也要核对它实际把条件归给了谁。',
     '自然语言审阅可能出错；不能确定时返回 uncertain，不要为了让候选通过而猜测。严格按 JSON Schema 返回。',
     '这里审阅的是确认前的候选记录：DOCX/XLSX/PPTX 要求在候选阶段已实际生成、绑定内容摘要并渲染出可视页面；这仍是隔离候选文件，不是用户已确认的正式导出。任一必需交付物缺失、生成失败或没有渲染记录都应判失败。',
-    task.type === 'project' ? '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest，sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权、read→write→同一第三批 check+diff 的宿主记录和 synthesis/review/delivery tools=[]。batch 内 requestOrdinal 只用于稳定规范化，不代表并发调用的真实先后。审计不含文件正文、重复 patch、原始错误或 child 输出；实际 patch 仍在 projectCandidate 中供代码审阅。缺失、伪造、失败、跨任务、旧计划或旧范围证据必须失败。确认与下载是审阅后的用户动作；这里只能核对门禁尚未越过，不能宣称未来动作已经发生。' : '',
+    task.type === 'project' ? `${projectReviewContract}审计不含文件正文、重复 patch、原始错误或 child 输出；实际 patch 仍在 projectCandidate 中供代码审阅。缺失、伪造、失败、跨任务、旧计划或旧范围证据必须失败。确认与下载是审阅后的用户动作；这里只能核对门禁尚未越过，不能宣称未来动作已经发生。` : '',
     '合成步骤可能留下“尚未生成原生文件”的当时说明；审阅时以宿主后续写入的 nativeFiles 实时记录为准，不得因已被 ready 记录取代的历史说明而判失败。相反，只有文本宣称、没有 ready 记录仍必须失败。',
     '即使 claims 为空，也不能自动判定来源通过；必须把全部 deliverables 中的重要事实与材料原文、依赖结果和动态审阅预检逐项对照。发现重要事实未进入 claims 时，应在来源核对证据中说明你实际核查了哪些内容。',
     '公开页面的 metadata 由宿主 web.read 写入，与页面正文 excerpt 分开。候选中的抓取时间、最终 URL、HTTP 状态或内容哈希若与对应 material.metadata 精确一致，可以作为宿主采集元数据通过；不要去正文行号中寻找这些采集字段，也不要把它们当成网页自述的业务日期。',

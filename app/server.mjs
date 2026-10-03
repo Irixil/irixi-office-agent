@@ -631,6 +631,12 @@ async function callProviderStep(store, providers, taskId, role, method, signal, 
 }
 
 async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, workItemId, signal, runId) {
+  const initial = await store.get(taskId);
+  const initialItem = initial.workItems.find((candidate) => candidate.id === workItemId);
+  if (initial.type === 'project' && initialItem?.kind === 'tool'
+    && initial.projectWorkspace?.executionMode === 'host_fixed_transaction_v1') {
+    return callFixedProjectTransaction(store, providers, projectWorkspaceHost, taskId, workItemId, signal, runId);
+  }
   let toolResults = [];
   const seenRequestIds = new Set();
   for (let round = 0; round < 4; round += 1) {
@@ -744,6 +750,184 @@ async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, w
     }
   }
   throw new Error('工具往返未能形成最终工作结果。');
+}
+
+function fixedTransactionError(message, code = 'project_transaction_failed', detail = null) {
+  return Object.assign(new Error(message), { code, projectTransaction: true, detail });
+}
+
+async function callFixedProjectTransaction(store, providers, projectWorkspaceHost, taskId, workItemId, signal, runId) {
+  if (signal.aborted) throw Object.assign(new Error('运行已取消。'), { code: 'cancelled' });
+  const transactionId = `project-transaction-${crypto.randomUUID()}`;
+  const attemptId = `${runId}:${workItemId}:transaction`;
+  const opened = await store.mutate(taskId, (task) => {
+    const item = task.workItems.find((candidate) => candidate.id === workItemId);
+    const session = workSession(task, workItemId);
+    assertSessionFresh(task, session, { runId });
+    if (!item || item.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
+    if ((session.toolCalls || []).some((entry) => entry.hostAudit)) throw fixedTransactionError('当前执行链已有项目工具记录，固定事务不会隐式重试。');
+    markSession(task, workItemId, 'running', { runId, attemptId, toolCalls: session.toolCalls || [] });
+    const current = workSession(task, workItemId);
+    current.projectTransaction = {
+      id: transactionId, mode: 'host_fixed_transaction_v1', status: 'reading', modelInvocationCount: 0,
+      publicContractFingerprint: task.projectWorkspace.publicContractFingerprint,
+      workspaceScopeFingerprint: task.projectWorkspace.scopeFingerprint,
+      sourceSnapshotSha256: task.projectWorkspace.sourceSnapshotSha256,
+    };
+    return { item: structuredClone(item) };
+  });
+
+  const record = async (request, entry, { actor, step, sequence }) => {
+    await store.mutate(taskId, (task) => {
+      const item = task.workItems.find((candidate) => candidate.id === workItemId);
+      const session = workSession(task, workItemId);
+      assertSessionFresh(task, session, { runId, attemptId });
+      const stamped = stampProjectToolCall(task, item, session, request, entry, {
+        runId, attemptId, round: 1, batchOrdinal: sequence, requestOrdinal: 1, sessionSequence: sequence,
+        actor, transactionId, transactionStep: step,
+      });
+      session.toolCalls.push({ ...stamped, at: new Date().toISOString() });
+      session.projectTransaction.status = step === 'diff' ? 'verifying' : `${step}_completed`;
+      session.updatedAt = new Date().toISOString();
+      event(task, 'project.transaction_step', `固定项目事务已执行 ${step}。`, {
+        workItemId, transactionId, step, actor, sequence, tool: entry.tool, ok: entry.ok === true,
+      });
+    });
+  };
+  const execute = async (request, meta) => {
+    const latest = await store.get(taskId);
+    const item = latest.workItems.find((candidate) => candidate.id === workItemId);
+    const entries = await runAuthorizedTools(store, latest, item, [request], { signal, projectWorkspaceHost });
+    const entry = entries[0];
+    await record(request, entry, meta);
+    if (!entry?.ok) throw fixedTransactionError(`固定项目事务的 ${meta.step} 步骤失败。`, 'project_transaction_failed', { step: meta.step });
+    return entry;
+  };
+
+  try {
+    const candidate = opened.task.projectWorkspace?.candidate;
+    const path = opened.task.projectWorkspace?.editablePaths?.[0];
+    const readRequest = {
+      id: `host-${transactionId}-read`, tool: 'workspace.read',
+      args: { path, view: 'candidate', expectedCandidateSha256: candidate?.candidateSha256 },
+    };
+    const readEntry = await execute(readRequest, { actor: 'host', step: 'read', sequence: 1 });
+    const prepared = await store.mutate(taskId, (task) => {
+      const item = task.workItems.find((candidateItem) => candidateItem.id === workItemId);
+      const session = workSession(task, workItemId);
+      assertSessionFresh(task, session, { runId, attemptId });
+      if (task.projectWorkspace?.candidate?.candidateSha256 !== readEntry.result.candidateSha256) throw Object.assign(new Error('候选已在读取后变化。'), { code: 'stale_result' });
+      const input = sessionInput(task, item, [readEntry], []);
+      input.projectTransaction = {
+        id: transactionId,
+        mode: 'host_fixed_transaction_v1',
+        publicContractFingerprint: task.projectWorkspace.publicContractFingerprint,
+        readResult: structuredClone(readEntry.result),
+        requiredModelAction: 'one_workspace_write',
+        hostNextActions: ['workspace.check', 'workspace.diff'],
+      };
+      const call = reserveModelCall(task, item.role);
+      session.input = structuredClone(input);
+      session.projectTransaction.status = 'awaiting_candidate';
+      session.projectTransaction.modelInvocationCount = 1;
+      session.projectTransaction.modelCallId = call.id;
+      session.updatedAt = new Date().toISOString();
+      event(task, 'model.call', `${item.title} 已占用第 ${task.execution.modelCalls.length}/${task.execution.limits.maxModelCalls} 次模型调用。`, { callId: call.id, role: item.role, agentId: item.agentId, workItemId, transactionId });
+      return { item: structuredClone(item), input, callId: call.id };
+    });
+    const providerTask = await hydrateProjectContext(store, prepared.task);
+    const providerInput = {
+      ...prepared.result.input,
+      projectContext: providerTask.projectContext,
+      linkedTaskContext: providerTask.linkedTaskContext,
+      continuity: deriveTaskContinuity(providerTask),
+    };
+    await store.mutate(taskId, async (task) => {
+      await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
+      const session = workSession(task, workItemId);
+      assertSessionFresh(task, session, { runId, attemptId });
+      session.input = structuredClone(providerInput);
+      session.updatedAt = new Date().toISOString();
+    });
+    let result;
+    try {
+      result = await providers.executeWork(providerTask, prepared.result.item, providerInput, { signal });
+      await store.mutate(taskId, (task) => finishModelCall(task, prepared.result.callId, { status: 'completed', usage: result?._providerMeta?.usage || 'unknown' }));
+    } catch (error) {
+      await store.mutate(taskId, (task) => finishModelCall(task, prepared.result.callId, { status: error.code === 'cancelled' ? 'cancelled' : 'failed', error: error.message })).catch(() => {});
+      if (error.code === 'cancelled' || error.code === 'stale_result') throw error;
+      throw fixedTransactionError('候选生成未完成，固定项目事务已停止。');
+    }
+    validateWorkResult(prepared.result.item, result, { toolCalls: [readEntry] });
+    const requests = Array.isArray(result.toolRequests) ? result.toolRequests : [];
+    if (requests.length !== 1 || requests[0].tool !== 'workspace.write') {
+      throw fixedTransactionError('固定项目事务只接受一个候选 workspace.write，不会隐式追加工具轮次。');
+    }
+    const writeEntry = await execute(requests[0], { actor: 'model', step: 'write', sequence: 2 });
+    const currentCandidateSha256 = writeEntry.result.candidateSha256;
+    const checkRequest = {
+      id: `host-${transactionId}-check`, tool: 'workspace.check',
+      args: { checkId: providerTask.projectWorkspace.checks[0].id, expectedCandidateSha256: currentCandidateSha256 },
+    };
+    const checkEntry = await execute(checkRequest, { actor: 'host', step: 'check', sequence: 3 });
+    const diffRequest = {
+      id: `host-${transactionId}-diff`, tool: 'workspace.diff',
+      args: { expectedCandidateSha256: currentCandidateSha256 },
+    };
+    const diffEntry = await execute(diffRequest, { actor: 'host', step: 'diff', sequence: 4 });
+    if (checkEntry.result.passed !== true) {
+      throw fixedTransactionError(`固定业务检查未通过（${checkEntry.result.casePassed}/${checkEntry.result.caseTotal}）；候选和诊断已保留，不会隐式重试。`, 'project_verification_failed', {
+        checkId: checkEntry.result.checkId,
+        casePassed: checkEntry.result.casePassed,
+        caseTotal: checkEntry.result.caseTotal,
+        resultDigest: checkEntry.result.resultDigest,
+        candidateSha256: currentCandidateSha256,
+        diffSha256: diffEntry.result.diffSha256,
+      });
+    }
+    await store.mutate(taskId, (task) => {
+      const session = workSession(task, workItemId);
+      assertSessionFresh(task, session, { runId, attemptId });
+      session.projectTransaction.status = 'passed';
+      session.projectTransaction.checkId = checkEntry.result.checkId;
+      session.projectTransaction.resultDigest = checkEntry.result.resultDigest;
+      session.projectTransaction.candidateSha256 = currentCandidateSha256;
+      session.projectTransaction.diffSha256 = diffEntry.result.diffSha256;
+      session.updatedAt = new Date().toISOString();
+    });
+    const evidence = {
+      transactionId,
+      checkId: checkEntry.result.checkId,
+      casePassed: checkEntry.result.casePassed,
+      caseTotal: checkEntry.result.caseTotal,
+      resultDigest: checkEntry.result.resultDigest,
+      candidateSha256: currentCandidateSha256,
+      diffSha256: diffEntry.result.diffSha256,
+      regionIntegritySha256: diffEntry.result.regionIntegrity?.integritySha256 || null,
+      sourceIntegritySha256: diffEntry.result.sourceIntegrity?.integritySha256 || null,
+    };
+    return {
+      summary: '固定项目事务已完成真实读取、候选写入、原生检查与局部差异核对。',
+      output: JSON.stringify(evidence), sources: [], claims: [], gap: '', caveats: [], toolRequests: [], deliverables: [],
+      acceptanceChecks: prepared.result.item.acceptanceCriteria.map((criterion) => ({ criterion, passed: true, evidence: `host transaction ${transactionId}` })),
+      hostProjectTransaction: evidence,
+    };
+  } catch (error) {
+    const stopped = error.code === 'cancelled' || error.code === 'stale_result' || error.projectTransaction === true
+      ? error
+      : fixedTransactionError('固定项目事务未完成，已停止且不会隐式重试。');
+    await store.mutate(taskId, (task) => {
+      const session = workSession(task, workItemId);
+      if (session?.runId === runId && session.projectTransaction?.id === transactionId) {
+        session.projectTransaction.status = 'failed';
+        session.projectTransaction.errorCode = stopped.code || 'project_transaction_failed';
+        session.projectTransaction.failure = stopped.detail || null;
+        session.error = stopped.message;
+        session.updatedAt = new Date().toISOString();
+      }
+    }).catch(() => {});
+    throw stopped;
+  }
 }
 
 async function callDynamicReview(store, providers, taskId, item, artifactId, signal, runId) {
@@ -899,6 +1083,16 @@ async function handleDynamicWorkFailure(store, taskId, itemSnapshot, error, runI
     const priorAttempts = itemSnapshot.attempts?.length || 0;
     if ((item.attempts?.length || 0) <= priorAttempts) recordWorkAttempt(task, item.id, error);
     const session = workSession(task, item.id);
+    if (error.projectTransaction === true || ['project_transaction_failed', 'project_verification_failed'].includes(error.code)) {
+      failWorkItem(task, item.id, error, 'failed');
+      if (session?.runId === runId) markSession(task, item.id, 'failed', { error: error.message });
+      const agent = task.team?.agents?.find((entry) => entry.id === item.agentId);
+      if (agent) agent.status = 'available';
+      event(task, 'project.transaction_stopped', error.message, {
+        workItemId: item.id, code: error.code || 'project_transaction_failed', detail: error.detail || null,
+      });
+      return { retryable: false, terminalReason: error.code === 'project_verification_failed' ? 'project_verification_failed' : 'project_transaction_failed' };
+    }
     if (error.code === 'work_gap') {
       failWorkItem(task, item.id, error, 'failed');
       if (session?.runId === runId) markSession(task, item.id, 'failed', { error: error.message });
@@ -1045,7 +1239,10 @@ async function runDynamicTask(store, providers, projectWorkspaceHost, taskId, co
             if (['executing', 'reviewing'].includes(draft.execution?.phase)) transitionExecution(draft, 'partial');
             draft.execution.stopReason = terminal.terminalReason;
             setTaskState(draft, 'partial', draft.workItems.find((item) => item.id === terminal.workItemId)?.role || draft.activeRole,
-              terminal.terminalReason === 'native_generation_failed' ? `候选内容已保留，但原生文件生成失败：${terminal.message}` : `工作在有界重试后停止：${terminal.message}`);
+              terminal.terminalReason === 'native_generation_failed' ? `候选内容已保留，但原生文件生成失败：${terminal.message}`
+                : terminal.terminalReason === 'project_verification_failed' ? `固定业务检查未通过，已保留候选与诊断并停止：${terminal.message}`
+                  : terminal.terminalReason === 'project_transaction_failed' ? `固定项目事务未完成，已停止且不会隐式重试：${terminal.message}`
+                    : `工作在有界重试后停止：${terminal.message}`);
           });
           return;
         }
@@ -1996,7 +2193,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             return json(res, 200, { task: publicTask(await hydrateProjectContext(store, snapshot)), action: 'await_user', message: continuity.progress.nextStep });
           }
           await assertProjectGoalFresh(store, snapshot);
-          if (['permanent_error', 'same_error_exhausted', 'budget_exhausted'].includes(snapshot.execution?.stopReason)) {
+          if (['permanent_error', 'same_error_exhausted', 'budget_exhausted', 'project_verification_failed', 'project_transaction_failed'].includes(snapshot.execution?.stopReason)) {
             return json(res, 200, { task: publicTask(await hydrateProjectContext(store, snapshot)), action: 'blocked', message: continuity.progress.stoppedBecause || continuity.progress.nextStep });
           }
           const goal = activeGoal(snapshot);
