@@ -1,0 +1,81 @@
+{
+  "id": "office-motion-repair-v6",
+  "status": "art-evidence-ready-runtime-integration-and-user-visual-acceptance-pending",
+  "scope": "four low-jitter seated action-loop replacements plus complete first-floor steward mole book-delivery behavior",
+  "room": "../concept-runtime-v4/room-base-1440x810.png",
+  "secondFloorFunctional": false,
+  "integrationManifest": "integration-manifest.json",
+  "loopQa": "loop-qa.json",
+  "seatedActions": [
+    {
+      "role": "writer",
+      "actionDir": "writer/note-taking-v6",
+      "cycleDurationMs": 3150,
+      "sharedScale": 0.19745222929936307,
+      "visibleWidthRange": [
+        83,
+        84
+      ],
+      "visibleHeightRange": [
+        91,
+        93
+      ]
+    },
+    {
+      "role": "researcher",
+      "actionDir": "researcher/research-writing-v6",
+      "cycleDurationMs": 3700,
+      "sharedScale": 0.2028397565922921,
+      "visibleWidthRange": [
+        98,
+        99
+      ],
+      "visibleHeightRange": [
+        97,
+        102
+      ]
+    },
+    {
+      "role": "reviewer",
+      "actionDir": "reviewer/manuscript-review-v6",
+      "cycleDurationMs": 4200,
+      "sharedScale": 0.2942583732057416,
+      "visibleWidthRange": [
+        163,
+        163
+      ],
+      "visibleHeightRange": [
+        123,
+        124
+      ]
+    },
+    {
+      "role": "archivist",
+      "actionDir": "archivist/stamp-document-v6",
+      "cycleDurationMs": 3390,
+      "sharedScale": 0.267260579064588,
+      "visibleWidthRange": [
+        122,
+        123
+      ],
+      "visibleHeightRange": [
+        120,
+        121
+      ]
+    }
+  ],
+  "stewardMole": {
+    "manifest": "steward-mole/manifest.json",
+    "routeContract": "steward-mole/route-contract.json",
+    "homeWorldFoot": [960, 310],
+    "shelfWorldFoot": [548, 256],
+    "shelveFrameCount": 7,
+    "shelfOwnsBooksAfterFrame": 4,
+    "preview30s": "steward-mole/evidence/delivery-loop-room-preview-30s.gif"
+  },
+  "limits": [
+    "No application/runtime files changed by this art task.",
+    "Timing arrays are authored contracts; runtime support must be verified by the core task.",
+    "User visual acceptance is still required."
+  ]
+}

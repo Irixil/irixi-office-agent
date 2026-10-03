@@ -1,0 +1,77 @@
+{
+  "id": "writer-work-to-rest-transition-v1",
+  "role": "writer",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "worldAnchor": [
+    304,
+    390
+  ],
+  "frameCount": 4,
+  "generatedFrameIndices": [
+    1,
+    2
+  ],
+  "exactEndpointFrameIndices": [
+    0,
+    3
+  ],
+  "workToRestFrameOrder": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "restToWorkFrameOrder": [
+    3,
+    2,
+    1,
+    0
+  ],
+  "forwardDurationsMs": [
+    120,
+    180,
+    200,
+    260
+  ],
+  "reverseDurationsMs": [
+    260,
+    200,
+    180,
+    120
+  ],
+  "workEndpoint": {
+    "source": "motion-repair-v6/writer/note-taking-v6/fullframe/writer-note-taking_13.png",
+    "sourceFrameIndex": 13,
+    "sha256": "19d724c91a3a9f7c17b5ee4d2573c2d02df112f81ed3c68dba0432885971131f"
+  },
+  "restEndpoint": {
+    "source": "rest-states-v6/writer/idle/fullframe/writer-idle_00.png",
+    "sourceFrameIndex": 0,
+    "sha256": "e1d43b88ef947c1a33f0641dd3bf71c78e17c77d257730605d742c21b25af473"
+  },
+  "propAndTopologyContract": "screen-left quill hand releases one quill onto one manuscript; screen-right manuscript hand releases the page",
+  "returnUsesReverseSequence": true,
+  "spritesheet": "spritesheet.png",
+  "fullframePattern": "fullframe/writer-work-to-rest_{index:02d}.png",
+  "preview": "preview.gif",
+  "roomPreview": "room-preview.gif",
+  "transform": {
+    "sharedScale": 0.19138278769007583,
+    "sourceCellBottomBaseline": 670,
+    "placement": [
+      3,
+      -25
+    ],
+    "targetContentBottom": 103
+  },
+  "sourceHash": "3b4046440442dd812da8ef1eb1694e4fe1e3ab2059569c0c5ed85927db40ae72",
+  "generation": "Frames 01-02 are one shared built-in ImageGen in-between sheet. Frames 00 and 03 are exact copies of the approved work/rest endpoints. Local processing only split, keyed when needed, applied one shared transform, packed, timed, composited and measured."
+}

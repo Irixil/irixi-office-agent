@@ -1,0 +1,149 @@
+{
+  "id": "reviewer-rest-states-v6",
+  "revision": "rest-states-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "role": "reviewer",
+  "species": "chinchilla",
+  "frameSize": [
+    192,
+    208
+  ],
+  "anchor": [
+    96,
+    194
+  ],
+  "worldAnchor": [
+    1200,
+    550
+  ],
+  "sharedScale": 0.3,
+  "fixedContentBottom": 139,
+  "workStateManifest": "../../motion-repair-v6/reviewer/manuscript-review-v6/manifest.json",
+  "workSafeSwitchFrameIndices": [
+    0,
+    1,
+    12,
+    13
+  ],
+  "workToRestPolicy": "leave work only on a listed work safe frame, enter idle frame 0; enter sleeping or slack only from idle frame 0 or 3",
+  "restToWorkPolicy": "finish sleeping/slack into idle frame 3, then return to work frame 0 or 13",
+  "states": {
+    "idle": {
+      "runtimeKey": "idle",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        760,
+        420,
+        240,
+        600
+      ],
+      "cycleDurationMs": 2020,
+      "loop": true,
+      "returnTo": null,
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        0,
+        3
+      ],
+      "spritesheet": "idle/spritesheet.png",
+      "fullframePattern": "idle/fullframe/reviewer-idle_{index:02d}.png",
+      "keyframePattern": "idle/keyframe/reviewer-idle_{index:02d}.png",
+      "keyframePrompts": "idle/keyframe-prompts.md",
+      "preview": "idle/preview.gif",
+      "roomPreview": "idle/room-preview.gif"
+    },
+    "sleeping": {
+      "runtimeKey": "sleeping",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        700,
+        700,
+        1300,
+        700
+      ],
+      "cycleDurationMs": 3400,
+      "loop": true,
+      "returnTo": null,
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        0,
+        3
+      ],
+      "spritesheet": "sleeping/spritesheet.png",
+      "fullframePattern": "sleeping/fullframe/reviewer-sleeping_{index:02d}.png",
+      "keyframePattern": "sleeping/keyframe/reviewer-sleeping_{index:02d}.png",
+      "keyframePrompts": "sleeping/keyframe-prompts.md",
+      "preview": "sleeping/preview.gif",
+      "roomPreview": "sleeping/room-preview.gif"
+    },
+    "slack": {
+      "runtimeKey": "slack",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        320,
+        360,
+        560,
+        420
+      ],
+      "cycleDurationMs": 1660,
+      "loop": false,
+      "returnTo": "idle",
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        3
+      ],
+      "spritesheet": "slack/spritesheet.png",
+      "fullframePattern": "slack/fullframe/reviewer-slack_{index:02d}.png",
+      "keyframePattern": "slack/keyframe/reviewer-slack_{index:02d}.png",
+      "keyframePrompts": "slack/keyframe-prompts.md",
+      "preview": "slack/preview.gif",
+      "roomPreview": "slack/room-preview.gif"
+    }
+  },
+  "propAndContactContract": "one cream manuscript rests open on the desk; tail remains attached behind screen-left; both paws are empty",
+  "layering": [
+    "room base",
+    "existing v6 station dedup patch",
+    "rest-state seated character",
+    "existing desk-front occluder"
+  ],
+  "noCupProps": true,
+  "localRuntimeOnly": true,
+  "generation": "All twelve source pose sheets were generated with built-in ImageGen from the approved v6 role references. Local processing created no pose; it only split, keyed/cleaned alpha, used one shared role scale and fixed sheet transforms, aligned anchors, packed, timed and composed evidence.",
+  "sourceHashes": {
+    "idle": "68f8779da0914289dcc49a01c8b0ceba594baa872ecaf344431573dd3f1c1cf0",
+    "sleeping": "7d88b3577afe9fbf00952b3b5c337d6568f606e41e3eb01913f97275655c3f93",
+    "slack": "f37abd964961ae7f534281c9d6258c019ae80a91d59c4c7b57a57fde3d044515"
+  },
+  "evidence": {
+    "actualPlayback": "evidence/reviewer-rest-state-playback.gif",
+    "actualRoomPlayback": "evidence/reviewer-rest-state-room-playback.gif",
+    "actualPlaybackFrameCount": 24,
+    "actualPlaybackDurationMs": 14520,
+    "validation": "validation.json"
+  }
+}
