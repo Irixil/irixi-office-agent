@@ -1,0 +1,83 @@
+{
+  "space": "1440x810 world pixels; first floor only",
+  "secondFloorFunctional": false,
+  "homeWorldFoot": [
+    960,
+    310
+  ],
+  "shelfWorldFoot": [
+    548,
+    256
+  ],
+  "outboundWaypoints": [
+    [
+      960,
+      310
+    ],
+    [
+      960,
+      400
+    ],
+    [
+      548,
+      400
+    ],
+    [
+      548,
+      256
+    ]
+  ],
+  "outboundDirections": [
+    "down",
+    "left",
+    "up"
+  ],
+  "returnWaypoints": [
+    [
+      548,
+      256
+    ],
+    [
+      548,
+      400
+    ],
+    [
+      960,
+      400
+    ],
+    [
+      960,
+      310
+    ]
+  ],
+  "returnDirections": [
+    "down",
+    "right",
+    "up"
+  ],
+  "reason": "y=400 corridor clears the main-desk collision bottom at y=361; x=548 aligns with the open bookcase bay right of the central drawer cabinet",
+  "behaviorSequence": [
+    "wait-empty",
+    "pickup-books",
+    "walk-carry-down",
+    "walk-carry-left",
+    "walk-carry-up",
+    "shelve-books",
+    "walk-empty-down",
+    "walk-empty-right",
+    "walk-empty-up",
+    "wait-empty"
+  ],
+  "ownershipEvents": {
+    "deskStackMatchesPickupFrame00WorldBBox": [
+      960,
+      269,
+      1022,
+      309
+    ],
+    "deskStackHiddenOnPickupStart": true,
+    "moleOwnsStackFromPickupFrame": 4,
+    "shelfPatchAppearsAfterShelveFrame": 4,
+    "moleEmptyOnReturn": true
+  }
+}

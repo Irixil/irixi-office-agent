@@ -1,0 +1,52 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "projectAlignment": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["standalone", "aligned", "conflict"] },
+        "explanation": { "type": "string" }
+      },
+      "required": ["status", "explanation"],
+      "additionalProperties": false
+    },
+    "stages": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "object", "properties": {
+          "title": { "type": "string" }, "agentName": { "type": "string" }, "agentMission": { "type": "string" },
+          "agentCapabilities": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "recruitmentReason": { "type": "string" },
+          "acceptanceCriteria": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "expectedResult": { "type": "string" }
+        }, "required": ["title", "agentName", "agentMission", "agentCapabilities", "recruitmentReason", "acceptanceCriteria", "expectedResult"], "additionalProperties": false },
+        "synthesis": { "type": "object", "properties": {
+          "title": { "type": "string" }, "agentName": { "type": "string" }, "agentMission": { "type": "string" },
+          "agentCapabilities": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "recruitmentReason": { "type": "string" },
+          "acceptanceCriteria": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "expectedResult": { "type": "string" }
+        }, "required": ["title", "agentName", "agentMission", "agentCapabilities", "recruitmentReason", "acceptanceCriteria", "expectedResult"], "additionalProperties": false },
+        "review": { "type": "object", "properties": {
+          "title": { "type": "string" }, "agentName": { "type": "string" }, "agentMission": { "type": "string" },
+          "agentCapabilities": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "recruitmentReason": { "type": "string" },
+          "acceptanceCriteria": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "expectedResult": { "type": "string" }
+        }, "required": ["title", "agentName", "agentMission", "agentCapabilities", "recruitmentReason", "acceptanceCriteria", "expectedResult"], "additionalProperties": false },
+        "delivery": { "type": "object", "properties": {
+          "title": { "type": "string" }, "agentName": { "type": "string" }, "agentMission": { "type": "string" },
+          "agentCapabilities": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "recruitmentReason": { "type": "string" },
+          "acceptanceCriteria": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "string" } },
+          "expectedResult": { "type": "string" }
+        }, "required": ["title", "agentName", "agentMission", "agentCapabilities", "recruitmentReason", "acceptanceCriteria", "expectedResult"], "additionalProperties": false }
+      },
+      "required": ["tool", "synthesis", "review", "delivery"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["summary", "projectAlignment", "stages"],
+  "additionalProperties": false
+}

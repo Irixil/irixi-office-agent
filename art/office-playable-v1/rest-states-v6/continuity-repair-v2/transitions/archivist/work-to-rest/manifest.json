@@ -1,0 +1,77 @@
+{
+  "id": "archivist-work-to-rest-transition-v2",
+  "role": "archivist",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "frameSize": [
+    192,
+    208
+  ],
+  "anchor": [
+    96,
+    194
+  ],
+  "worldAnchor": [
+    1200,
+    730
+  ],
+  "frameCount": 4,
+  "generatedFrameIndices": [
+    1,
+    2
+  ],
+  "exactEndpointFrameIndices": [
+    0,
+    3
+  ],
+  "workToRestFrameOrder": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "restToWorkFrameOrder": [
+    3,
+    2,
+    1,
+    0
+  ],
+  "forwardDurationsMs": [
+    120,
+    180,
+    200,
+    260
+  ],
+  "reverseDurationsMs": [
+    260,
+    200,
+    180,
+    120
+  ],
+  "workEndpoint": {
+    "source": "motion-repair-v6/archivist/stamp-document-v6/fullframe/archivist-stamp-document_13.png",
+    "sourceFrameIndex": 13,
+    "sha256": "bc1b7c3b2a275bc7e0e9e9166b14582f78248158604b36e65ccac365110b88d7"
+  },
+  "restEndpoint": {
+    "source": "rest-states-v6/continuity-repair-v2/archivist-rest-identity-v2/idle/fullframe/archivist-idle-identity-v2_00.png",
+    "sourceFrameIndex": 0,
+    "sha256": "45f8e38bf715bff24b53ff1feee13a23986f7af32e3d1972cb2c2e25c9bd0f38"
+  },
+  "propAndTopologyContract": "screen-right stamp hand lowers one stamp to its base and releases; screen-left document hand releases the single document",
+  "returnUsesReverseSequence": true,
+  "spritesheet": "spritesheet.png",
+  "fullframePattern": "fullframe/archivist-work-to-rest_{index:02d}.png",
+  "preview": "preview.gif",
+  "roomPreview": "room-preview.gif",
+  "transform": {
+    "sharedScale": 0.21686746987951808,
+    "sourceCellBottomBaseline": 736,
+    "placement": [
+      0,
+      -24
+    ],
+    "targetContentBottom": 136
+  },
+  "sourceHash": "886f75482a7427154bb469e087270e8c6b0b4a56c2ac0a6e08f4335910156413",
+  "generation": "Frames 01-02 are one shared built-in ImageGen in-between sheet. Frames 00 and 03 are exact copies of the approved work/rest endpoints. Local processing only split, keyed when needed, applied one shared transform, packed, timed, composited and measured."
+}

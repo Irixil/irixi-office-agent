@@ -1,0 +1,77 @@
+{
+  "id": "reviewer-work-to-rest-transition-v2",
+  "role": "reviewer",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "frameSize": [
+    192,
+    208
+  ],
+  "anchor": [
+    96,
+    194
+  ],
+  "worldAnchor": [
+    1200,
+    550
+  ],
+  "frameCount": 4,
+  "generatedFrameIndices": [
+    1,
+    2
+  ],
+  "exactEndpointFrameIndices": [
+    0,
+    3
+  ],
+  "workToRestFrameOrder": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "restToWorkFrameOrder": [
+    3,
+    2,
+    1,
+    0
+  ],
+  "forwardDurationsMs": [
+    120,
+    180,
+    200,
+    260
+  ],
+  "reverseDurationsMs": [
+    260,
+    200,
+    180,
+    120
+  ],
+  "workEndpoint": {
+    "source": "motion-repair-v6/reviewer/manuscript-review-v6/fullframe/reviewer-manuscript-review_13.png",
+    "sourceFrameIndex": 13,
+    "sha256": "7a090e84c102ea3542575c51f004bb8bfff94fbe5e17a336ca8e3961db8d77a3"
+  },
+  "restEndpoint": {
+    "source": "rest-states-v6/reviewer/idle/fullframe/reviewer-idle_00.png",
+    "sourceFrameIndex": 0,
+    "sha256": "ba2cc5d94d50c0c1ee643a2b1434925b9901be24df3eb82e2f11ca2508e315b3"
+  },
+  "propAndTopologyContract": "screen-left tracing hand stops; screen-right support hand lowers and releases the single manuscript",
+  "returnUsesReverseSequence": true,
+  "spritesheet": "spritesheet.png",
+  "fullframePattern": "fullframe/reviewer-work-to-rest_{index:02d}.png",
+  "preview": "preview.gif",
+  "roomPreview": "room-preview.gif",
+  "transform": {
+    "sharedScale": 0.2392638036809816,
+    "sourceCellBottomBaseline": 646,
+    "placement": [
+      -23,
+      -16
+    ],
+    "targetContentBottom": 139
+  },
+  "sourceHash": "39e8d859b8014fc9ce4556f3da54e833573bb7b7268479ffd04b2a2df7586ac0",
+  "generation": "Frames 01-02 are one shared built-in ImageGen in-between sheet. Frames 00 and 03 are exact copies of the approved work/rest endpoints. Local processing only split, keyed when needed, applied one shared transform, packed, timed, composited and measured."
+}

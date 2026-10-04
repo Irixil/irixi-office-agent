@@ -1,0 +1,133 @@
+{
+  "id": "steward-mole-shelve-books-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "action": "shelve-books",
+  "frameSize": [
+    176,
+    256
+  ],
+  "anchor": [
+    88,
+    242
+  ],
+  "frameCount": 7,
+  "frameDurationsMs": [
+    320,
+    220,
+    280,
+    240,
+    380,
+    280,
+    400
+  ],
+  "cycleDurationMs": 2120,
+  "loop": false,
+  "returnTo": "walk-empty-down",
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 7,
+    "rows": 1
+  },
+  "fullframePattern": "frames/shelve-books_{index:02d}.png",
+  "propOwnershipBeginsFrame": null,
+  "propReleaseAfterFrame": 4,
+  "bookStackContract": "exactly three books: green bottom, burgundy middle, navy top; cream pages; no scroll or fourth book",
+  "sharedCharacterScale": 0.26216484607745777,
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        46,
+        131,
+        129,
+        242
+      ],
+      "visibleSize": [
+        83,
+        111
+      ]
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        40,
+        127,
+        135,
+        242
+      ],
+      "visibleSize": [
+        95,
+        115
+      ]
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        50,
+        103,
+        127,
+        242
+      ],
+      "visibleSize": [
+        77,
+        139
+      ]
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        50,
+        109,
+        125,
+        242
+      ],
+      "visibleSize": [
+        75,
+        133
+      ]
+    },
+    {
+      "frame": 4,
+      "visibleBBox": [
+        50,
+        101,
+        125,
+        242
+      ],
+      "visibleSize": [
+        75,
+        141
+      ]
+    },
+    {
+      "frame": 5,
+      "visibleBBox": [
+        44,
+        130,
+        131,
+        242
+      ],
+      "visibleSize": [
+        87,
+        112
+      ]
+    },
+    {
+      "frame": 6,
+      "visibleBBox": [
+        44,
+        134,
+        131,
+        242
+      ],
+      "visibleSize": [
+        87,
+        108
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "shelve-key": "f77996f7b2bdd066466853eaf16addccb9ca9e486fa0fa7c17723b6fca9efc6f",
+    "shelve-between": "cf18625b41bfcd2017fd0c665037d5f06254c8dcda794696bc05e18188c98bcc"
+  }
+}
