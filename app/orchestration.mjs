@@ -2,17 +2,96 @@ import crypto from 'node:crypto';
 
 import { activeGoal, artifactInputIsCurrent, deriveTaskContinuity, event, makeId, setTaskState } from './core.mjs';
 import { materialContext } from './material-applicability.mjs';
-import { projectWorkspaceFingerprint, publicProjectWorkspace } from './project-workspace.mjs';
+import { projectWorkspaceFingerprint, projectWorkspaceIsCurrent, publicProjectWorkspace } from './project-workspace.mjs';
 
 const VALID_KINDS = new Set(['research', 'analysis', 'tool', 'synthesis', 'review', 'delivery']);
 const PROJECT_TOOL_NAMES = new Set(['workspace.read', 'workspace.write', 'workspace.diff', 'workspace.check']);
 const SAFE_TOOL_NAMES = new Set(['materials.read', 'materials.search', 'memory.search', 'calculate', 'web.search', 'web.read', ...PROJECT_TOOL_NAMES]);
 const MAX_PLAN_STEPS = 12;
 const MAX_TEAM_SIZE = 8;
+const GENERIC_PROJECT_EXECUTION_MODE = 'host_bounded_transaction_v1';
+const PROJECT_PLAN_STAGE_CONTRACT = Object.freeze([
+  { slot: 'tool', key: 'project-tool', kind: 'tool', roleKey: 'project-tool-agent', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'] },
+  { slot: 'synthesis', key: 'project-synthesis', kind: 'synthesis', roleKey: 'project-synthesis-agent', dependsOn: ['project-tool'], tools: [] },
+  { slot: 'review', key: 'project-review', kind: 'review', roleKey: 'project-review-agent', dependsOn: ['project-synthesis'], tools: [] },
+  { slot: 'delivery', key: 'project-delivery', kind: 'delivery', roleKey: 'project-delivery-agent', dependsOn: ['project-review'], tools: [] },
+]);
 
 const clean = (value, limit = 2_000) => String(value ?? '').replaceAll('\u0000', '').trim().slice(0, limit);
 const cleanList = (value, limit = 12, itemLimit = 500) => (Array.isArray(value) ? value : [])
   .map((item) => clean(item, itemLimit)).filter(Boolean).slice(0, limit);
+
+function exactObject(value, keys, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw new Error(`${label}字段缺失或包含多余字段。`);
+}
+
+export function projectPlanningContract(task) {
+  if (task.type !== 'project' || task.projectWorkspace?.executionMode !== GENERIC_PROJECT_EXECUTION_MODE) return null;
+  const proposal = task.projectScopeProposal;
+  const workspace = task.projectWorkspace;
+  const authorizationCurrent = projectWorkspaceIsCurrent(task)
+    && proposal?.status === 'accepted'
+    && workspace.proposalId === proposal.id
+    && workspace.proposalFingerprint === proposal.fingerprint;
+  return {
+    version: 'project_plan_slots_v1',
+    authorization: {
+      current: authorizationCurrent,
+      proposalId: proposal?.id || null,
+      proposalFingerprint: proposal?.fingerprint || null,
+      workspaceScopeFingerprint: workspace?.scopeFingerprint || null,
+      statement: '需求卡与逐用例已由用户接受，代码工作区已单独授权；这是模型规划前置条件，不是模型工作步骤。',
+    },
+    outputKind: 'project',
+    deliverables: ['project_patch'],
+    stages: PROJECT_PLAN_STAGE_CONTRACT.map((stage) => ({ ...stage, webScope: { queries: [], urls: [] } })),
+  };
+}
+
+export function compileProjectPlan(task, input = {}) {
+  const contract = projectPlanningContract(task);
+  if (!contract || !contract.authorization.current) throw new Error('项目需求卡、用例或代码工作区授权不是当前有效版本，不能规划。');
+  exactObject(input, ['summary', 'projectAlignment', 'stages'], '项目规划');
+  exactObject(input.projectAlignment, ['status', 'explanation'], '项目对齐');
+  exactObject(input.stages, PROJECT_PLAN_STAGE_CONTRACT.map((stage) => stage.slot), '项目阶段');
+  const roles = [];
+  const steps = [];
+  for (const fixed of PROJECT_PLAN_STAGE_CONTRACT) {
+    const stage = input.stages[fixed.slot];
+    exactObject(stage, ['title', 'agentName', 'agentMission', 'agentCapabilities', 'recruitmentReason', 'acceptanceCriteria', 'expectedResult'], `${fixed.slot} 阶段`);
+    const role = {
+      key: fixed.roleKey,
+      name: clean(stage.agentName, 80),
+      mission: clean(stage.agentMission, 500),
+      capabilities: cleanList(stage.agentCapabilities, 10, 100),
+      recruitmentReason: clean(stage.recruitmentReason, 500),
+    };
+    const step = {
+      key: fixed.key,
+      title: clean(stage.title, 160),
+      kind: fixed.kind,
+      role: fixed.roleKey,
+      dependsOn: [...fixed.dependsOn],
+      tools: [...fixed.tools],
+      webScope: { queries: [], urls: [] },
+      acceptanceCriteria: cleanList(stage.acceptanceCriteria, 10, 500),
+      expectedResult: clean(stage.expectedResult, 1_000),
+    };
+    if (!role.name || !role.mission || !role.capabilities.length || !role.recruitmentReason
+      || !step.title || !step.acceptanceCriteria.length || !step.expectedResult) throw new Error(`${fixed.slot} 阶段缺少完整的角色、标题、验收标准或预期结果。`);
+    roles.push(role);
+    steps.push(step);
+  }
+  return {
+    summary: clean(input.summary, 1_000),
+    projectAlignment: structuredClone(input.projectAlignment),
+    outputKind: contract.outputKind,
+    deliverables: [...contract.deliverables],
+    roles,
+    steps,
+  };
+}
 
 function assertAcyclic(steps) {
   const visiting = new Set();
@@ -89,6 +168,17 @@ export function validateModelPlan(task, input = {}) {
     if (projectSteps[0].tools.length !== PROJECT_TOOL_NAMES.size) throw new Error('受控工作区步骤不得获得固定四项之外的额外工具。');
     if (['synthesis', 'review', 'delivery'].includes(projectSteps[0].kind)) throw new Error('受控工作区操作必须在候选合成与独立审阅之前完成。');
     if (steps.some((step) => ['synthesis', 'review', 'delivery'].includes(step.kind) && step.tools.length)) throw new Error('代码项目的 synthesis、review 与 delivery 步骤不得授权工具。');
+    const contract = projectPlanningContract(task);
+    if (contract) {
+      if (!contract.authorization.current) throw new Error('项目规划必须绑定当前已接受需求卡与已授权工作区。');
+      for (const expected of contract.stages) {
+        const actual = steps.find((step) => step.key === expected.key);
+        if (!actual || actual.kind !== expected.kind || actual.role !== expected.roleKey
+          || JSON.stringify(actual.dependsOn) !== JSON.stringify(expected.dependsOn)
+          || JSON.stringify(actual.tools) !== JSON.stringify(expected.tools)
+          || JSON.stringify(actual.webScope) !== JSON.stringify(expected.webScope)) throw new Error('项目计划与宿主公开的四阶段契约不一致。');
+      }
+    }
   }
   assertAcyclic(steps);
   if (steps.filter((step) => step.kind === 'synthesis').length !== 1) throw new Error('计划必须且只能包含一个候选成果合成步骤。');
@@ -483,6 +573,13 @@ function normalizedProjectRequest(request = {}) {
   };
   if (request.tool === 'workspace.read') return { ...common, view: args.view === 'source' ? 'source' : 'candidate' };
   if (request.tool === 'workspace.write') {
+    if (Array.isArray(args.changes)) return {
+      ...common,
+      changes: args.changes.map((entry) => ({
+        path: String(entry.path || ''), expectedFileSha256: entry.expectedFileSha256 || null,
+        contentBytes: Buffer.byteLength(String(entry.content ?? '')), contentSha256: sha256(String(entry.content ?? '')),
+      })),
+    };
     const content = String(args.content ?? '');
     return { ...common, expectedFileSha256: args.expectedFileSha256 || null, contentBytes: Buffer.byteLength(content), contentSha256: sha256(content) };
   }
@@ -494,7 +591,16 @@ function normalizedProjectOutcome(entry = {}) {
   if (entry.ok !== true) return { ok: false, outcomeCode: entry.code || 'tool_failed' };
   const result = entry.result || {};
   if (entry.tool === 'workspace.read') return { ok: true, path: result.path, view: result.view, bytes: result.bytes, fileSha256: result.fileSha256, candidateSha256: result.candidateSha256, sourceSnapshotSha256: result.sourceSnapshotSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint };
-  if (entry.tool === 'workspace.write') return { ok: true, path: result.path, fileSha256: result.fileSha256, candidateSha256: result.candidateSha256, mutationSequence: result.mutationSequence, diffSha256: result.diffSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint };
+  if (entry.tool === 'workspace.write') return {
+    ok: true,
+    path: result.path || null,
+    fileSha256: result.fileSha256 || null,
+    ...(Array.isArray(result.changes) ? { changes: result.changes.map((change) => ({ path: change.path, bytes: change.bytes, fileSha256: change.fileSha256 })) } : {}),
+    candidateSha256: result.candidateSha256,
+    mutationSequence: result.mutationSequence,
+    diffSha256: result.diffSha256,
+    workspaceScopeFingerprint: result.workspaceScopeFingerprint,
+  };
   if (entry.tool === 'workspace.check') return { ok: true, checkId: result.checkId, passed: result.passed, caseTotal: result.caseTotal, casePassed: result.casePassed, resultDigest: result.resultDigest, candidateSha256: result.candidateSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint, sandboxCapabilityFingerprint: result.sandboxCapabilityFingerprint, runtimeFingerprint: result.runtimeFingerprint };
   if (entry.tool === 'workspace.diff') return { ok: true, candidateSha256: result.candidateSha256, diffSha256: result.diffSha256, changes: (result.changes || []).map((change) => ({ path: change.path, beforeSha256: change.beforeSha256, afterSha256: change.afterSha256, bytes: change.bytes })), sourceSnapshotSha256: result.sourceSnapshotSha256, workspaceScopeFingerprint: result.workspaceScopeFingerprint, sourceIntegritySha256: result.sourceIntegrity?.integritySha256 || null, sourceUnchanged: result.sourceIntegrity?.allUnchanged === true };
   return { ok: true };
@@ -573,19 +679,25 @@ export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifa
   const protocolFeedback = ownerCallRecords.filter(({ call }) => call.tool === 'protocol').map(({ call }, index) => ({ sequence: index + 1, ok: call.ok === true, outcomeCode: call.ok === true ? 'unexpected_success' : 'protocol_rejected' }));
   const workspaceRecords = ownerCallRecords.filter(({ call }) => call.tool?.startsWith('workspace.'));
   const calls = workspaceRecords.map(({ call }) => call.hostAudit);
-  if (calls.length !== 4 || calls.some((call) => !call || call.version !== 1)) throw auditError();
-  const expectedTools = ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'];
-  const transactionMode = task.projectWorkspace?.executionMode === 'host_fixed_transaction_v1';
+  const executionMode = task.projectWorkspace?.executionMode;
+  const transactionMode = ['host_fixed_transaction_v1', 'host_bounded_transaction_v1'].includes(executionMode);
+  const genericTransaction = executionMode === 'host_bounded_transaction_v1';
+  const readCount = genericTransaction ? task.projectWorkspace.readablePaths.length : 1;
+  const checkCount = genericTransaction ? task.projectWorkspace.checks.length : 1;
+  const expectedTools = transactionMode
+    ? [...Array(readCount).fill('workspace.read'), 'workspace.write', ...Array(checkCount).fill('workspace.check'), 'workspace.diff']
+    : ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'];
+  if (calls.length !== expectedTools.length || calls.some((call) => !call || call.version !== 1)) throw auditError();
   const transaction = transactionMode ? session.projectTransaction : null;
-  if (transactionMode && (!transaction || transaction.status !== 'passed' || transaction.modelInvocationCount !== 1
+  if (transactionMode && (!transaction || transaction.mode !== executionMode || transaction.status !== 'passed' || transaction.modelInvocationCount !== 1
     || transaction.publicContractFingerprint !== task.projectWorkspace.publicContractFingerprint
     || transaction.workspaceScopeFingerprint !== binding.workspaceScopeFingerprint
     || transaction.sourceSnapshotSha256 !== binding.sourceSnapshotSha256)) throw auditError();
-  const expectedRounds = transactionMode ? [1, 1, 1, 1] : [1, 2, 3, 3];
-  const expectedBatchOrdinals = transactionMode ? [1, 2, 3, 4] : [1, 2, 3, 3];
-  const expectedRequestOrdinals = transactionMode ? [1, 1, 1, 1] : [1, 1, 1, 2];
-  const expectedActors = transactionMode ? ['host', 'model', 'host', 'host'] : ['model', 'model', 'model', 'model'];
-  const expectedSteps = transactionMode ? ['read', 'write', 'check', 'diff'] : [null, null, null, null];
+  const expectedRounds = transactionMode ? expectedTools.map(() => 1) : [1, 2, 3, 3];
+  const expectedBatchOrdinals = transactionMode ? expectedTools.map((_, index) => index + 1) : [1, 2, 3, 3];
+  const expectedRequestOrdinals = transactionMode ? expectedTools.map(() => 1) : [1, 1, 1, 2];
+  const expectedActors = transactionMode ? expectedTools.map((tool) => tool === 'workspace.write' ? 'model' : 'host') : ['model', 'model', 'model', 'model'];
+  const expectedSteps = transactionMode ? expectedTools.map((tool) => tool.split('.')[1]) : [null, null, null, null];
   calls.forEach((call, index) => {
     const { call: raw, session: recordedSession } = workspaceRecords[index];
     if (call.taskId !== task.id || call.runId !== auditRunId || call.planId !== task.plan.id || call.planRevision !== task.plan.revision
@@ -601,11 +713,25 @@ export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifa
       || JSON.stringify(normalizedProjectOutcome(raw)) !== JSON.stringify(call.outcome)
       || JSON.stringify(call.binding) !== JSON.stringify(binding)) throw auditError();
   });
+  if (genericTransaction) {
+    const expectedReadPaths = [...task.projectWorkspace.readablePaths];
+    if (JSON.stringify(calls.slice(0, readCount).map((call) => call.request.path)) !== JSON.stringify(expectedReadPaths)
+      || calls.slice(0, readCount).some((call) => call.request.view !== 'candidate')) throw auditError();
+    const writeRequest = calls[readCount].request;
+    const changePaths = (writeRequest.changes || []).map((entry) => entry.path);
+    if (!changePaths.length || new Set(changePaths).size !== changePaths.length
+      || changePaths.some((relative) => !task.projectWorkspace.editablePaths.includes(relative))) throw auditError();
+    const expectedCheckIds = task.projectWorkspace.checks.map((entry) => entry.id);
+    if (JSON.stringify(calls.slice(readCount + 1, readCount + 1 + checkCount).map((call) => call.request.checkId)) !== JSON.stringify(expectedCheckIds)) throw auditError();
+  }
   if (task.execution?.limits?.maxToolRoundsPerStep !== 3) throw auditError();
   const candidateSha256 = task.projectWorkspace?.candidate?.candidateSha256;
-  if (calls[1].outcome.candidateSha256 !== candidateSha256 || calls[2].outcome.candidateSha256 !== candidateSha256
-    || calls[3].outcome.candidateSha256 !== candidateSha256 || calls[2].outcome.passed !== true
-    || calls[3].outcome.sourceUnchanged !== true) throw auditError();
+  const writeCall = calls[readCount];
+  const checkCalls = calls.slice(readCount + 1, readCount + 1 + checkCount);
+  const diffCall = calls.at(-1);
+  if (writeCall.outcome.candidateSha256 !== candidateSha256
+    || checkCalls.some((call) => call.outcome.candidateSha256 !== candidateSha256 || call.outcome.passed !== true)
+    || diffCall.outcome.candidateSha256 !== candidateSha256 || diffCall.outcome.sourceUnchanged !== true) throw auditError();
   if (artifact && (!(artifact.workResultIds || []).includes(owner.id)
     || artifact.projectCandidate?.candidateSha256 !== candidateSha256)) throw auditError();
   const synthesisSessions = (task.agentSessions || []).filter((candidate) => candidate.workItemId === synthesis.id
@@ -638,7 +764,7 @@ export function projectExecutionAudit(task, { synthesisWorkItemId = null, artifa
     },
     lineage: { synthesisWorkItemId: synthesis.id, workspaceOwnerWorkItemId: owner.id, dependencyWorkItemIds: [...(synthesis.dependsOn || [])] },
     execution: {
-      runId: auditRunId, sessionId: session.id, mode: transactionMode ? 'host_fixed_transaction_v1' : 'model_tool_rounds_v1',
+      runId: auditRunId, sessionId: session.id, mode: transactionMode ? executionMode : 'model_tool_rounds_v1',
       maxToolRounds: 3, toolRequestRounds: transactionMode ? 1 : 3,
       transaction: transactionMode ? {
         id: transaction.id,
@@ -717,11 +843,17 @@ export function sessionInput(task, item, toolResults = [], memories = []) {
     materialDirectory: applicability.directory,
     dependencies, historicalCompletedEvidence,
     candidateArtifact: candidateArtifact ? {
-      id: candidateArtifact.id, version: candidateArtifact.version, title: candidateArtifact.title,
+      id: candidateArtifact.id, version: candidateArtifact.version, goalVersionId: candidateArtifact.goalVersionId,
+      projectRootGoalVersionId: candidateArtifact.projectRootGoalVersionId || null,
+      projectRootInputFingerprint: candidateArtifact.projectRootInputFingerprint || null,
+      materialApplicabilityFingerprint: candidateArtifact.materialApplicabilityFingerprint ?? null,
+      inputFingerprint: candidateArtifact.inputFingerprint || null,
+      sourceContextFingerprint: candidateArtifact.sourceContextFingerprint || null,
+      title: candidateArtifact.title,
       summary: candidateArtifact.summary, content: candidateArtifact.content, caveats: candidateArtifact.caveats || [],
       sources: candidateArtifact.sources, claims: candidateArtifact.claims, derivations: candidateArtifact.derivations || [],
-      deliverables: candidateArtifact.deliverables || [],
-      nativeFiles: (candidateArtifact.nativeFiles || []).map((file) => ({ kind: file.kind, format: file.format, filename: file.filename, status: file.status, sha256: file.sha256, contentSha256: file.contentSha256, bytes: file.bytes, previewCount: file.previewPaths?.length || 0, error: file.error || null })),
+      deliverables: candidateArtifact.deliverables || [], workResultIds: candidateArtifact.workResultIds || [],
+      nativeFiles: (candidateArtifact.nativeFiles || []).map((file) => ({ id: file.id || null, kind: file.kind, format: file.format, filename: file.filename, status: file.status, sha256: file.sha256, contentSha256: file.contentSha256, bytes: file.bytes, previewCount: file.previewPaths?.length || 0, error: file.error || null })),
       projectCandidate: candidateArtifact.projectCandidate || null,
     } : null,
     projectWorkspace: publicProjectWorkspace(task),

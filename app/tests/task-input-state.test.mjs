@@ -51,6 +51,7 @@ test('项目授权提交只读取 render-time scope/capability 快照', () => {
     expectedGoalVersionId: 'goal-old', expectedProjectRootGoalVersionId: 'root-old',
     expectedProjectRootInputFingerprint: 'root-input-old', expectedMaterialApplicabilityFingerprint: 'material-old',
     expectedPreviousScopeFingerprint: 'scope-old', expectedCapabilityFingerprint: 'cap-old',
+    proposalId: 'proposal-old', expectedProposalFingerprint: 'proposal-fingerprint-old',
   };
   const form = { dataset: { expectedSnapshot: JSON.stringify(old) } };
   const liveTask = { goal: { activeVersionId: 'goal-new' }, projectWorkspace: { scopeFingerprint: 'scope-new' } };

@@ -21,6 +21,7 @@ const state = {
   pendingActionTaskId: null,
   projectCapabilities: null,
   projectFixtureSelections: {},
+  projectScopeContexts: {},
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -390,10 +391,21 @@ function renderProjectWorkspace(task) {
   if (task.type !== 'project') return '';
   const capability = state.projectCapabilities;
   const workspace = task.projectWorkspace;
+  const scopeContext = state.projectScopeContexts[task.id] || null;
+  const scope = scopeContext?.projectScope || task.projectScope || null;
   const fixtures = capability?.fixtures || [];
   const selectedFixtureId = state.projectFixtureSelections[task.id] || workspace?.fixtureId || fixtures[0]?.id || 'node-single-file-v1';
-  const fixture = fixtures.find((item) => item.id === selectedFixtureId) || fixtures[0];
-  const workspaceMatchesSelection = workspace?.fixtureId === fixture?.id;
+  const registeredFixture = fixtures.find((item) => item.id === selectedFixtureId) || fixtures[0];
+  const genericWorkspaceSelected = Boolean(workspace?.proposalId && workspace.fixtureId === selectedFixtureId);
+  const fixture = genericWorkspaceSelected ? {
+    id: workspace.fixtureId,
+    label: workspace.label,
+    publicContract: workspace.publicContract,
+    readablePaths: workspace.readablePaths,
+    editablePaths: workspace.editablePaths,
+    checks: workspace.checks,
+  } : registeredFixture;
+  const workspaceMatchesSelection = workspace?.fixtureId === selectedFixtureId;
   const binding = {
     goalVersionId: activeGoal(task)?.id || null,
     projectRootGoalVersionId: task.projectRootGoalVersionId || activeGoal(task)?.id || null,
@@ -416,17 +428,28 @@ function renderProjectWorkspace(task) {
   const status = workspaceMatchesSelection && workspace?.status === 'ready' ? '已授权且探针通过'
     : workspaceMatchesSelection && workspace ? workspace.reason || workspace.status
       : workspace ? `当前另有已授权项目；“${fixture?.label || selectedFixtureId}”需明确重新授权` : '尚未授权';
+  const genericAttachSnapshot = scope?.status === 'accepted' ? {
+    ...snapshot,
+    proposalId: scope.id,
+    expectedProposalFingerprint: scope.fingerprint,
+  } : null;
+  const scopeCard = !scope
+    ? `<form data-project-scope-propose data-expected-binding="${esc(JSON.stringify(scopeContext?.taskInputBinding || null))}" data-expected-tree="${esc(scopeContext?.repository?.treeSha256 || '')}"><p><strong>先整理有限需求卡</strong></p><p class="field-note">Irixi 会读取登记仓库的安全源码目录，只提出最多 8 个可读文件、2 个可改纯函数模块和 3 项固定检查；这一步不修改代码。</p><button class="primary-button" type="submit" ${!scopeContext?.repository || planningBusy(task) ? 'disabled' : ''}>整理目的、交付与验收范围</button></form>`
+    : `<div class="project-scope-card"><p><strong>当前需求卡 · ${esc(scope.current === false ? '输入已变化，需重新整理' : scope.status === 'accepted' ? '已接受' : scope.status === 'proposed' ? '待确认' : '历史')}</strong><br>${esc(scope.goal?.statement || '')}</p><p class="field-note">交付：只生成可下载 patch<br>成功：${esc((scope.goal?.successCriteria || []).join('；'))}<br>边界：${esc((scope.goal?.boundaries || []).join('；'))}<br>可读：${esc((scope.readablePaths || []).join('、'))}<br>可改：${esc((scope.editablePaths || []).join('、'))}</p>${(scope.checks || []).map((check) => `<details><summary>${esc(check.id)}${check.namedExport ? ` · ${esc(check.namedExport)}` : ''}</summary>${(check.cases || []).map((item) => `<p class="field-note"><strong>${esc(item.id)}</strong><br>输入 ${esc(JSON.stringify(item.args))}<br>期望 ${esc(JSON.stringify(item.expected))}</p>`).join('')}</details>`).join('')}${scope.current === false ? `<form data-project-scope-propose data-expected-binding="${esc(JSON.stringify(scopeContext?.taskInputBinding || null))}" data-expected-tree="${esc(scopeContext?.repository?.treeSha256 || '')}"><button class="primary-button" type="submit">按当前输入重新整理范围</button></form>` : scope.status === 'proposed' ? `<form data-project-scope-accept data-proposal-id="${esc(scope.id)}" data-expected-fingerprint="${esc(scope.fingerprint)}"><button class="primary-button" type="submit">接受完整需求卡与逐条用例</button></form>` : ''}</div>`;
+  const genericAttach = scope?.status === 'accepted' && scope.current !== false && workspace?.proposalId !== scope.id
+    ? `<form class="project-workspace-form" data-project-workspace-attach data-generic-scope data-expected-snapshot="${esc(JSON.stringify(genericAttachSnapshot))}"><button class="primary-button" type="submit" ${!capability?.available || planningBusy(task) ? 'disabled' : ''}>授权当前有限范围的隔离副本</button></form>` : '';
   return `<section class="desk-sheet project-workspace-panel"><div class="sheet-heading"><h2>代码工作区</h2><span class="record-status" data-tone="${workspaceMatchesSelection && workspace?.status === 'ready' ? 'good' : 'warn'}">${esc(status)}</span></div><div class="sheet-body provider-line">
-    <p class="field-note">原项目始终只读；Irixi 只在本任务目录的隔离副本中修改一个明确文件。交付物是可下载 patch，不会写回原目录、运行 Git、发布或执行模型自选命令。</p>
+    <p class="field-note">原项目始终只读；Irixi 只在本任务目录的隔离副本中修改明确文件。交付物是可下载 patch，不会写回原目录、运行 Git、发布或执行模型自选命令。</p>
+    ${scopeCard}${genericAttach}
     <p><strong>公开行为</strong><br>${esc(fixture?.publicContract?.entrypoint || fixture?.publicContract?.namedExport || 'greetName')}：${esc(fixture?.publicContract?.behavior || '去掉名称首尾空白并生成问候。')}</p>
     ${fixture?.publicContract?.writeScope ? `<p class="field-note">${esc(fixture.publicContract.writeScope)}</p>` : ''}
     <p class="field-note">可读：${esc((fixture?.readablePaths || workspace?.readablePaths || []).join('、') || '—')}<br>可改：${esc((fixture?.editablePaths || workspace?.editablePaths || []).join('、') || '—')}<br>固定检查：${esc(fixture?.checks?.[0]?.id || workspace?.checks?.[0]?.id || '—')}</p>
     <p class="${capability?.available ? 'field-note' : 'demo-warning'}">${esc(capabilityText)}</p>
     ${workspaceMatchesSelection && workspace ? `<p class="field-note">source ${esc(workspace.sourceSnapshotSha256 || '—')}<br>candidate ${esc(workspace.candidate?.candidateSha256 || '—')} · revision ${esc(workspace.candidate?.revision || '—')}${latestCheck ? `<br>检查 ${latestCheck.passed ? '通过' : '失败'}：${esc(latestCheck.casePassed)}/${esc(latestCheck.caseTotal)} cases · ${esc(latestCheck.resultDigest)}${(latestCheck.cases || []).some((entry) => entry.timedOut) ? ' · 含超时' : ''}${(latestCheck.cases || []).some((entry) => entry.truncated) ? ' · 输出超限' : ''}` : ''}</p>` : ''}
-    <form class="project-workspace-form" data-project-workspace-attach data-expected-snapshot="${esc(JSON.stringify(snapshot))}">
+    <details><summary>已有固定示例工作区</summary><form class="project-workspace-form" data-project-workspace-attach data-expected-snapshot="${esc(JSON.stringify(snapshot))}">
       <label>固定项目<select name="fixtureId" data-project-fixture-select ${task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${fixtures.map((item) => `<option value="${esc(item.id)}" ${item.id === selectedFixtureId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>
       <button class="secondary-button" type="submit" ${!capability?.available || task.status === 'running' || planningBusy(task) ? 'disabled' : ''}>${workspaceMatchesSelection && workspace?.status === 'ready' ? '按当前目标重新授权隔离副本' : '授权所选固定隔离副本'}</button>
-    </form>
+    </form></details>
   </div></section>`;
 }
 
@@ -562,6 +585,10 @@ async function loadTasks({ preserve = true } = {}) {
   requestedTaskId = null;
   state.task = state.tasks.find((task) => task.id === remembered) || state.tasks[0] || null;
   if (state.task) localStorage.setItem('irixi.activeTask', state.task.id);
+  if (state.task?.type === 'project') {
+    try { state.projectScopeContexts[state.task.id] = await api(`/api/tasks/${encodeURIComponent(state.task.id)}/project-scope`); }
+    catch { state.projectScopeContexts[state.task.id] = null; }
+  }
   renderAll();
   setView(state.view);
 }
@@ -574,6 +601,10 @@ async function refreshTask(id = state.task?.id, { silent = false } = {}) {
     const result = await api(`/api/tasks/${encodeURIComponent(id)}`);
     const stillSelected = state.task?.id === id;
     if (stillSelected) state.task = result.task;
+    if (stillSelected && result.task.type === 'project') {
+      try { state.projectScopeContexts[id] = await api(`/api/tasks/${encodeURIComponent(id)}/project-scope`); }
+      catch { state.projectScopeContexts[id] = null; }
+    }
     if (stillSelected && state.view !== 'review' && result.task.artifacts.length > previousArtifactCount) {
       state.selectedArtifactId = latestArtifact(result.task)?.id || null;
     }
@@ -656,6 +687,10 @@ document.addEventListener('click', async (event) => {
     state.task = state.tasks.find((task) => task.id === id);
     state.selectedArtifactId = null;
     localStorage.setItem('irixi.activeTask', id);
+    if (state.task?.type === 'project') {
+      try { state.projectScopeContexts[id] = await api(`/api/tasks/${encodeURIComponent(id)}/project-scope`); }
+      catch { state.projectScopeContexts[id] = null; }
+    }
     renderAll();
     setView(state.view);
     return;
@@ -787,13 +822,39 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('submit', async (event) => {
+  const scopeProposeForm = event.target.closest('[data-project-scope-propose]');
+  if (scopeProposeForm) {
+    event.preventDefault();
+    try {
+      await postTaskAction('project-scope/propose', {
+        expectedTaskInputBinding: JSON.parse(scopeProposeForm.dataset.expectedBinding || 'null'),
+        expectedRepositoryTreeSha256: scopeProposeForm.dataset.expectedTree || null,
+      });
+      announce('有限需求卡与检查建议已整理；请逐项核对后明确接受。');
+      await loadTasks({ preserve: true });
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
+  const scopeAcceptForm = event.target.closest('[data-project-scope-accept]');
+  if (scopeAcceptForm) {
+    event.preventDefault();
+    try {
+      await postTaskAction('project-scope/accept', {
+        proposalId: scopeAcceptForm.dataset.proposalId,
+        expectedFingerprint: scopeAcceptForm.dataset.expectedFingerprint,
+      });
+      announce('需求卡、有限文件与逐条用例已接受；还需要单独授权隔离副本。');
+      await loadTasks({ preserve: true });
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   const projectForm = event.target.closest('[data-project-workspace-attach]');
   if (projectForm) {
     event.preventDefault();
     const snapshot = projectWorkspaceAttachExpectation(projectForm);
     const fixtureId = new FormData(projectForm).get('fixtureId');
     try {
-      await postTaskAction('project-workspace/attach', { fixtureId, ...snapshot });
+      await postTaskAction('project-workspace/attach', projectForm.matches('[data-generic-scope]') ? snapshot : { fixtureId, ...snapshot });
       delete state.projectFixtureSelections[state.task.id];
       announce('固定代码工作区已复制并完成实际路径隔离探针；原项目保持只读。');
       await loadTasks({ preserve: true });

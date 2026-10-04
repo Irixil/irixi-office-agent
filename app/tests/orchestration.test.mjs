@@ -5,7 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { activeGoal, addMaterial, createStore, createTask } from '../core.mjs';
-import { applyModelPlan, projectExecutionAudit, sessionInput, stampProjectToolCall, validateModelPlan, validateWorkResult } from '../orchestration.mjs';
+import { compileProjectPlan, applyModelPlan, projectExecutionAudit, projectPlanningContract, sessionInput, stampProjectToolCall, validateModelPlan, validateWorkResult } from '../orchestration.mjs';
+import { GENERIC_FIXTURE_ID, scopeFingerprint } from '../project-scope.mjs';
+import { projectTaskBinding } from '../project-workspace.mjs';
 import { runAuthorizedTools, safeCalculate } from '../tools.mjs';
 
 function plan() {
@@ -85,6 +87,77 @@ test('project 计划只允许一个具备四项固定 workspace 能力的前置�
   assert.throws(() => validateModelPlan(ordinary, projectPlan), /项目工具/);
 });
 
+function genericPlanningFixture() {
+  const task = createTask({ goal: '交付有限源码 patch', type: 'project' });
+  const binding = projectTaskBinding(task);
+  const proposal = { id: 'scope-current', fingerprint: 'scope-proposal-current', status: 'accepted' };
+  const publicContract = { boundary: '受控纯函数' };
+  task.projectScopeProposal = proposal;
+  task.projectWorkspace = {
+    status: 'ready', fixtureId: GENERIC_FIXTURE_ID, executionMode: 'host_bounded_transaction_v1',
+    proposalId: proposal.id, proposalFingerprint: proposal.fingerprint,
+    publicContract, publicContractFingerprint: scopeFingerprint(publicContract),
+    taskInputBinding: binding, scopeFingerprint: 'workspace-current', sourceSnapshotSha256: 'source-current',
+  };
+  const stage = (name) => ({
+    title: `${name}阶段`, agentName: `${name}专员`, agentMission: `${name}当前候选`,
+    agentCapabilities: [`${name}能力`], recruitmentReason: `需要${name}`,
+    acceptanceCriteria: [`${name}有明确宿主证据`], expectedResult: `${name}结果`,
+  });
+  return {
+    task,
+    raw: {
+      summary: '按已授权范围交付候选 patch。',
+      projectAlignment: { status: 'standalone', explanation: '独立项目。' },
+      stages: { tool: stage('修改'), synthesis: stage('汇总'), review: stage('审阅'), delivery: stage('交付') },
+    },
+  };
+}
+
+test('通用项目规划由公开四 slot 契约编译并被真实 applyModelPlan 接受', () => {
+  const { task, raw } = genericPlanningFixture();
+  const contract = projectPlanningContract(task);
+  assert.equal(contract.authorization.current, true);
+  assert.deepEqual(contract.stages.map(({ slot, key, kind }) => ({ slot, key, kind })), [
+    { slot: 'tool', key: 'project-tool', kind: 'tool' },
+    { slot: 'synthesis', key: 'project-synthesis', kind: 'synthesis' },
+    { slot: 'review', key: 'project-review', kind: 'review' },
+    { slot: 'delivery', key: 'project-delivery', kind: 'delivery' },
+  ]);
+  const compiled = compileProjectPlan(task, raw);
+  assert.deepEqual(compiled.steps.map((step) => [step.key, step.kind, step.dependsOn, step.tools]), [
+    ['project-tool', 'tool', [], ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff']],
+    ['project-synthesis', 'synthesis', ['project-tool'], []],
+    ['project-review', 'review', ['project-synthesis'], []],
+    ['project-delivery', 'delivery', ['project-review'], []],
+  ]);
+  assert.equal(validateModelPlan(task, compiled).steps.length, 4);
+  assert.equal(applyModelPlan(task, compiled).length, 4);
+});
+
+test('通用项目 slot 规划对旧五步、多余确认、缺失重复、非法工具路径角色与旧授权全部 fail closed', () => {
+  const cases = [
+    (fixture) => ({ ...fixture.raw, outputKind: 'project', deliverables: ['project_patch'], roles: [], steps: [{ kind: 'analysis' }, { kind: 'tool' }, { kind: 'synthesis' }, { kind: 'review' }, { kind: 'delivery' }] }),
+    (fixture) => { fixture.raw.stages.confirm_scope = structuredClone(fixture.raw.stages.tool); return fixture.raw; },
+    (fixture) => { delete fixture.raw.stages.delivery; return fixture.raw; },
+    (fixture) => { fixture.raw.stages = [fixture.raw.stages.tool, fixture.raw.stages.tool]; return fixture.raw; },
+    (fixture) => { fixture.raw.stages.tool.tools = ['workspace.read']; return fixture.raw; },
+    (fixture) => { fixture.raw.stages.tool.path = 'app/other.mjs'; return fixture.raw; },
+    (fixture) => { fixture.raw.stages.tool.role = 'confirm_scope'; return fixture.raw; },
+  ];
+  for (const mutate of cases) {
+    const fixture = genericPlanningFixture();
+    assert.throws(() => compileProjectPlan(fixture.task, mutate(fixture)), /(字段缺失|多余字段)/);
+  }
+  const stale = genericPlanningFixture();
+  stale.task.projectWorkspace.proposalFingerprint = 'stale';
+  assert.throws(() => compileProjectPlan(stale.task, stale.raw), /不是当前有效版本/);
+  const tampered = genericPlanningFixture();
+  const compiled = compileProjectPlan(tampered.task, tampered.raw);
+  compiled.steps[0].tools.push('materials.read');
+  assert.throws(() => validateModelPlan(tampered.task, compiled), /(额外工具|四阶段契约)/);
+});
+
 function projectAuditFixture() {
   const task = createTask({ goal: '实现固定问候函数', type: 'project' });
   task.projectWorkspace = {
@@ -158,6 +231,25 @@ function transactionProjectAuditFixture() {
   return fixture;
 }
 
+function boundedTransactionProjectAuditFixture() {
+  const fixture = transactionProjectAuditFixture();
+  const { task, session } = fixture;
+  task.projectWorkspace.executionMode = 'host_bounded_transaction_v1';
+  task.projectWorkspace.readablePaths = ['src/greeting.mjs'];
+  task.projectWorkspace.editablePaths = ['src/greeting.mjs'];
+  task.projectWorkspace.checks = [{ id: 'greet-name-contract-v1' }];
+  session.projectTransaction.mode = 'host_bounded_transaction_v1';
+  const write = session.toolCalls[1];
+  write.requestAudit = { tool: 'workspace.write', expectedCandidateSha256: 'candidate-start', changes: [{ path: 'src/greeting.mjs', expectedFileSha256: 'file-start', bytes: 21, contentSha256: 'content-final' }] };
+  write.hostAudit.request = structuredClone(write.requestAudit);
+  write.result.changes = [{ path: 'src/greeting.mjs', bytes: 21, fileSha256: 'file-final' }];
+  write.hostAudit.outcome = {
+    ok: true, path: 'src/greeting.mjs', fileSha256: 'file-final', changes: structuredClone(write.result.changes),
+    candidateSha256: 'candidate-final', mutationSequence: 1, diffSha256: 'diff-final', workspaceScopeFingerprint: 'scope-project',
+  };
+  return fixture;
+}
+
 test('宿主固定项目事务审计区分 actor 并只记一次候选生成调用', () => {
   const fixture = transactionProjectAuditFixture();
   const audit = projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id });
@@ -167,6 +259,7 @@ test('宿主固定项目事务审计区分 actor 并只记一次候选生成调�
   assert.deepEqual(audit.execution.calls.map((call) => [call.actor, call.transactionStep, call.round, call.batchOrdinal, call.requestOrdinal]), [
     ['host', 'read', 1, 1, 1], ['model', 'write', 1, 2, 1], ['host', 'check', 1, 3, 1], ['host', 'diff', 1, 4, 1],
   ]);
+  assert.equal(Object.hasOwn(audit.execution.calls[1].outcome, 'changes'), false, '旧单文件 write 没有 changes 时不得补造空数组');
 });
 
 test('宿主固定项目事务拒绝伪造 actor、步骤、合约绑定或额外调用', () => {
@@ -183,6 +276,26 @@ test('宿主固定项目事务拒绝伪造 actor、步骤、合约绑定或额�
     const fixture = transactionProjectAuditFixture();
     mutate(fixture);
     assert.throws(() => projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
+  }
+});
+
+test('有限源码宿主事务审计绑定批量 write、授权路径和全部固定检查', () => {
+  const fixture = boundedTransactionProjectAuditFixture();
+  const audit = projectExecutionAudit(fixture.task, { synthesisWorkItemId: fixture.synthesis.id });
+  assert.equal(audit.execution.mode, 'host_bounded_transaction_v1');
+  assert.deepEqual(audit.execution.calls.map((entry) => [entry.actor, entry.transactionStep]), [
+    ['host', 'read'], ['model', 'write'], ['host', 'check'], ['host', 'diff'],
+  ]);
+  assert.deepEqual(audit.execution.calls[1].outcome.changes, [{ path: 'src/greeting.mjs', bytes: 21, fileSha256: 'file-final' }]);
+  for (const mutate of [
+    (draft) => { draft.session.toolCalls[1].requestAudit.changes[0].path = 'app/outside.mjs'; draft.session.toolCalls[1].hostAudit.request = structuredClone(draft.session.toolCalls[1].requestAudit); },
+    (draft) => { draft.session.toolCalls[1].requestAudit.changes.push(structuredClone(draft.session.toolCalls[1].requestAudit.changes[0])); draft.session.toolCalls[1].hostAudit.request = structuredClone(draft.session.toolCalls[1].requestAudit); },
+    (draft) => { draft.session.toolCalls[2].requestAudit.checkId = 'other-check'; draft.session.toolCalls[2].hostAudit.request = structuredClone(draft.session.toolCalls[2].requestAudit); },
+    (draft) => { draft.session.toolCalls[0].hostAudit.actor = 'model'; },
+  ]) {
+    const draft = boundedTransactionProjectAuditFixture();
+    mutate(draft);
+    assert.throws(() => projectExecutionAudit(draft.task, { synthesisWorkItemId: draft.synthesis.id }), (error) => error.code === 'project_execution_audit_stale');
   }
 });
 

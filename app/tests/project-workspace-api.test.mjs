@@ -3,14 +3,41 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
-import { recordReview } from '../core.mjs';
+import { createTask, recordReview } from '../core.mjs';
 import { createTrustedProjectReviewFacts, groundingChecks } from '../execution.mjs';
 import { createProjectWorkspaceHost } from '../project-workspace.mjs';
+import { GENERIC_FIXTURE_ID, scopeFingerprint } from '../project-scope.mjs';
+import { projectTaskBinding } from '../project-workspace.mjs';
+import { compileProjectPlan } from '../orchestration.mjs';
 import { __test as providerTest } from '../providers.mjs';
 import { start } from '../server.mjs';
 
 const tempPrefix = path.join(process.cwd(), '.project-api-test-');
 const override = { available: true, reason: 'test-only', fingerprint: 'test-only', probes: [], networkConnections: 0, writesAbsent: true };
+
+test('代码项目 planner 明确只生成四个固定步骤，不重复范围授权', () => {
+  const task = createTask({ goal: '在有限源码范围内交付 patch', type: 'project' });
+  const binding = projectTaskBinding(task);
+  task.projectScopeProposal = { id: 'scope-prompt', fingerprint: 'scope-fingerprint', status: 'accepted' };
+  task.projectWorkspace = {
+    status: 'ready', fixtureId: GENERIC_FIXTURE_ID, executionMode: 'host_bounded_transaction_v1',
+    proposalId: 'scope-prompt', proposalFingerprint: 'scope-fingerprint', taskInputBinding: binding,
+    publicContract: {}, publicContractFingerprint: scopeFingerprint({}), scopeFingerprint: 'workspace-prompt', sourceSnapshotSha256: 'source-prompt',
+  };
+  const prompt = providerTest.plannerPrompt(task);
+  assert.match(prompt, /只填写宿主公开四阶段契约的业务内容/);
+  assert.match(prompt, /代码工作区也已单独授权/);
+  assert.match(prompt, /不得重复填成模型工作/);
+  assert.match(prompt, /宿主公开项目规划契约/);
+  assert.match(prompt, /"current": true/);
+  assert.match(prompt, /"slot": "tool"/);
+  assert.match(prompt, /key、kind、dependsOn、tools、webScope、outputKind 和 deliverables 全由宿主/);
+  assert.doesNotMatch(prompt, /每个步骤都必须返回 webScope/);
+  assert.doesNotMatch(prompt, /outputKind 选择主要成果类型/);
+  assert.doesNotMatch(prompt, /角色 key 与步骤 key 使用/);
+  assert.doesNotMatch(prompt, /代码项目的 steps 必须/);
+  assert.doesNotMatch(prompt, /只可选择 materials\.read/);
+});
 const RUN6_ARTIFACT_CONTENT = [
   '候选证据包',
   '',
@@ -109,6 +136,175 @@ function passingProjectReview() {
     checks: ['目标符合度', '完整性', '来源核对', '边界遵守', '文件可用性'].map((name) => ({ name, passed: true, evidence: '完整宿主代码与执行审计已核对。', blocking: true })),
   };
 }
+
+test('HTTP 通用范围显式提案确认授权后完成单次批量 CAS、全部检查、独立审阅与 patch 撤旧', { timeout: 45_000 }, async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  const repositoryRoot = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(repositoryRoot, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repositoryRoot, 'app', 'public'), { recursive: true });
+  await fs.writeFile(path.join(repositoryRoot, 'package.json'), '{"type":"module"}\n');
+  await fs.writeFile(path.join(repositoryRoot, 'app', 'label.mjs'), 'export function normalizeLabel(value) { return String(value).trim(); }\n');
+  let scopeCalls = 0;
+  let planCalls = 0;
+  let ownerCalls = 0;
+  let reviewPromptText = '';
+  let scopePromptText = '';
+  const plan = {
+    summary: '有限源码事务。', projectAlignment: { status: 'standalone', explanation: '独立任务。' }, outputKind: 'project', deliverables: ['project_patch'],
+    roles: [
+      { key: 'developer', name: '执行员', mission: '形成候选', capabilities: ['bounded source'], recruitmentReason: '修改有限源码' },
+      { key: 'author', name: '汇总员', mission: '汇总宿主证据', capabilities: ['summary'], recruitmentReason: '形成候选说明' },
+      { key: 'auditor', name: '审阅员', mission: '独立审阅', capabilities: ['review'], recruitmentReason: '独立核对' },
+      { key: 'courier', name: '交付员', mission: '等待确认', capabilities: ['delivery'], recruitmentReason: '只交付确认版本' },
+    ],
+    steps: [
+      { key: 'code', title: '受控修改', kind: 'tool', role: 'developer', dependsOn: [], tools: ['workspace.read', 'workspace.write', 'workspace.check', 'workspace.diff'], acceptanceCriteria: ['候选通过全部固定检查'], expectedResult: '宿主事务证据', webScope: { queries: [], urls: [] } },
+      { key: 'synthesis', title: '形成候选', kind: 'synthesis', role: 'author', dependsOn: ['code'], tools: [], acceptanceCriteria: ['候选绑定宿主证据'], expectedResult: 'patch 候选', webScope: { queries: [], urls: [] } },
+      { key: 'review', title: '独立审阅', kind: 'review', role: 'auditor', dependsOn: ['synthesis'], tools: [], acceptanceCriteria: ['独立审阅当前版本'], expectedResult: '审阅记录', webScope: { queries: [], urls: [] } },
+      { key: 'delivery', title: '等待确认', kind: 'delivery', role: 'courier', dependsOn: ['review'], tools: [], acceptanceCriteria: ['只交付指定版本'], expectedResult: '确认后 patch', webScope: { queries: [], urls: [] } },
+    ],
+  };
+  const providers = {
+    async status() { return { demo: { id: 'demo', available: true }, codex: { id: 'codex-cli', available: true } }; },
+    async proposeProjectScope(task, repository) {
+      scopeCalls += 1;
+      assert.equal(repository.repositoryId, 'irixi-office-agent');
+      assert.equal(repository.files.some((entry) => entry.path === 'app/label.mjs' && entry.selectable === true && entry.excerpt.includes('normalizeLabel')), true);
+      assert.equal(JSON.stringify(repository).includes(repositoryRoot), false);
+      scopePromptText = providerTest.projectScopePrompt(task, repository);
+      return {
+        repositoryId: 'irixi-office-agent', deliverable: 'project_patch',
+        goal: { statement: '让标签纯函数去除空白并返回大写文本。', successCriteria: ['确认的输入返回确认的大写文本。'], boundaries: ['只改登记纯函数，不访问外部系统。'] },
+        readablePaths: ['app/label.mjs'], editablePaths: ['app/label.mjs'],
+        checks: [{ id: 'node-syntax-v1', modulePath: null, namedExport: null, cases: null }, { id: 'json-function-v1', modulePath: 'app/label.mjs', namedExport: 'normalizeLabel', cases: [{ id: 'trim-upper', argsJson: '[" hi "]', expectedJson: '"HI"' }] }],
+        rationale: '单一纯函数和单一行为用例足以覆盖该需求。',
+      };
+    },
+    async plan(task) {
+      planCalls += 1;
+      const stage = (name) => ({
+        title: `${name}阶段`, agentName: `${name}专员`, agentMission: `${name}当前候选`,
+        agentCapabilities: [`${name}能力`], recruitmentReason: `需要${name}`,
+        acceptanceCriteria: [`${name}有明确宿主证据`], expectedResult: `${name}结果`,
+      });
+      return compileProjectPlan(task, {
+        summary: '有限源码事务。',
+        projectAlignment: { status: 'standalone', explanation: '独立任务。' },
+        stages: { tool: stage('修改'), synthesis: stage('汇总'), review: stage('审阅'), delivery: stage('交付') },
+      });
+    },
+    async executeWork(task, item, input) {
+      if (item.kind === 'tool') {
+        ownerCalls += 1;
+        const read = input.projectTransaction.readResults[0];
+        return { summary: '', output: '', sources: [], claims: [], gap: '', caveats: [], acceptanceChecks: [], deliverables: [], toolRequests: [{
+          id: 'write-once', tool: 'workspace.write', reason: '提交一次当前 CAS 候选',
+          args: { expectedCandidateSha256: read.candidateSha256, changes: [{ path: read.path, expectedFileSha256: read.fileSha256, content: 'export function normalizeLabel(value) { return String(value).trim().toUpperCase(); }\n' }] },
+        }] };
+      }
+      if (item.kind === 'synthesis') {
+        assert.equal(input.projectExecutionAudit.execution.mode, 'host_bounded_transaction_v1');
+        return {
+          summary: '当前有限源码候选已由宿主固定检查。', output: '候选只包含获准纯函数变更，并绑定当前宿主检查与差异证据。', sources: [], claims: [], gap: '', caveats: [], toolRequests: [],
+          deliverables: [{ kind: 'project_patch', title: '有限源码候选 patch', content: '候选只包含获准纯函数变更，并绑定当前宿主检查与差异证据。' }],
+          acceptanceChecks: item.acceptanceCriteria.map((criterion) => ({ criterion, passed: true, evidence: '当前宿主事务和检查证据已提供。' })),
+        };
+      }
+      assert.equal(item.kind, 'review');
+      return { summary: '候选已交独立审阅。', output: '仅转交当前候选和宿主证据。', sources: [], claims: [], gap: '', caveats: [], toolRequests: [], deliverables: [], acceptanceChecks: item.acceptanceCriteria.map((criterion) => ({ criterion, passed: true, evidence: '当前候选已绑定。' })) };
+    },
+    async review(task, artifact, { projectReviewEvidence }) {
+      reviewPromptText = providerTest.reviewPrompt(task, artifact, { projectReviewEvidence });
+      return passingProjectReview();
+    },
+  };
+  const host = createProjectWorkspaceHost({ projectRoot: repositoryRoot, capabilityOverride: override });
+  let running = await start({ port: 0, root, providers, projectWorkspaceHost: host });
+  t.after(() => running.server.close());
+  const created = await request(running.url, '/api/tasks', { method: 'POST', body: JSON.stringify({ title: '有限源码任务', goal: '整理这项自然语言源码需求', type: 'project', successCriteria: ['先确认需求卡'], boundaries: ['不写原项目'] }) });
+  const taskId = created.value.task.id;
+  const beforeScope = await request(running.url, `/api/tasks/${taskId}/project-scope`);
+  const staleBinding = structuredClone(beforeScope.value.taskInputBinding);
+  staleBinding.goalVersionId = 'goal-from-old-page';
+  const staleProposal = await request(running.url, `/api/tasks/${taskId}/project-scope/propose`, { method: 'POST', body: JSON.stringify({ expectedTaskInputBinding: staleBinding, expectedRepositoryTreeSha256: beforeScope.value.repository.treeSha256 }) });
+  assert.equal(staleProposal.status, 409);
+  assert.equal(scopeCalls, 0);
+  const proposed = await request(running.url, `/api/tasks/${taskId}/project-scope/propose`, { method: 'POST', body: JSON.stringify({ expectedTaskInputBinding: beforeScope.value.taskInputBinding, expectedRepositoryTreeSha256: beforeScope.value.repository.treeSha256 }) });
+  assert.equal(proposed.status, 201, JSON.stringify(proposed.value));
+  assert.equal(scopeCalls, 1);
+  assert.match(scopePromptText, /app\/label\.mjs/);
+  assert.match(scopePromptText, /argsJson、expectedJson/);
+  assert.equal(scopePromptText.includes(repositoryRoot), false);
+  const staleAcceptance = await request(running.url, `/api/tasks/${taskId}/project-scope/accept`, { method: 'POST', body: JSON.stringify({ proposalId: proposed.value.projectScope.id, expectedFingerprint: '0'.repeat(64) }) });
+  assert.equal(staleAcceptance.status, 409);
+  const accepted = await request(running.url, `/api/tasks/${taskId}/project-scope/accept`, { method: 'POST', body: JSON.stringify({ proposalId: proposed.value.projectScope.id, expectedFingerprint: proposed.value.projectScope.fingerprint }) });
+  assert.equal(accepted.status, 200);
+  const capability = (await request(running.url, '/api/project-capabilities')).value.project;
+  const acceptedScope = (await request(running.url, `/api/tasks/${taskId}/project-scope`)).value;
+  const attached = await request(running.url, `/api/tasks/${taskId}/project-workspace/attach`, { method: 'POST', body: JSON.stringify({
+    proposalId: acceptedScope.projectScope.id, expectedProposalFingerprint: acceptedScope.projectScope.fingerprint,
+    expectedGoalVersionId: acceptedScope.taskInputBinding.goalVersionId,
+    expectedProjectRootGoalVersionId: acceptedScope.taskInputBinding.projectRootGoalVersionId,
+    expectedProjectRootInputFingerprint: acceptedScope.taskInputBinding.projectRootInputFingerprint,
+    expectedMaterialApplicabilityFingerprint: acceptedScope.taskInputBinding.materialApplicabilityFingerprint,
+    expectedPreviousScopeFingerprint: null, expectedCapabilityFingerprint: capability.fingerprint,
+  }) });
+  assert.equal(attached.status, 201);
+  assert.equal(attached.value.task.projectWorkspace.executionMode, 'host_bounded_transaction_v1');
+  await new Promise((resolve) => running.server.close(resolve));
+  running = await start({ port: 0, root, providers, projectWorkspaceHost: host });
+  const restarted = await request(running.url, `/api/tasks/${taskId}`);
+  assert.equal(restarted.value.task.projectWorkspace.status, 'ready');
+  assert.equal(restarted.value.task.projectWorkspace.proposalId, acceptedScope.projectScope.id);
+  const plannedResponse = await request(running.url, `/api/tasks/${taskId}/plan`, { method: 'POST', body: '{}' });
+  assert.equal(plannedResponse.status, 200, JSON.stringify(plannedResponse.value));
+  assert.equal(planCalls, 1);
+  assert.equal((await request(running.url, `/api/tasks/${taskId}/run`, { method: 'POST', body: '{}' })).status, 202);
+  let current;
+  for (let index = 0; index < 200; index += 1) {
+    current = (await request(running.url, `/api/tasks/${taskId}`)).value.task;
+    if (['waiting_user', 'failed', 'partial'].includes(current.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(current.status, 'waiting_user', JSON.stringify({
+    stopReason: current.execution?.stopReason,
+    lastError: current.execution?.lastError,
+    workItems: current.workItems?.map(({ id, kind, status, error }) => ({ id, kind, status, error })),
+    events: current.events?.slice(-5),
+  }));
+  assert.equal(ownerCalls, 1);
+  const artifact = current.artifacts.at(-1);
+  assert.equal(artifact.reviewStatus, 'passed');
+  assert.match(reviewPromptText, /host_bounded_transaction_v1|有限源码事务/);
+  assert.match(reviewPromptText, /projectReviewEvidence/);
+  assert.match(reviewPromptText, /explicitlyAccepted/);
+  assert.match(reviewPromptText, /scopeAcceptedEvent/);
+  assert.match(reviewPromptText, /workspaceGrant/);
+  assert.match(reviewPromptText, /hostFacts/);
+  assert.match(reviewPromptText, /workReview/);
+  assert.match(reviewPromptText, /resultDigest/);
+  assert.doesNotMatch(reviewPromptText, /同一第三批/);
+  const storedReview = current.reviews.filter((entry) => entry.artifactId === artifact.id).at(-1);
+  assert.match(storedReview.projectReviewEvidenceSha256, /^[a-f0-9]{64}$/);
+  assert.match(storedReview.projectArtifactSemanticSha256, /^[a-f0-9]{64}$/);
+  assert.match(storedReview.projectWorkReviewEvidenceSha256, /^[a-f0-9]{64}$/);
+  const reviewItem = current.workItems.find((entry) => entry.kind === 'review');
+  const reviewSession = current.agentSessions.findLast((entry) => entry.workItemId === reviewItem.id && entry.runId === current.execution.id);
+  assert.equal(reviewSession.reviewEvidence.resultDigest, storedReview.projectWorkReviewEvidenceSha256);
+  assert.match(reviewSession.reviewEvidence.projectReviewEvidenceSha256, /^[a-f0-9]{64}$/);
+  const approval = await request(running.url, `/api/tasks/${taskId}/artifacts/${artifact.id}/confirm`, { method: 'POST', body: '{}' });
+  assert.equal(approval.status, 200);
+  assert.equal(approval.value.approval.projectReviewEvidenceSha256, storedReview.projectReviewEvidenceSha256);
+  assert.equal(approval.value.approval.projectArtifactSemanticSha256, storedReview.projectArtifactSemanticSha256);
+  assert.equal(approval.value.approval.projectWorkReviewEvidenceSha256, storedReview.projectWorkReviewEvidenceSha256);
+  const downloaded = await fetch(`${running.url}/api/tasks/${taskId}/artifacts/${artifact.id}/export?approval=${approval.value.approval.id}&format=patch`);
+  assert.equal(downloaded.status, 200);
+  assert.match(await downloaded.text(), /app\/label\.mjs/);
+  const replacement = await request(running.url, `/api/tasks/${taskId}/suggestions`, { method: 'POST', body: JSON.stringify({ text: '改成另一项需求', classification: 'replace' }) });
+  await request(running.url, `/api/tasks/${taskId}/suggestions/${replacement.value.suggestion.id}/accept-goal`, { method: 'POST', body: JSON.stringify({ statement: '另一项完整需求', successCriteria: ['重新确认范围'], boundaries: ['旧 patch 不可导出'] }) });
+  assert.equal((await fetch(`${running.url}/api/tasks/${taskId}/artifacts/${artifact.id}/export?approval=${approval.value.approval.id}&format=patch`)).status, 400);
+});
 
 test('HTTP 项目在授权前零模型，迟到授权 409，当前授权跨重启保持且不公开私密路径', { timeout: 20_000 }, async (t) => {
   const root = await fs.mkdtemp(tempPrefix);
@@ -353,8 +549,8 @@ test('HTTP 当前计划以三批四个真实 workspace 工具形成 artifact，�
       if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }));
     },
-    async review(task, artifact, { signal }) {
-      reviewObserved({ task: structuredClone(task), artifact: structuredClone(artifact), prompt: providerTest.reviewPrompt(task, artifact) });
+    async review(task, artifact, { signal, projectReviewEvidence }) {
+      reviewObserved({ task: structuredClone(task), artifact: structuredClone(artifact), prompt: providerTest.reviewPrompt(task, artifact, { projectReviewEvidence }) });
       if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       return passingProjectReview();
     },
@@ -538,8 +734,8 @@ test('HTTP continuity 固定事务由宿主完成检查差异、独立审阅、�
       if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }));
     },
-    async review(task, artifact, { signal }) {
-      reviewCapture({ task: structuredClone(task), artifact: structuredClone(artifact), prompt: providerTest.reviewPrompt(task, artifact) });
+    async review(task, artifact, { signal, projectReviewEvidence }) {
+      reviewCapture({ task: structuredClone(task), artifact: structuredClone(artifact), prompt: providerTest.reviewPrompt(task, artifact, { projectReviewEvidence }) });
       if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
       return passingProjectReview();
     },
@@ -562,6 +758,7 @@ test('HTTP continuity 固定事务由宿主完成检查差异、独立审阅、�
   assert.equal(attached.status, 201);
   assert.equal(attached.value.task.projectWorkspace.fixtureId, continuityFixture.id);
   assert.equal(attached.value.task.projectWorkspace.executionMode, 'host_fixed_transaction_v1');
+  assert.equal(attached.value.task.projectWorkspace.status, 'ready', JSON.stringify(attached.value.task.projectWorkspace.sandboxCapability));
   assert.equal(attached.value.task.projectWorkspace.publicContractFingerprint, continuityFixture.publicContractFingerprint);
   assert.equal(attached.value.task.projectWorkspace.publicContract.entrypoint, 'renderContinuity');
   assert.deepEqual(attached.value.task.projectWorkspace.readablePaths, ['app/public/app.js']);
@@ -569,7 +766,10 @@ test('HTTP continuity 固定事务由宿主完成检查差异、独立审阅、�
   assert.equal((await request(running.url, `/api/tasks/${created.value.task.id}/plan`, { method: 'POST', body: '{}' })).status, 200);
   const continued = await request(running.url, `/api/tasks/${created.value.task.id}/continue`, { method: 'POST', body: '{}' });
   assert.equal(continued.status, 202);
-  const observed = await Promise.race([reviewSeen, new Promise((_resolve, reject) => setTimeout(() => reject(new Error('continuity final review timeout')), 20_000))]);
+  let reviewTimeout;
+  const timeoutReview = new Promise((_resolve, reject) => { reviewTimeout = setTimeout(() => reject(new Error('continuity final review timeout')), 20_000); });
+  const observed = await Promise.race([reviewSeen, timeoutReview]);
+  clearTimeout(reviewTimeout);
   const audit = observed.artifact.projectCandidate.projectExecutionAudit;
   assert.equal(audit.execution.mode, 'host_fixed_transaction_v1');
   assert.equal(audit.execution.transaction.modelInvocationCount, 1);

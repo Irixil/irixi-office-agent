@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { assertMaterialEligible, materialContext } from './material-applicability.mjs';
 import { projectCandidateFingerprint, projectWorkspaceFingerprint } from './project-workspace.mjs';
+import { assertProjectReviewEvidenceCurrent, buildProjectReviewEvidence, projectReviewEvidenceRequired } from './project-review-evidence.mjs';
 
 // Adapted from OpenOffice phase-machine.ts and retry.ts at
 // 5b0246c396aed041c5262ab0132623bf2b8b067b. The original MIT license is
@@ -335,15 +336,23 @@ function criticalTokens(value) {
 
 const TRUSTED_PROJECT_REVIEW_FACTS = Symbol('trusted-project-review-facts');
 
-function projectReviewFactBody(task, artifact) {
+function projectReviewFactBody(task, artifact, projectReviewEvidence = null) {
   const candidate = artifact?.projectCandidate;
   if (task?.type !== 'project' || !candidate) return null;
-  const checks = (candidate.checks || []).filter((entry) => entry?.passed === true
-    && entry.candidateSha256 === candidate.candidateSha256
-    && Number.isInteger(entry.caseTotal) && entry.caseTotal >= 0
-    && Number.isInteger(entry.casePassed) && entry.casePassed === entry.caseTotal)
-    .map((entry) => ({ checkId: String(entry.checkId || ''), caseTotal: entry.caseTotal, casePassed: entry.casePassed }))
-    .sort((left, right) => left.checkId.localeCompare(right.checkId));
+  let packet = projectReviewEvidence;
+  if (projectReviewEvidenceRequired(task)) {
+    packet = packet
+      ? assertProjectReviewEvidenceCurrent(task, artifact, packet)
+      : buildProjectReviewEvidence(task, artifact);
+  }
+  const checks = projectReviewEvidenceRequired(task)
+    ? structuredClone(packet.hostFacts.checks)
+    : (candidate.checks || []).filter((entry) => entry?.passed === true
+      && entry.candidateSha256 === candidate.candidateSha256
+      && Number.isInteger(entry.caseTotal) && entry.caseTotal >= 0
+      && Number.isInteger(entry.casePassed) && entry.casePassed === entry.caseTotal)
+      .map((entry) => ({ checkId: String(entry.checkId || ''), labels: [], caseTotal: entry.caseTotal, casePassed: entry.casePassed }))
+      .sort((left, right) => left.checkId.localeCompare(right.checkId));
   return {
     version: 1,
     taskId: task.id,
@@ -356,12 +365,13 @@ function projectReviewFactBody(task, artifact) {
     sourceIntegritySha256: candidate.sourceIntegritySha256 || null,
     projectExecutionAuditSha256: candidate.projectExecutionAuditSha256 || null,
     changedFileCount: Array.isArray(candidate.changes) ? candidate.changes.length : null,
+    projectReviewEvidenceSha256: packet?.packetSha256 || null,
     checks,
   };
 }
 
-export function createTrustedProjectReviewFacts(task, artifact) {
-  const body = projectReviewFactBody(task, artifact);
+export function createTrustedProjectReviewFacts(task, artifact, projectReviewEvidence = null) {
+  const body = projectReviewFactBody(task, artifact, projectReviewEvidence);
   if (!body || body.goalVersionId !== body.activeGoalVersionId || !body.candidateSha256
     || !body.sourceIntegritySha256 || !body.projectExecutionAuditSha256 || !Number.isInteger(body.changedFileCount)) {
     throw new Error('当前代码候选缺少可用的宿主计数证据。');
@@ -372,7 +382,9 @@ export function createTrustedProjectReviewFacts(task, artifact) {
 
 function verifiedProjectReviewFacts(task, artifact, value) {
   if (!value || value[TRUSTED_PROJECT_REVIEW_FACTS] !== true) return null;
-  const expected = projectReviewFactBody(task, artifact);
+  let expected;
+  try { expected = projectReviewFactBody(task, artifact); }
+  catch { return null; }
   if (!expected || expected.goalVersionId !== expected.activeGoalVersionId) return null;
   const digest = crypto.createHash('sha256').update(JSON.stringify(expected)).digest('hex');
   if (value.digest !== digest || JSON.stringify(value.body) !== JSON.stringify(expected)) return null;
@@ -388,9 +400,12 @@ function hostFactSupportsOccurrence(facts, occurrence, content) {
   const line = content.slice(lineStart, nextBreak === -1 ? content.length : nextBreak);
   const localSuffix = content.slice(occurrence.end, nextBreak === -1 ? content.length : nextBreak);
   const matchingKinds = [];
-  const caseFact = facts.checks.find((entry) => entry.checkId && line.includes(entry.checkId));
-  if (caseFact && /检查|check/i.test(line) && /^\s*(?:用例|全部通过)(?=$|[\s，。；、,:;])/u.test(localSuffix)) {
-    matchingKinds.push(value === caseFact.caseTotal && value === caseFact.casePassed);
+  const caseFacts = facts.checks.filter((entry) => entry.checkId && (line.includes(entry.checkId)
+    || (entry.labels || []).some((label) => line.includes(label))));
+  for (const caseFact of caseFacts) {
+    if (/检查|check/i.test(line) && /^\s*(?:用例(?:全部通过)?|全部通过)(?=$|[\s，。；、,:;])/u.test(localSuffix)) {
+      matchingKinds.push(value === caseFact.caseTotal && value === caseFact.casePassed);
+    }
   }
   if (/workspace\.diff|\bdiff\b/i.test(line) && /^\s*变更(?:条目|文件)(?=$|[\s，。；、,:;])/u.test(localSuffix)) matchingKinds.push(value === facts.changedFileCount);
   return matchingKinds.length === 1 && matchingKinds[0] === true;
@@ -478,6 +493,27 @@ export function groundingChecks(task, artifact, { projectReviewFacts = null } = 
       blocking: true,
     },
   ];
+}
+
+export function assertProjectReviewInputReady(task, artifact, projectReviewEvidence, { requireWorkReview = false } = {}) {
+  if (!projectReviewEvidenceRequired(task)) return null;
+  const current = assertProjectReviewEvidenceCurrent(task, artifact, projectReviewEvidence);
+  if (requireWorkReview && !current.workReview) {
+    throw Object.assign(new Error('最终独立审阅缺少同一运行与证据包下完成的工作审阅。'), {
+      code: 'project_review_input_incomplete',
+      status: 409,
+    });
+  }
+  const projectReviewFacts = createTrustedProjectReviewFacts(task, artifact, projectReviewEvidence);
+  const checks = groundingChecks(task, artifact, { projectReviewFacts });
+  const failed = checks.filter((entry) => entry.blocking && !entry.passed);
+  if (failed.length) {
+    throw Object.assign(new Error(`当前代码候选尚未满足确定性审阅输入守卫：${failed.map((entry) => entry.name).join('、')}。`), {
+      code: 'project_review_input_incomplete',
+      status: 409,
+    });
+  }
+  return checks;
 }
 
 export function demoResearch(task) {

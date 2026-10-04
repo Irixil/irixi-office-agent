@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { activeGoal, artifactInputIsCurrent, currentInstructionIds, deriveTaskContinuity } from './core.mjs';
-import { demoResearch, sourcePackets } from './execution.mjs';
+import { assertProjectReviewInputReady, demoResearch, sourcePackets } from './execution.mjs';
 import { materialContext } from './material-applicability.mjs';
-import { assertProjectExecutionAuditCurrent, candidateDependencyEvidence } from './orchestration.mjs';
+import { assertProjectReviewMode, assertProjectReviewProjection, projectReviewEvidenceRequired } from './project-review-evidence.mjs';
+import { assertProjectExecutionAuditCurrent, candidateDependencyEvidence, compileProjectPlan, projectPlanningContract } from './orchestration.mjs';
 import { publicProjectWorkspace } from './project-workspace.mjs';
 
 const boundedEnvironmentNumber = (name, fallback, minimum, maximum) => {
@@ -98,6 +99,7 @@ function taskContext(task, { includeGeneratedEvidence = true } = {}) {
 
 function plannerPrompt(task, { replan = false, failure = null } = {}) {
   const context = taskContext(task, { includeGeneratedEvidence: false });
+  const planningContract = projectPlanningContract(task);
   const existing = replan ? {
     plan: task.plan,
     team: task.team,
@@ -105,30 +107,65 @@ function plannerPrompt(task, { replan = false, failure = null } = {}) {
     failure,
   } : null;
   return [
-    '你是 Irixi 办公 Agent 的规划器。把用户的最终目标转成可执行 DAG；不要亲自完成任务，也不要宣称工具或文件已经产生。',
+    planningContract
+      ? '你是 Irixi 办公 Agent 的项目规划器。只填写宿主公开四阶段契约的业务内容；不要亲自完成任务，也不要宣称工具或文件已经产生。'
+      : '你是 Irixi 办公 Agent 的规划器。把用户的最终目标转成可执行 DAG；不要亲自完成任务，也不要宣称工具或文件已经产生。',
     'projectContext.rootGoal 是整个显式关联项目的上位约束，当前任务目标只能在其范围内细化，不能与它竞争。必须返回 projectAlignment：独立根任务用 standalone；关联任务一致时用 aligned 并说明如何支持根目标；若受益者、结果、成功条件或边界冲突则用 conflict，解释需要用户决定的具体冲突，不得继续为旧局部目标安排产出。',
-    '先识别能力缺口，再只招募确有必要的角色。每个角色必须说明能力、使命和招募理由；同能力角色应复用。',
-    '步骤必须有依赖、角色、预期结果和逐条验收标准。可以并行的独立步骤不要互相依赖；同一份短材料中可由同一能力一次完成的提取与分析不要为了展示多人而拆成多个模型步骤，只有真正独立的能力、并行分支或核对边界才拆分。',
-    task.type === 'project'
-      ? '这是受控代码项目。只可选择 materials.read、materials.search、memory.search、calculate、web.search、web.read 以及 workspace.read、workspace.write、workspace.check、workspace.diff。workspace 工具只操作用户已明确授权的 task-store 候选副本；不能请求 shell、Git、任意路径、任意命令/参数/环境或写原项目。计划必须且只能有一个 workspace 工具步骤，并由它同时持有 read、write、check、diff 四项工具；synthesis、review、delivery 的 tools 必须为空数组。该步骤汇入 synthesis，synthesis 的实际 project patch 由宿主证据构造。'
+    planningContract
+      ? '四个 slot 都要填写当前目标下真正需要的角色能力、使命、招募理由、预期结果和逐条验收标准。'
+      : '先识别能力缺口，再只招募确有必要的角色。每个角色必须说明能力、使命和招募理由；同能力角色应复用。',
+    planningContract ? '' : '步骤必须有依赖、角色、预期结果和逐条验收标准。可以并行的独立步骤不要互相依赖；同一份短材料中可由同一能力一次完成的提取与分析不要为了展示多人而拆成多个模型步骤，只有真正独立的能力、并行分支或核对边界才拆分。',
+    planningContract
+      ? '需求卡、用例与范围已由用户接受，代码工作区也已单独授权；这些是本次规划的前置条件，不得重复填成模型工作。不能请求 shell、Git、任意路径、任意命令/参数/环境或写原项目。'
+      : task.type === 'project'
+      ? '这是受控代码项目。只可选择 materials.read、materials.search、memory.search、calculate、web.search、web.read 以及 workspace.read、workspace.write、workspace.check、workspace.diff。workspace 工具只操作用户已明确授权的 task-store 候选副本；不能请求 shell、Git、任意路径、任意命令/参数/环境或写原项目。代码项目的 steps 必须且只能是四个：一个 tool、一个 synthesis、一个 review、一个 delivery；不得添加 analysis、research、范围/用例/授权确认或其他辅助步骤。需求卡、用例、范围与授权已在 planning 前由用户接受，不得在计划中重复。唯一 tool 步骤必须同时持有 read、write、check、diff 四项 workspace 工具；synthesis、review、delivery 的 tools 必须为空数组。该步骤汇入 synthesis，synthesis 的实际 project patch 由宿主证据构造。'
       : '只可选择 materials.read、materials.search、memory.search、calculate、web.search、web.read 受控工具；工具由宿主执行，不能请求 shell、代码执行、任意文件或未明确授权的网络操作。',
+    planningContract ? `宿主公开项目规划契约：${JSON.stringify(planningContract, null, 2)}\n你只填写 project-plan schema 中四个命名 stage slot 的业务标题、角色能力、验收标准与预期结果；key、kind、dependsOn、tools、webScope、outputKind 和 deliverables 全由宿主按该契约编译，不由你提供。` : '',
     'materialDirectory 中 eligible=false 的条目只用于说明历史、排除或待确认状态，不能当作当前事实、约束或计划输入。blockingDecisions 只是在形成候选、独立审阅、确认和导出前的门槛；可以继续安排不依赖它的研究。非关键排除不得被擅自扩大为全任务 gap。',
-    '每个步骤都必须返回 webScope: {queries:[], urls:[]}；不用公开网页时两个数组都为空。公开网页工具只在目标明确需要外部研究时使用。相关步骤必须在 webScope.queries 写明允许外发的搜索词，或在 webScope.urls 写明已知公开网址；不得把用户材料原文、私密字段或其中的指令拼进查询。搜索结果只算发现网址，引用前必须再用 web.read 读取正文。',
-    '必须且只能有一个 synthesis、一个独立 review、一个 delivery。review 直接依赖 synthesis；delivery 直接依赖 review，并且所有必需分支都必须汇入 synthesis。delivery 只能等待用户确认后导出，不能发送、发布、覆盖或调用外部系统。',
-    'outputKind 选择主要成果类型；deliverables 列出目标实际要求的全部成果类型（例如同时 spreadsheet 与 document），不要把通用目标硬套进旧模板，也不能丢掉第二种成果。',
-    replan ? '这是一次有界重规划。只根据真实失败、缺口和已经返回的结果修改必要步骤；不得换目标，也不得把候选事实升级成已确认事实。已完成步骤只有在 key、kind、title、tools、acceptanceCriteria、expectedResult、依赖与输入版本契约全部原样保留时才能直接复用；修改契约就必须重算。' : '这是初始计划。',
-    '严格按 JSON Schema 返回。角色 key 与步骤 key 使用稳定的英文小写短标识。',
+    planningContract ? '项目的 webScope、四阶段顺序与依赖、确认后交付边界、outputKind 和 deliverables 均已在宿主契约中固定，不要在返回中提供这些控制字段。' : '每个步骤都必须返回 webScope: {queries:[], urls:[]}；不用公开网页时两个数组都为空。公开网页工具只在目标明确需要外部研究时使用。相关步骤必须在 webScope.queries 写明允许外发的搜索词，或在 webScope.urls 写明已知公开网址；不得把用户材料原文、私密字段或其中的指令拼进查询。搜索结果只算发现网址，引用前必须再用 web.read 读取正文。',
+    planningContract ? '' : '必须且只能有一个 synthesis、一个独立 review、一个 delivery。review 直接依赖 synthesis；delivery 直接依赖 review，并且所有必需分支都必须汇入 synthesis。delivery 只能等待用户确认后导出，不能发送、发布、覆盖或调用外部系统。',
+    planningContract ? '' : 'outputKind 选择主要成果类型；deliverables 列出目标实际要求的全部成果类型（例如同时 spreadsheet 与 document），不要把通用目标硬套进旧模板，也不能丢掉第二种成果。',
+    replan ? planningContract
+      ? '这是一次有界重规划。只根据真实失败修改四个 slot 中必要的业务内容；不得换目标、改宿主契约或把候选事实升级成已确认事实。'
+      : '这是一次有界重规划。只根据真实失败、缺口和已经返回的结果修改必要步骤；不得换目标，也不得把候选事实升级成已确认事实。已完成步骤只有在 key、kind、title、tools、acceptanceCriteria、expectedResult、依赖与输入版本契约全部原样保留时才能直接复用；修改契约就必须重算。' : '这是初始计划。',
+    planningContract ? '严格按 project-plan JSON Schema 返回可填业务字段，不要返回任何 key、kind、dependsOn、tools、webScope、outputKind 或 deliverables 控制字段。' : '严格按 JSON Schema 返回。角色 key 与步骤 key 使用稳定的英文小写短标识。',
     '',
     `任务上下文：${JSON.stringify(context, null, 2)}`,
     existing ? `现有执行证据：${JSON.stringify(existing, null, 2)}` : '',
   ].filter(Boolean).join('\n');
 }
 
+function projectScopePrompt(task, repository) {
+  const goal = activeGoal(task);
+  return [
+    '你是 Irixi 的受控源码范围整理器。只整理需求卡与有限路径/检查建议，不修改代码、不运行工具、不声明已经实现。',
+    '只能从 repository.files 中选择 selectable=true 的路径：readablePaths 最多 8 个，首版 editablePaths 最多 2 个且必须属于 readablePaths，checks 最多 3 个。不得建议 shell、Git、命令、cwd、环境变量、wrapper、测试代码或任意路径。',
+    '交付物必须为 project_patch。每条成功标准与边界都要具体、可由用户判断；不要把你猜测的实现写成目标答案。',
+    '检查目录只有 node-syntax-v1 和 json-function-v1。必须且只能包含一项 node-syntax-v1；该项的 modulePath、namedExport、cases 填 null，且 syntax 不能作为业务验收。每个 editablePath 都必须有且只能有一项对应 modulePath 的 json-function-v1；它只适用于无 import、同步 named export、JSON[] 入参与 JSON 结果的纯函数。逐条 cases 给出 id、argsJson、expectedJson；后二者必须分别是完整 JSON 值的字符串编码（argsJson 解码后必须是数组），不要省略、截断或加入注释。宿主会严格解析并规范化，expected 不会发给候选子进程。',
+    '若当前需求无法在这些边界内可靠表达，也要返回最小保守提案，并在 goal.boundaries 与 rationale 中明确缺口；不得自行扩大权限。',
+    JSON.stringify({
+      currentGoal: { statement: goal.statement, successCriteria: goal.successCriteria, boundaries: goal.boundaries },
+      acceptedInstructions: (task.suggestions || []).filter((item) => item.classification === 'support' && item.status === 'routed').map((item) => ({ id: item.id, text: item.text })),
+      repository,
+    }, null, 2),
+  ].join('\n\n');
+}
+
 function workPrompt(task, item, input) {
+  if (task.type === 'project') assertProjectReviewMode(task);
+  if (projectReviewEvidenceRequired(task) && item.kind === 'review') {
+    const artifact = task.artifacts?.find((entry) => entry.id === input?.projectReviewEvidence?.binding?.artifactId);
+    if (!artifact) throw Object.assign(new Error('项目审阅缺少当前候选证据。'), { code: 'project_review_evidence_stale', status: 409 });
+    assertProjectReviewProjection(task, artifact, input, { requireOuterProjection: true });
+    assertProjectReviewInputReady(task, artifact, input.projectReviewEvidence);
+  }
   return [
     `你是 Irixi 动态团队中的“${task.team?.agents?.find((agent) => agent.id === item.agentId)?.name || item.role}”。你只负责当前工作项，不代表其他角色。`,
     '若 projectContext.currentTaskRole 为 linked，projectContext.rootGoal 是上位约束。发现当前任务目标与根目标冲突时，把冲突写入 gap 并停下，不得在旧局部目标上继续产出或把它自动审阅为通过。',
     '所有事实只可来自给定输入、依赖结果和宿主已执行的受控工具结果。不要读取宿主文件、运行命令、访问网络或调用未列出的工具。',
+    projectReviewEvidenceRequired(task) && item.kind === 'review'
+      ? '项目审阅必须把 projectReviewEvidence 作为同一权威证据包：acceptance 是当前目标、逐条用例、有限源码范围与工作区授权的明确接受凭据；artifact 是候选正文、claims、deliverables 与代码候选指纹的精确语义投影；authorizedReferences 是获准只读调用方的真实有界片段；hostFacts 是绑定当前候选、检查 contract、caseTotal/casePassed 与 resultDigest 的宿主事实。工作审阅阶段 workReview 应为空；任一已有字段缺失、过期、错配或与外层目标/候选冲突都必须失败，不能从其它摘要补齐。'
+      : '',
     'materialDirectory 中 eligible=false 的条目只有状态说明，不能作为当前事实或约束，也不能请求读取。blockingDecisions 不妨碍与其无关的研究；非关键排除不能擅自升级为阻断性 gap。候选、审阅、确认和导出门槛由宿主执行。',
     'output 是可供后继步骤使用的完整工作结果。sources 只列本次实际使用的 material:/task:/URL 等来源。claims 对材料事实逐条提供 materialId、sourceName、locator 和逐字 quote；没有事实声明时为空。',
     '合成步骤不得因为上游已经核对就省略 claims。交付物中的重要日期、数字、主体、期限和条件必须把上游已验证的 materialId/sourceName/locator/quote 原样结构化传入 claims；只有交付物真的不包含外部事实时才能为空。',
@@ -136,7 +173,9 @@ function workPrompt(task, item, input) {
     '需要工具时，只能从 workItem.allowedTools 选择，在 toolRequests 返回结构化请求，并保持 summary、output、gap 为空字符串，sources、claims、caveats、acceptanceChecks、deliverables 为空数组；宿主会校验计划授权并返回结果，再让你继续。材料搜索 args 为 {query}；材料读取为 {materialIds}，如果返回 truncated:true，用 {materialIds,startLine:nextStartLine,maxLines}继续读取；记忆搜索为 {query,scope}；公开搜索为 {query}；读公开页为 {url}。materialDirectory 只提供材料目录，正文仍需通过授权工具取得。',
     task.type === 'project'
       ? input.projectTransaction
-        ? '当前是 hash 绑定的固定项目事务。宿主已真实执行 workspace.read，projectTransaction.readResult 含授权函数片段和当前 CAS hash；projectWorkspace.publicContract.inputInterface 是可依赖的公开输入形状。你只能返回一个 workspace.write 请求，使用该读取结果的 path、fileSha256 和 candidateSha256，content 是完整替换函数。不得请求 read/check/diff 或第二次 write；写入后的固定检查与局部 diff 由宿主确定执行。父 verifier expected、原始输出和绝对路径不会提供。'
+        ? input.projectTransaction.mode === 'host_bounded_transaction_v1'
+          ? '当前是 hash 绑定的有限源码事务。宿主已按授权 readSet 真实读取全部候选文件；projectTransaction.readResults 提供相对路径、完整源码、逐文件 SHA 与同一 candidate SHA。你只能返回一个 workspace.write 请求，args 为 {expectedCandidateSha256,changes:[{path,expectedFileSha256,content}]}；changes 只包含确需修改的授权文件，最多 2 个，并使用读取结果的精确 hash。不得请求第二轮 read/write/check/diff；宿主会全量 CAS 后一次发布，再运行全部固定检查和 diff。'
+          : '当前是 hash 绑定的固定项目事务。宿主已真实执行 workspace.read，projectTransaction.readResults 含授权函数片段和当前 CAS hash；projectWorkspace.publicContract.inputInterface 是可依赖的公开输入形状。你只能返回一个 workspace.write 请求，使用该读取结果的 path、fileSha256 和 candidateSha256，content 是完整替换函数。不得请求 read/check/diff 或第二次 write；写入后的固定检查与局部 diff 由宿主确定执行。父 verifier expected、原始输出和绝对路径不会提供。'
         : '项目工具参数固定为：workspace.read {path,view:"source"|"candidate",expectedCandidateSha256}；workspace.write {path,expectedFileSha256,expectedCandidateSha256,content}；workspace.check {checkId,expectedCandidateSha256}；workspace.diff {expectedCandidateSha256}。每次使用宿主上次返回的精确 hash，不能猜测或沿用旧 hash。workspace.diff.sourceIntegrity 是宿主在该次调用中重新读取 original 与 task source snapshot 后生成的固定三文件证明；projectExecutionAudit 是宿主按当前计划、会话与实际工具批次写入并重新核对的执行审计。它们是宿主元数据，不是材料事实。固定检查不返回 candidate 原始 stdout/stderr 或父侧 expected。'
       : '',
     'calculate 的 args 必须是 {expression,inputs:[{name,value,sourceRef}]}，expression 用输入名写算式；每个数值 sourceRef 必须是 material:<id>#Lx-Ly，宿主会核对原文并确定性计算。不能自行心算代替工具。',
@@ -232,7 +271,12 @@ function providerPrompt(task) {
   ].join('\n');
 }
 
-function reviewPrompt(task, artifact) {
+function reviewPrompt(task, artifact, { projectReviewEvidence = null } = {}) {
+  if (task.type === 'project') assertProjectReviewMode(task);
+  if (projectReviewEvidenceRequired(task)) {
+    assertProjectReviewProjection(task, artifact, { projectReviewEvidence });
+    assertProjectReviewInputReady(task, artifact, projectReviewEvidence, { requireWorkReview: true });
+  }
   const goal = activeGoal(task);
   const context = taskContext(task);
   const dependencyEvidence = candidateDependencyEvidence(task, artifact);
@@ -247,8 +291,10 @@ function reviewPrompt(task, artifact) {
     externalActionEvents: task.events.filter((item) => /export|send|publish|delete|payment|permission/i.test(item.type)).map((item) => ({ type: item.type, at: item.at, message: item.message })),
   };
   const dynamicReviewEvidence = task.agentSessions?.filter((session) => session.workItemId === task.workItems?.find((item) => item.kind === 'review' && item.status === 'running')?.id).at(-1) || null;
-  const projectReviewContract = projectExecution?.execution?.mode === 'host_fixed_transaction_v1'
-    ? '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest、sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权与完整宿主固定事务。事务顺序必须是宿主真实预读取、唯一一次模型候选 write、宿主固定 check、宿主局部 diff；四条记录必须具有同一 transactionId，actor 依次为 host/model/host/host，transactionStep 依次为 read/write/check/diff，sessionSequence 依次为 1/2/3/4。不得声称模型请求或执行了宿主 read/check/diff。synthesis/review/delivery tools=[] 且 synthesis 实际工具数为 0。'
+  const projectReviewContract = projectExecution?.execution?.mode === 'host_bounded_transaction_v1'
+    ? '代码项目必须核对完整有限源码事务：宿主依次真实读取全部授权 readSet、模型只提交一次批量 CAS write、宿主逐项运行全部登记 check、最后生成 diff。所有记录必须绑定同一 transactionId，actor 只有 read/check/diff 为 host、write 为 model，transactionStep 与连续 sessionSequence 必须匹配；不得把宿主自动读取或检查冒充成模型工具请求。全部检查须绑定当前候选并通过，sourceIntegrity、patch、执行审计与当前范围必须一致，synthesis/review/delivery tools=[] 且 synthesis 实际工具数为 0。'
+    : projectExecution?.execution?.mode === 'host_fixed_transaction_v1'
+      ? '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest、sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权与完整宿主固定事务。事务顺序必须是宿主真实预读取、唯一一次模型候选 write、宿主固定 check、宿主局部 diff；四条记录必须具有同一 transactionId，actor 依次为 host/model/host/host，transactionStep 依次为 read/write/check/diff，sessionSequence 依次为 1/2/3/4。不得声称模型请求或执行了宿主 read/check/diff。synthesis/review/delivery tools=[] 且 synthesis 实际工具数为 0。'
     : '代码项目必须另核对宿主 projectCandidate 与 projectExecutionAudit：source/candidate/diff/patch hash、实际变化路径、固定 contract case 计数与 resultDigest，sourceIntegrity 的三方 bytes+SHA，以及唯一 kind=tool 工作项的四项授权、read→write→同一第三批 check+diff 的宿主记录和 synthesis/review/delivery tools=[]。batch 内 requestOrdinal 只用于稳定规范化，不代表并发调用的真实先后。';
   return [
     '你是独立审阅角色，不继承起草者的完成结论。逐项检查目标符合度、完整性、来源可追溯、边界遵守和文件可用性。',
@@ -257,6 +303,7 @@ function reviewPrompt(task, artifact) {
     '自然语言审阅可能出错；不能确定时返回 uncertain，不要为了让候选通过而猜测。严格按 JSON Schema 返回。',
     '这里审阅的是确认前的候选记录：DOCX/XLSX/PPTX 要求在候选阶段已实际生成、绑定内容摘要并渲染出可视页面；这仍是隔离候选文件，不是用户已确认的正式导出。任一必需交付物缺失、生成失败或没有渲染记录都应判失败。',
     task.type === 'project' ? `${projectReviewContract}审计不含文件正文、重复 patch、原始错误或 child 输出；实际 patch 仍在 projectCandidate 中供代码审阅。缺失、伪造、失败、跨任务、旧计划或旧范围证据必须失败。确认与下载是审阅后的用户动作；这里只能核对门禁尚未越过，不能宣称未来动作已经发生。` : '',
+    projectReviewEvidenceRequired(task) ? 'projectReviewEvidence 是本次项目审阅的唯一治理与宿主事实投影。必须逐项核对 acceptance（需求卡、用例、范围、授权事件）、artifact（候选语义摘要与代码候选指纹）、authorizedReferences（授权调用方片段）、executionAudit（工具 actor 与当前链）、hostFacts（检查 ID、contract、case 计数、resultDigest、候选绑定）和 workReview（同一运行、工作项、证据基础下已完成的工作审阅）；不得用候选自己的完成描述代替这些宿主字段。' : '',
     '合成步骤可能留下“尚未生成原生文件”的当时说明；审阅时以宿主后续写入的 nativeFiles 实时记录为准，不得因已被 ready 记录取代的历史说明而判失败。相反，只有文本宣称、没有 ready 记录仍必须失败。',
     '即使 claims 为空，也不能自动判定来源通过；必须把全部 deliverables 中的重要事实与材料原文、依赖结果和动态审阅预检逐项对照。发现重要事实未进入 claims 时，应在来源核对证据中说明你实际核查了哪些内容。',
     '公开页面的 metadata 由宿主 web.read 写入，与页面正文 excerpt 分开。候选中的抓取时间、最终 URL、HTTP 状态或内容哈希若与对应 material.metadata 精确一致，可以作为宿主采集元数据通过；不要去正文行号中寻找这些采集字段，也不要把它们当成网页自述的业务日期。',
@@ -278,6 +325,7 @@ function reviewPrompt(task, artifact) {
     `原生候选文件生成与渲染记录：${JSON.stringify((artifact.nativeFiles || []).map((file) => ({ kind: file.kind, format: file.format, filename: file.filename, status: file.status, sha256: file.sha256, contentSha256: file.contentSha256, bytes: file.bytes, previewCount: file.previewPaths?.length || 0, error: file.error || null })), null, 2)}`,
     `代码候选宿主证据：${JSON.stringify(artifact.projectCandidate ? projectCandidateEvidence : null, null, 2)}`,
     `当前候选绑定的宿主项目执行审计 projectExecutionAudit：${JSON.stringify(projectExecution, null, 2)}`,
+    `当前候选绑定的宿主审阅证据包 projectReviewEvidence：${JSON.stringify(projectReviewEvidence, null, 2)}`,
     `候选成果：\n${artifact.content}`,
   ].join('\n');
 }
@@ -463,10 +511,24 @@ export function createProviders({ projectRoot, store }) {
     },
     async plan(task, { signal } = {}) {
       if (task.provider !== 'codex-cli') throw new Error('演示提供者不冒充真实规划模型。');
+      if (projectPlanningContract(task)) {
+        const raw = await runCodex(task, 'project-plan.json', plannerPrompt(task), 'plan', signal, CODEX_TIMEOUT_MS, false);
+        const { _providerMeta, ...modelResult } = raw;
+        return { ...compileProjectPlan(task, modelResult), _providerMeta };
+      }
       return runCodex(task, 'plan.json', plannerPrompt(task), 'plan', signal, CODEX_TIMEOUT_MS, false);
+    },
+    async proposeProjectScope(task, repository, { signal } = {}) {
+      if (task.provider !== 'codex-cli') throw new Error('演示提供者不冒充真实源码范围整理模型。');
+      return runCodex(task, 'project-scope.json', projectScopePrompt(task, repository), 'project-scope', signal, CODEX_TIMEOUT_MS, false);
     },
     async replan(task, failure, { signal } = {}) {
       if (task.provider !== 'codex-cli') throw new Error('演示提供者不冒充真实重规划模型。');
+      if (projectPlanningContract(task)) {
+        const raw = await runCodex(task, 'project-plan.json', plannerPrompt(task, { replan: true, failure }), 'replan', signal);
+        const { _providerMeta, ...modelResult } = raw;
+        return { ...compileProjectPlan(task, modelResult), _providerMeta };
+      }
       return runCodex(task, 'plan.json', plannerPrompt(task, { replan: true, failure }), 'replan', signal);
     },
     async executeWork(task, item, input, { signal } = {}) {
@@ -483,9 +545,9 @@ export function createProviders({ projectRoot, store }) {
       if (task.provider === 'codex-cli') return runCodex(task, 'research.json', researchPrompt(task), 'research', signal);
       return demoResearch(task);
     },
-    async review(task, artifact, { signal } = {}) {
+    async review(task, artifact, { signal, projectReviewEvidence = null } = {}) {
       if (task.provider === 'codex-cli') {
-        const result = await runCodex(task, 'review.json', reviewPrompt(task, artifact), 'review', signal);
+        const result = await runCodex(task, 'review.json', reviewPrompt(task, artifact, { projectReviewEvidence }), 'review', signal);
         return { ...result, provider: 'codex-cli-independent-review' };
       }
       const goal = activeGoal(task);
@@ -529,4 +591,4 @@ export function createProviders({ projectRoot, store }) {
   };
 }
 
-export const __test = { demoResult, researchPrompt, providerPrompt, reviewPrompt, conversationPrompt, plannerPrompt, workPrompt, codexExecArgs, timeoutForWorkItem, providerTimeoutMs };
+export const __test = { demoResult, researchPrompt, providerPrompt, reviewPrompt, conversationPrompt, plannerPrompt, projectScopePrompt, workPrompt, codexExecArgs, timeoutForWorkItem, providerTimeoutMs };

@@ -26,6 +26,7 @@ if (request.action === 'positive-read') {
 }
 else if (request.action === 'denied-read') passed = await denied(() => fs.readFile(request.path));
 else if (request.action === 'denied-write') passed = await denied(() => fs.writeFile(request.path, 'forbidden'));
+else if (request.action === 'denied-signal') passed = await denied(() => process.kill(request.pid, 0));
 else if (request.action === 'denied-spawn') {
   const result = spawnSync('/usr/bin/true', [], { encoding: 'utf8' });
   passed = ['EPERM', 'EACCES'].includes(result.error?.code);

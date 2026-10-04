@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   acceptGoalReplacement,
+  acceptProjectScopeProposal,
   activeGoal,
   addMaterial,
   addSuggestion,
@@ -61,6 +62,7 @@ import {
   beginWorkItem,
   completeWork,
   completeWorkItem,
+  assertProjectReviewInputReady,
   createTrustedProjectReviewFacts,
   failWork,
   failWorkItem,
@@ -76,7 +78,9 @@ import {
   validateClaim,
   validateResearchResult,
 } from './execution.mjs';
-import { createProjectWorkspaceHost, projectWorkspaceFingerprint, projectWorkspaceIsCurrent } from './project-workspace.mjs';
+import { createProjectWorkspaceHost, projectTaskBinding, projectWorkspaceFingerprint, projectWorkspaceIsCurrent } from './project-workspace.mjs';
+import { acceptedProposalCurrent, publicProjectScope, validateProjectScopeResult } from './project-scope.mjs';
+import { assertProjectReviewEvidenceCurrent, assertProjectReviewMode, assertProjectReviewProjection, buildProjectReviewEvidence, projectReviewEvidenceRequired } from './project-review-evidence.mjs';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(moduleDir, '..');
@@ -589,35 +593,82 @@ async function parseUploadedMaterial(taskDir, input) {
   return { name, kind: 'pdf', source: `local-file:${name}`, text, bytes: bytes.length };
 }
 
-async function callProviderStep(store, providers, taskId, role, method, signal, artifactId = null) {
+function reviewArtifactForItem(task, item, artifactId = null) {
+  if (artifactId) return task.artifacts.find((entry) => entry.id === artifactId) || null;
+  if (item?.manualReviewOfArtifactId) return task.artifacts.find((entry) => entry.id === item.manualReviewOfArtifactId) || null;
+  for (const dependencyId of item?.dependsOn || []) {
+    const dependency = task.workItems.find((entry) => entry.id === dependencyId);
+    if (dependency?.result?.artifactId) return task.artifacts.find((entry) => entry.id === dependency.result.artifactId) || null;
+  }
+  return task.artifacts.filter((entry) => entry.goalVersionId === activeGoal(task).id && entry.projectCandidate).at(-1) || null;
+}
+
+async function prepareProjectReviewEvidence(task, item, artifact, taskDir, projectWorkspaceHost, { requireWorkReview = false } = {}) {
+  if (!projectReviewEvidenceRequired(task)) return null;
+  if (!artifact) throw Object.assign(new Error('项目审阅缺少当前候选。'), { code: 'project_review_evidence_stale', status: 409 });
+  await projectWorkspaceHost.assertArtifactFilesCurrent(task, taskDir, artifact);
+  assertProjectExecutionAuditCurrent(task, artifact);
+  const packet = buildProjectReviewEvidence(task, artifact);
+  assertProjectReviewProjection(task, artifact, { projectReviewEvidence: packet });
+  assertProjectReviewInputReady(task, artifact, packet, { requireWorkReview });
+  return packet;
+}
+
+async function assertStoredProjectReviewEvidence(task, artifact, taskDir, projectWorkspaceHost) {
+  const packet = await prepareProjectReviewEvidence(task, null, artifact, taskDir, projectWorkspaceHost, { requireWorkReview: true });
+  const latestReview = task.reviews.filter((entry) => entry.artifactId === artifact.id).at(-1);
+  if (!latestReview?.passed
+    || latestReview.projectReviewEvidenceSha256 !== packet.packetSha256
+    || latestReview.projectArtifactSemanticSha256 !== packet.binding.artifactSemanticSha256
+    || latestReview.projectWorkReviewEvidenceSha256 !== packet.workReview?.resultDigest) {
+    throw Object.assign(new Error('当前代码候选缺少同一宿主审阅证据包下的有效独立审阅。'), { code: 'project_review_evidence_stale', status: 409 });
+  }
+  return packet;
+}
+
+async function callProviderStep(store, providers, projectWorkspaceHost, taskId, role, method, signal, artifactId = null) {
   while (true) {
     let callId = null;
     let task;
+    let projectReviewEvidence = null;
     if (signal.aborted) { const error = new Error('运行已取消。'); error.code = 'cancelled'; throw error; }
     if (method === 'generate' || method === 'review') {
       const current = await store.get(taskId);
       assertNoCriticalMaterialDecision(current, method === 'review' ? '独立审阅' : '候选成果');
     }
-    if ((await store.get(taskId)).provider === 'codex-cli') {
+    const beforeReserve = await hydrateProjectContext(store, await store.get(taskId));
+    if (method === 'review' && beforeReserve.type === 'project') assertProjectReviewMode(beforeReserve);
+    if (method === 'review' && projectReviewEvidenceRequired(beforeReserve)) {
+      const artifact = beforeReserve.artifacts.find((entry) => entry.id === artifactId);
+      projectReviewEvidence = await prepareProjectReviewEvidence(beforeReserve, null, artifact, store.taskDir(taskId), projectWorkspaceHost, { requireWorkReview: true });
+    }
+    if (beforeReserve.provider === 'codex-cli') {
       const reserved = await store.mutate(taskId, (draft) => {
+        if (projectReviewEvidence) {
+          const artifact = draft.artifacts.find((entry) => entry.id === artifactId);
+          assertProjectReviewProjection(draft, artifact, { projectReviewEvidence });
+        }
         const call = reserveModelCall(draft, role);
         event(draft, 'model.call', `${role} 已占用第 ${draft.execution.modelCalls.length}/${draft.execution.limits.maxModelCalls} 次模型调用。`, { callId: call.id, role, usage: 'unknown' });
         return call;
       });
       callId = reserved.result.id;
-      task = reserved.task;
+      task = method === 'review' ? beforeReserve : reserved.task;
     } else {
-      task = await store.get(taskId);
+      task = beforeReserve;
     }
-    task = await hydrateProjectContext(store, task);
+    if (method !== 'review') task = await hydrateProjectContext(store, task);
     try {
       if (method === 'generate' || method === 'review') assertNoCriticalMaterialDecision(task, method === 'review' ? '独立审阅' : '候选成果');
       const artifact = artifactId ? task.artifacts.find((item) => item.id === artifactId) : null;
+      if (projectReviewEvidence) assertProjectReviewProjection(task, artifact, { projectReviewEvidence });
       const result = method === 'review'
-        ? await providers.review(task, artifact, { signal })
+        ? await providers.review(task, artifact, { signal, projectReviewEvidence })
         : await providers[method](task, { signal });
       if (callId) await store.mutate(taskId, (draft) => finishModelCall(draft, callId, { status: 'completed', usage: result?._providerMeta?.usage || 'unknown' }));
-      return result;
+      return projectReviewEvidence
+        ? { ...result, _hostProjectReviewEvidenceSha256: projectReviewEvidence.packetSha256 }
+        : result;
     } catch (error) {
       const changed = await store.mutate(taskId, (draft) => {
         if (callId) finishModelCall(draft, callId, { status: error.code === 'cancelled' ? 'cancelled' : 'failed', error: error.message });
@@ -634,29 +685,71 @@ async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, w
   const initial = await store.get(taskId);
   const initialItem = initial.workItems.find((candidate) => candidate.id === workItemId);
   if (initial.type === 'project' && initialItem?.kind === 'tool'
-    && initial.projectWorkspace?.executionMode === 'host_fixed_transaction_v1') {
+    && ['host_fixed_transaction_v1', 'host_bounded_transaction_v1'].includes(initial.projectWorkspace?.executionMode)) {
     return callFixedProjectTransaction(store, providers, projectWorkspaceHost, taskId, workItemId, signal, runId);
   }
   let toolResults = [];
   const seenRequestIds = new Set();
   for (let round = 0; round < 4; round += 1) {
     if (signal.aborted) throw Object.assign(new Error('运行已取消。'), { code: 'cancelled' });
-    const prepared = await store.mutate(taskId, (task) => {
-      const item = task.workItems.find((candidate) => candidate.id === workItemId);
-      const session = workSession(task, workItemId);
-      assertSessionFresh(task, session, { runId });
-      if (!item || item.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
-      if (item.kind === 'synthesis') assertNoCriticalMaterialDecision(task, '候选成果');
+    const beforeReserve = await hydrateProjectContext(store, await store.get(taskId));
+    const beforeItem = beforeReserve.workItems.find((candidate) => candidate.id === workItemId);
+    if (beforeReserve.type === 'project' && beforeItem?.kind === 'review') assertProjectReviewMode(beforeReserve);
+    const reviewArtifact = projectReviewEvidenceRequired(beforeReserve) && beforeItem?.kind === 'review'
+      ? reviewArtifactForItem(beforeReserve, beforeItem)
+      : null;
+    const projectReviewEvidence = reviewArtifact
+      ? await prepareProjectReviewEvidence(beforeReserve, beforeItem, reviewArtifact, store.taskDir(taskId), projectWorkspaceHost)
+      : null;
+    let prepared;
+    let providerTask;
+    let providerInput;
+    if (projectReviewEvidence) {
+      const beforeSession = workSession(beforeReserve, workItemId);
+      assertSessionFresh(beforeReserve, beforeSession, { runId });
+      if (!beforeItem || beforeItem.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
       const attemptId = `${runId}:${workItemId}:${round + 1}`;
-      const input = sessionInput(task, item, toolResults, []);
-      markSession(task, workItemId, 'running', { runId, attemptId, input, toolCalls: session.toolCalls || [] });
-      const call = reserveModelCall(task, item.role);
-      event(task, 'model.call', `${item.title} 已占用第 ${task.execution.modelCalls.length}/${task.execution.limits.maxModelCalls} 次模型调用。`, { callId: call.id, role: item.role, agentId: item.agentId, workItemId, round: round + 1 });
-      return { item: structuredClone(item), input, callId: call.id, attemptId, planRevision: task.plan.revision, maxToolRounds: task.execution.limits.maxToolRoundsPerStep };
-    });
-    try {
-      const providerTask = await hydrateProjectContext(store, prepared.task);
-      const providerInput = {
+      const input = sessionInput(beforeReserve, beforeItem, toolResults, []);
+      input.projectReviewEvidence = structuredClone(projectReviewEvidence);
+      providerInput = {
+        ...input,
+        projectContext: beforeReserve.projectContext,
+        linkedTaskContext: beforeReserve.linkedTaskContext,
+        continuity: deriveTaskContinuity(beforeReserve),
+      };
+      assertProjectReviewProjection(beforeReserve, reviewArtifact, providerInput, { requireOuterProjection: true });
+      prepared = await store.mutate(taskId, async (task) => {
+        await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
+        const item = task.workItems.find((candidate) => candidate.id === workItemId);
+        const session = workSession(task, workItemId);
+        assertSessionFresh(task, session, { runId });
+        if (!item || item.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
+        const artifact = task.artifacts.find((entry) => entry.id === projectReviewEvidence.binding.artifactId);
+        assertProjectReviewProjection(task, artifact, providerInput, { requireOuterProjection: true });
+        markSession(task, workItemId, 'running', { runId, attemptId, input: providerInput, toolCalls: session.toolCalls || [] });
+        const call = reserveModelCall(task, item.role);
+        event(task, 'model.call', `${item.title} 已占用第 ${task.execution.modelCalls.length}/${task.execution.limits.maxModelCalls} 次模型调用。`, { callId: call.id, role: item.role, agentId: item.agentId, workItemId, round: round + 1 });
+        return { item: structuredClone(item), input: providerInput, callId: call.id, attemptId, planRevision: task.plan.revision, maxToolRounds: task.execution.limits.maxToolRoundsPerStep };
+      });
+      providerTask = await hydrateProjectContext(store, prepared.task);
+      const artifact = providerTask.artifacts.find((entry) => entry.id === projectReviewEvidence.binding.artifactId);
+      assertProjectReviewProjection(providerTask, artifact, providerInput, { requireOuterProjection: true });
+    } else {
+      prepared = await store.mutate(taskId, (task) => {
+        const item = task.workItems.find((candidate) => candidate.id === workItemId);
+        const session = workSession(task, workItemId);
+        assertSessionFresh(task, session, { runId });
+        if (!item || item.status !== 'running') throw Object.assign(new Error('工作项已经不在当前运行中。'), { code: 'stale_result' });
+        if (item.kind === 'synthesis') assertNoCriticalMaterialDecision(task, '候选成果');
+        const attemptId = `${runId}:${workItemId}:${round + 1}`;
+        const input = sessionInput(task, item, toolResults, []);
+        markSession(task, workItemId, 'running', { runId, attemptId, input, toolCalls: session.toolCalls || [] });
+        const call = reserveModelCall(task, item.role);
+        event(task, 'model.call', `${item.title} 已占用第 ${task.execution.modelCalls.length}/${task.execution.limits.maxModelCalls} 次模型调用。`, { callId: call.id, role: item.role, agentId: item.agentId, workItemId, round: round + 1 });
+        return { item: structuredClone(item), input, callId: call.id, attemptId, planRevision: task.plan.revision, maxToolRounds: task.execution.limits.maxToolRoundsPerStep };
+      });
+      providerTask = await hydrateProjectContext(store, prepared.task);
+      providerInput = {
         ...prepared.result.input,
         projectContext: providerTask.projectContext,
         linkedTaskContext: providerTask.linkedTaskContext,
@@ -666,18 +759,30 @@ async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, w
         providerInput.projectSourceIntegrity = await projectWorkspaceHost.currentSourceIntegrity(providerTask, store.taskDir(taskId));
         providerInput.projectExecutionAudit = projectExecutionAudit(providerTask, { synthesisWorkItemId: prepared.result.item.id });
       }
-      await store.mutate(taskId, async (task) => {
-        await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
-        const session = workSession(task, workItemId);
-        assertSessionFresh(task, session, { runId, attemptId: prepared.result.attemptId });
-        session.input = structuredClone(providerInput);
-        session.updatedAt = new Date().toISOString();
-      });
+    }
+    try {
+      if (projectReviewEvidence) {
+        const artifact = providerTask.artifacts.find((entry) => entry.id === projectReviewEvidence.binding.artifactId);
+        assertProjectReviewProjection(providerTask, artifact, providerInput, { requireOuterProjection: true });
+      } else await store.mutate(taskId, async (task) => {
+          await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
+          const session = workSession(task, workItemId);
+          assertSessionFresh(task, session, { runId, attemptId: prepared.result.attemptId });
+          session.input = structuredClone(providerInput);
+          session.updatedAt = new Date().toISOString();
+        });
       const result = await providers.executeWork(providerTask, prepared.result.item, providerInput, { signal });
       await store.mutate(taskId, async (task) => {
         await assertProjectGoalFresh(store, task, providerInput.projectRootGoalVersionId, providerInput.projectRootInputFingerprint);
         const session = workSession(task, workItemId);
         assertSessionFresh(task, session, { runId, attemptId: prepared.result.attemptId });
+        if (projectReviewEvidence) {
+          const artifact = task.artifacts.find((entry) => entry.id === projectReviewEvidence.binding.artifactId);
+          assertProjectReviewEvidenceCurrent(task, artifact, projectReviewEvidence);
+          if (session.input?.projectReviewEvidence?.packetSha256 !== projectReviewEvidence.packetSha256) {
+            throw Object.assign(new Error('项目审阅工作收到的证据投影已变化。'), { code: 'stale_result', status: 409 });
+          }
+        }
         finishModelCall(task, prepared.result.callId, { status: 'completed', usage: result?._providerMeta?.usage || 'unknown' });
       });
       const requests = Array.isArray(result.toolRequests) ? result.toolRequests : [];
@@ -691,7 +796,14 @@ async function callDynamicWork(store, providers, projectWorkspaceHost, taskId, w
         if (error.code === 'work_gap') throw error;
         protocolError = error.message;
       }
-      if (!requests.length && !protocolError) return result;
+      if (!requests.length && !protocolError) return projectReviewEvidence
+        ? {
+          ...result,
+          _hostProjectReviewEvidenceSha256: projectReviewEvidence.packetSha256,
+          _hostProjectReviewEvidenceBasisSha256: projectReviewEvidence.evidenceBasisSha256,
+          _hostProjectArtifactSemanticSha256: projectReviewEvidence.binding.artifactSemanticSha256,
+        }
+        : result;
       if (round >= prepared.result.maxToolRounds) throw new Error(protocolError || '模型在工具往返上限后仍未形成工作结果。');
       for (const request of requests) {
         if (seenRequestIds.has(request.id)) throw new Error(`模型重复了工具请求 ${request.id}。`);
@@ -769,7 +881,7 @@ async function callFixedProjectTransaction(store, providers, projectWorkspaceHos
     markSession(task, workItemId, 'running', { runId, attemptId, toolCalls: session.toolCalls || [] });
     const current = workSession(task, workItemId);
     current.projectTransaction = {
-      id: transactionId, mode: 'host_fixed_transaction_v1', status: 'reading', modelInvocationCount: 0,
+      id: transactionId, mode: task.projectWorkspace.executionMode, status: 'reading', modelInvocationCount: 0,
       publicContractFingerprint: task.projectWorkspace.publicContractFingerprint,
       workspaceScopeFingerprint: task.projectWorkspace.scopeFingerprint,
       sourceSnapshotSha256: task.projectWorkspace.sourceSnapshotSha256,
@@ -805,26 +917,33 @@ async function callFixedProjectTransaction(store, providers, projectWorkspaceHos
   };
 
   try {
+    const generic = opened.task.projectWorkspace?.executionMode === 'host_bounded_transaction_v1';
     const candidate = opened.task.projectWorkspace?.candidate;
-    const path = opened.task.projectWorkspace?.editablePaths?.[0];
-    const readRequest = {
-      id: `host-${transactionId}-read`, tool: 'workspace.read',
-      args: { path, view: 'candidate', expectedCandidateSha256: candidate?.candidateSha256 },
-    };
-    const readEntry = await execute(readRequest, { actor: 'host', step: 'read', sequence: 1 });
+    const readPaths = generic ? opened.task.projectWorkspace.readablePaths : [opened.task.projectWorkspace?.editablePaths?.[0]];
+    const readEntries = [];
+    for (const [index, relative] of readPaths.entries()) {
+      const readRequest = {
+        id: `host-${transactionId}-read-${index + 1}`, tool: 'workspace.read',
+        args: { path: relative, view: 'candidate', expectedCandidateSha256: candidate?.candidateSha256 },
+      };
+      readEntries.push(await execute(readRequest, { actor: 'host', step: 'read', sequence: index + 1 }));
+    }
     const prepared = await store.mutate(taskId, (task) => {
       const item = task.workItems.find((candidateItem) => candidateItem.id === workItemId);
       const session = workSession(task, workItemId);
       assertSessionFresh(task, session, { runId, attemptId });
-      if (task.projectWorkspace?.candidate?.candidateSha256 !== readEntry.result.candidateSha256) throw Object.assign(new Error('候选已在读取后变化。'), { code: 'stale_result' });
-      const input = sessionInput(task, item, [readEntry], []);
+      if (readEntries.some((entry) => task.projectWorkspace?.candidate?.candidateSha256 !== entry.result.candidateSha256)) throw Object.assign(new Error('候选已在读取后变化。'), { code: 'stale_result' });
+      const input = sessionInput(task, item, readEntries, []);
       input.projectTransaction = {
         id: transactionId,
-        mode: 'host_fixed_transaction_v1',
+        mode: task.projectWorkspace.executionMode,
         publicContractFingerprint: task.projectWorkspace.publicContractFingerprint,
-        readResult: structuredClone(readEntry.result),
+        readResults: readEntries.map((entry) => structuredClone(entry.result)),
+        readResult: generic ? null : structuredClone(readEntries[0]?.result || null),
         requiredModelAction: 'one_workspace_write',
-        hostNextActions: ['workspace.check', 'workspace.diff'],
+        hostNextActions: generic
+          ? [...task.projectWorkspace.checks.map((entry) => `workspace.check:${entry.id}`), 'workspace.diff']
+          : ['workspace.check', 'workspace.diff'],
       };
       const call = reserveModelCall(task, item.role);
       session.input = structuredClone(input);
@@ -858,29 +977,35 @@ async function callFixedProjectTransaction(store, providers, projectWorkspaceHos
       if (error.code === 'cancelled' || error.code === 'stale_result') throw error;
       throw fixedTransactionError('候选生成未完成，固定项目事务已停止。');
     }
-    validateWorkResult(prepared.result.item, result, { toolCalls: [readEntry] });
+    validateWorkResult(prepared.result.item, result, { toolCalls: readEntries });
     const requests = Array.isArray(result.toolRequests) ? result.toolRequests : [];
     if (requests.length !== 1 || requests[0].tool !== 'workspace.write') {
       throw fixedTransactionError('固定项目事务只接受一个候选 workspace.write，不会隐式追加工具轮次。');
     }
-    const writeEntry = await execute(requests[0], { actor: 'model', step: 'write', sequence: 2 });
+    const writeSequence = readEntries.length + 1;
+    const writeEntry = await execute(requests[0], { actor: 'model', step: 'write', sequence: writeSequence });
     const currentCandidateSha256 = writeEntry.result.candidateSha256;
-    const checkRequest = {
-      id: `host-${transactionId}-check`, tool: 'workspace.check',
-      args: { checkId: providerTask.projectWorkspace.checks[0].id, expectedCandidateSha256: currentCandidateSha256 },
-    };
-    const checkEntry = await execute(checkRequest, { actor: 'host', step: 'check', sequence: 3 });
+    const checkEntries = [];
+    for (const [index, descriptor] of providerTask.projectWorkspace.checks.entries()) {
+      const checkRequest = {
+        id: `host-${transactionId}-check-${index + 1}`, tool: 'workspace.check',
+        args: { checkId: descriptor.id, expectedCandidateSha256: currentCandidateSha256 },
+      };
+      checkEntries.push(await execute(checkRequest, { actor: 'host', step: 'check', sequence: writeSequence + index + 1 }));
+    }
+    const diffSequence = writeSequence + checkEntries.length + 1;
     const diffRequest = {
       id: `host-${transactionId}-diff`, tool: 'workspace.diff',
       args: { expectedCandidateSha256: currentCandidateSha256 },
     };
-    const diffEntry = await execute(diffRequest, { actor: 'host', step: 'diff', sequence: 4 });
-    if (checkEntry.result.passed !== true) {
-      throw fixedTransactionError(`固定业务检查未通过（${checkEntry.result.casePassed}/${checkEntry.result.caseTotal}）；候选和诊断已保留，不会隐式重试。`, 'project_verification_failed', {
-        checkId: checkEntry.result.checkId,
-        casePassed: checkEntry.result.casePassed,
-        caseTotal: checkEntry.result.caseTotal,
-        resultDigest: checkEntry.result.resultDigest,
+    const diffEntry = await execute(diffRequest, { actor: 'host', step: 'diff', sequence: diffSequence });
+    const failedCheck = checkEntries.find((entry) => entry.result.passed !== true);
+    if (failedCheck) {
+      throw fixedTransactionError(`固定业务检查未通过（${failedCheck.result.casePassed}/${failedCheck.result.caseTotal}）；候选和诊断已保留，不会隐式重试。`, 'project_verification_failed', {
+        checkId: failedCheck.result.checkId,
+        casePassed: failedCheck.result.casePassed,
+        caseTotal: failedCheck.result.caseTotal,
+        resultDigest: failedCheck.result.resultDigest,
         candidateSha256: currentCandidateSha256,
         diffSha256: diffEntry.result.diffSha256,
       });
@@ -889,18 +1014,14 @@ async function callFixedProjectTransaction(store, providers, projectWorkspaceHos
       const session = workSession(task, workItemId);
       assertSessionFresh(task, session, { runId, attemptId });
       session.projectTransaction.status = 'passed';
-      session.projectTransaction.checkId = checkEntry.result.checkId;
-      session.projectTransaction.resultDigest = checkEntry.result.resultDigest;
+      session.projectTransaction.checks = checkEntries.map((entry) => ({ checkId: entry.result.checkId, resultDigest: entry.result.resultDigest, casePassed: entry.result.casePassed, caseTotal: entry.result.caseTotal }));
       session.projectTransaction.candidateSha256 = currentCandidateSha256;
       session.projectTransaction.diffSha256 = diffEntry.result.diffSha256;
       session.updatedAt = new Date().toISOString();
     });
     const evidence = {
       transactionId,
-      checkId: checkEntry.result.checkId,
-      casePassed: checkEntry.result.casePassed,
-      caseTotal: checkEntry.result.caseTotal,
-      resultDigest: checkEntry.result.resultDigest,
+      checks: checkEntries.map((entry) => ({ checkId: entry.result.checkId, casePassed: entry.result.casePassed, caseTotal: entry.result.caseTotal, resultDigest: entry.result.resultDigest })),
       candidateSha256: currentCandidateSha256,
       diffSha256: diffEntry.result.diffSha256,
       regionIntegritySha256: diffEntry.result.regionIntegrity?.integritySha256 || null,
@@ -930,35 +1051,44 @@ async function callFixedProjectTransaction(store, providers, projectWorkspaceHos
   }
 }
 
-async function callDynamicReview(store, providers, taskId, item, artifactId, signal, runId) {
-  const prepared = await store.mutate(taskId, (task) => {
+async function callDynamicReview(store, providers, projectWorkspaceHost, taskId, item, artifactId, signal, runId) {
+  const beforeReserve = await hydrateProjectContext(store, await store.get(taskId));
+  assertProjectReviewMode(beforeReserve);
+  const beforeArtifact = beforeReserve.artifacts.find((entry) => entry.id === artifactId);
+  const projectReviewEvidence = await prepareProjectReviewEvidence(beforeReserve, item, beforeArtifact, store.taskDir(taskId), projectWorkspaceHost, { requireWorkReview: true });
+  const providerInput = {
+    artifactId,
+    projectContext: beforeReserve.projectContext,
+    linkedTaskContext: beforeReserve.linkedTaskContext,
+    continuity: deriveTaskContinuity(beforeReserve),
+    ...(projectReviewEvidence ? { projectReviewEvidence } : {}),
+  };
+  if (projectReviewEvidence) assertProjectReviewProjection(beforeReserve, beforeArtifact, providerInput);
+  const prepared = await store.mutate(taskId, async (task) => {
+    await assertProjectGoalFresh(store, task, beforeReserve.projectRootGoalVersionId, beforeReserve.projectRootInputFingerprint);
     const session = workSession(task, item.id);
     assertSessionFresh(task, session, { runId });
+    if (projectReviewEvidence) {
+      const currentArtifact = task.artifacts.find((entry) => entry.id === artifactId);
+      assertProjectReviewProjection(task, currentArtifact, providerInput);
+    }
     const attemptId = `${runId}:${item.id}:review`;
-    markSession(task, item.id, 'running', { runId, attemptId, input: { artifactId } });
+    markSession(task, item.id, 'running', { runId, attemptId, input: providerInput });
     const call = reserveModelCall(task, item.role);
     return { callId: call.id, attemptId, snapshot: structuredClone(task), artifact: structuredClone(task.artifacts.find((artifact) => artifact.id === artifactId)) };
   });
   try {
     const providerTask = await hydrateProjectContext(store, prepared.result.snapshot);
-    const providerInput = {
-      artifactId,
-      projectContext: providerTask.projectContext,
-      linkedTaskContext: providerTask.linkedTaskContext,
-      continuity: deriveTaskContinuity(providerTask),
-    };
-    await store.mutate(taskId, async (task) => {
-      await assertProjectGoalFresh(store, task, providerTask.projectRootGoalVersionId, providerTask.projectRootInputFingerprint);
-      assertSessionFresh(task, workSession(task, item.id), { runId, attemptId: prepared.result.attemptId });
-      markSession(task, item.id, 'running', { input: providerInput });
-    });
-    const result = await providers.review(providerTask, prepared.result.artifact, { signal });
+    if (projectReviewEvidence) assertProjectReviewProjection(providerTask, prepared.result.artifact, providerInput);
+    const result = await providers.review(providerTask, prepared.result.artifact, { signal, projectReviewEvidence });
     await store.mutate(taskId, async (task) => {
       await assertProjectGoalFresh(store, task, providerTask.projectRootGoalVersionId, providerTask.projectRootInputFingerprint);
       assertSessionFresh(task, workSession(task, item.id), { runId, attemptId: prepared.result.attemptId });
       finishModelCall(task, prepared.result.callId, { status: 'completed', usage: result?._providerMeta?.usage || 'unknown' });
     });
-    return result;
+    return projectReviewEvidence
+      ? { ...result, _hostProjectReviewEvidenceSha256: projectReviewEvidence.packetSha256 }
+      : result;
   } catch (error) {
     await store.mutate(taskId, (task) => finishModelCall(task, prepared.result.callId, { status: error.code === 'cancelled' ? 'cancelled' : 'failed', error: error.message })).catch(() => {});
     throw error;
@@ -1002,11 +1132,23 @@ function artifactContentSha256(artifact) {
   })).digest('hex');
 }
 
-async function trustedReviewOptions(task, artifact, taskDir, projectWorkspaceHost) {
+async function trustedReviewOptions(task, artifact, taskDir, projectWorkspaceHost, usedPacketSha256 = null) {
   if (task.type !== 'project') return {};
+  assertProjectReviewMode(task);
   await projectWorkspaceHost.assertArtifactFilesCurrent(task, taskDir, artifact);
   assertProjectExecutionAuditCurrent(task, artifact);
-  return { projectReviewFacts: createTrustedProjectReviewFacts(task, artifact) };
+  if (!projectReviewEvidenceRequired(task)) return { projectReviewFacts: createTrustedProjectReviewFacts(task, artifact) };
+  const projectReviewEvidence = buildProjectReviewEvidence(task, artifact);
+  assertProjectReviewInputReady(task, artifact, projectReviewEvidence, { requireWorkReview: true });
+  if (usedPacketSha256 !== projectReviewEvidence.packetSha256) {
+    throw Object.assign(new Error('独立审阅结果使用的宿主证据包已经变化。'), { code: 'stale_result', status: 409 });
+  }
+  return {
+    projectReviewFacts: createTrustedProjectReviewFacts(task, artifact, projectReviewEvidence),
+    projectReviewEvidenceSha256: projectReviewEvidence.packetSha256,
+    projectArtifactSemanticSha256: projectReviewEvidence.binding.artifactSemanticSha256,
+    projectWorkReviewEvidenceSha256: projectReviewEvidence.workReview.resultDigest,
+  };
 }
 
 function recoverableNativeCandidate(task) {
@@ -1092,6 +1234,16 @@ async function handleDynamicWorkFailure(store, taskId, itemSnapshot, error, runI
         workItemId: item.id, code: error.code || 'project_transaction_failed', detail: error.detail || null,
       });
       return { retryable: false, terminalReason: error.code === 'project_verification_failed' ? 'project_verification_failed' : 'project_transaction_failed' };
+    }
+    if (task.projectWorkspace?.executionMode === 'host_bounded_transaction_v1') {
+      failWorkItem(task, item.id, error, 'failed');
+      if (session?.runId === runId) markSession(task, item.id, 'failed', { error: error.message });
+      const agent = task.team?.agents?.find((entry) => entry.id === item.agentId);
+      if (agent) agent.status = 'available';
+      event(task, 'project.bounded_work_stopped', '有限源码工作遇到失败，已停止且不会隐式重试或重规划。', {
+        workItemId: item.id, code: error.code || 'work_failed',
+      });
+      return { retryable: false, terminalReason: 'permanent_error' };
     }
     if (error.code === 'work_gap') {
       failWorkItem(task, item.id, error, 'failed');
@@ -1268,13 +1420,25 @@ async function runDynamicTask(store, providers, projectWorkspaceHost, taskId, co
         await store.mutate(taskId, (draft) => {
           const session = workSession(draft, reviewItem.id);
           assertSessionFresh(draft, session, { runId: runInfo.runId });
-          session.reviewEvidence = { summary: reviewEvidence.summary, output: reviewEvidence.output, sources: reviewEvidence.sources, acceptanceChecks: reviewEvidence.acceptanceChecks };
+          const normalizedReviewEvidence = {
+            summary: String(reviewEvidence.summary || ''),
+            output: String(reviewEvidence.output || ''),
+            sources: structuredClone(reviewEvidence.sources || []),
+            acceptanceChecks: structuredClone(reviewEvidence.acceptanceChecks || []),
+          };
+          session.reviewEvidence = {
+            ...normalizedReviewEvidence,
+            resultDigest: crypto.createHash('sha256').update(JSON.stringify(normalizedReviewEvidence)).digest('hex'),
+            projectReviewEvidenceSha256: reviewEvidence._hostProjectReviewEvidenceSha256 || null,
+            evidenceBasisSha256: reviewEvidence._hostProjectReviewEvidenceBasisSha256 || null,
+            artifactSemanticSha256: reviewEvidence._hostProjectArtifactSemanticSha256 || null,
+          };
           session.updatedAt = new Date().toISOString();
         });
-        const result = await callDynamicReview(store, providers, taskId, reviewItem, artifact.id, controller.signal, runInfo.runId);
+        const result = await callDynamicReview(store, providers, projectWorkspaceHost, taskId, reviewItem, artifact.id, controller.signal, runInfo.runId);
         checked = await store.mutate(taskId, async (draft) => {
           const currentArtifact = draft.artifacts.find((entry) => entry.id === artifact.id);
-          const reviewOptions = await trustedReviewOptions(draft, currentArtifact, store.taskDir(taskId), projectWorkspaceHost);
+          const reviewOptions = await trustedReviewOptions(draft, currentArtifact, store.taskDir(taskId), projectWorkspaceHost, result._hostProjectReviewEvidenceSha256 || null);
           const review = recordReview(draft, artifact.id, result, reviewOptions);
           completeWorkItem(draft, reviewItem.id, { reviewId: review.id, passed: review.passed, summary: review.summary });
           markSession(draft, reviewItem.id, 'completed', { output: { reviewId: review.id, passed: review.passed } });
@@ -1299,6 +1463,14 @@ async function runDynamicTask(store, providers, projectWorkspaceHost, taskId, co
         continue;
       }
       if (!checked.result.passed) {
+        if (task.projectWorkspace?.executionMode === 'host_bounded_transaction_v1') {
+          await store.mutate(taskId, (draft) => {
+            if (draft.execution.phase === 'reviewing') transitionExecution(draft, 'partial');
+            draft.execution.stopReason = 'permanent_error';
+            setTaskState(draft, 'partial', reviewItem.role, '独立审阅未通过；当前候选和审阅记录已保留，本次有限源码运行不会自动重试或重规划。');
+          });
+          return;
+        }
         if (checked.task.execution.planRevisions >= checked.task.execution.limits.maxPlanRevisions) {
           await store.mutate(taskId, (draft) => { transitionExecution(draft, 'partial'); draft.execution.stopReason = 'review_blocked'; });
           return;
@@ -1361,7 +1533,58 @@ function modelPlanInputsChanged(task) {
     || (task.type === 'project' && (item.sourceSnapshotSha256 ?? null) !== (task.projectWorkspace?.sourceSnapshotSha256 || null)));
 }
 
-async function planTask(store, providers, taskId) {
+async function proposeProjectScope(store, providers, projectWorkspaceHost, taskId, body = {}) {
+  if (activeJobs.has(taskId)) throw Object.assign(new Error('这项任务正在运行。'), { status: 409, code: 'already_running' });
+  const snapshot = await store.get(taskId);
+  if (snapshot.type !== 'project' || snapshot.provider !== 'codex-cli' || typeof providers.proposeProjectScope !== 'function') {
+    throw Object.assign(new Error('只有真实代码项目可以整理受控源码范围。'), { status: 400, code: 'project_scope_unavailable' });
+  }
+  const repository = await projectWorkspaceHost.repository();
+  const binding = projectTaskBinding(snapshot);
+  if (JSON.stringify(body.expectedTaskInputBinding || null) !== JSON.stringify(binding)
+    || body.expectedRepositoryTreeSha256 !== repository.treeSha256) {
+    throw Object.assign(new Error('范围整理页面已过期，请按当前目标和源码结构重新提交。'), { status: 409, code: 'project_scope_stale' });
+  }
+  const controller = new AbortController();
+  const entry = { controller, promise: null, kind: 'project_scope', role: 'coordinator' };
+  activeJobs.set(taskId, entry);
+  const requestedAt = new Date().toISOString();
+  try {
+    const hydrated = await hydrateProjectContext(store, snapshot);
+    const result = await providers.proposeProjectScope(hydrated, await projectWorkspaceHost.scopeInput(), { signal: controller.signal });
+    const proposal = validateProjectScopeResult(result, repository, binding);
+    return await store.mutate(taskId, async (task) => {
+      await assertProjectGoalFresh(store, task, hydrated.projectRootGoalVersionId, hydrated.projectRootInputFingerprint);
+      const currentRepository = await projectWorkspaceHost.repository();
+      if (activeJobs.get(taskId) !== entry || JSON.stringify(projectTaskBinding(task)) !== JSON.stringify(binding)
+        || currentRepository.treeSha256 !== repository.treeSha256) {
+        throw Object.assign(new Error('范围建议属于旧目标或旧源码结构，未写入当前任务。'), { code: 'stale_result', status: 409 });
+      }
+      if (task.projectScopeProposal && ['proposed', 'accepted'].includes(task.projectScopeProposal.status)) {
+        task.projectScopeProposal.status = 'historical';
+        task.projectScopeProposal.staleReason = 'new_scope_proposal';
+      }
+      task.projectScopeProposal = { ...proposal, requestedAt, completedAt: new Date().toISOString() };
+      task.projectScopeCalls ??= [];
+      task.projectScopeCalls.push({ id: `scope-call-${crypto.randomUUID()}`, status: 'completed', requestedAt, completedAt: task.projectScopeProposal.completedAt, proposalId: proposal.id });
+      task.projectScopeCalls = task.projectScopeCalls.slice(-20);
+      event(task, 'project_scope.proposed', '已按当前目标与登记源码结构整理有限范围；必须先明确接受需求卡与逐条用例，再单独授权副本。', { proposalId: proposal.id, repositoryTreeSha256: repository.treeSha256 });
+      setTaskState(task, 'waiting_user', 'coordinator', '请核对目的、交付、成功标准、边界、有限文件和每条 JSON 用例；接受后仍需单独授权副本。');
+      return task.projectScopeProposal;
+    });
+  } catch (error) {
+    await store.mutate(taskId, (task) => {
+      task.projectScopeCalls ??= [];
+      task.projectScopeCalls.push({ id: `scope-call-${crypto.randomUUID()}`, status: error.code === 'cancelled' ? 'cancelled' : 'failed', requestedAt, completedAt: new Date().toISOString(), errorCode: error.code || 'provider_error' });
+      task.projectScopeCalls = task.projectScopeCalls.slice(-20);
+    }).catch(() => {});
+    throw error;
+  } finally {
+    if (activeJobs.get(taskId) === entry) activeJobs.delete(taskId);
+  }
+}
+
+async function planTask(store, providers, projectWorkspaceHost, taskId) {
   const snapshot = await store.get(taskId);
   if (snapshot.type === 'project' && !projectWorkspaceIsCurrent(snapshot)) {
     return store.mutate(taskId, (task) => {
@@ -1369,6 +1592,7 @@ async function planTask(store, providers, taskId) {
       return [];
     });
   }
+  if (snapshot.type === 'project') await projectWorkspaceHost.assertWorkspaceReady(snapshot);
   if (snapshot.provider !== 'codex-cli' || typeof providers.plan !== 'function') {
     return store.mutate(taskId, async (task) => {
       await assertProjectGoalFresh(store, task);
@@ -1416,6 +1640,8 @@ async function planTask(store, providers, taskId) {
 
 async function runTask(store, providers, projectWorkspaceHost, taskId) {
   if (activeJobs.has(taskId)) throw new Error('这项任务正在运行。');
+  const preflight = await store.get(taskId);
+  if (preflight.type === 'project') await projectWorkspaceHost.assertWorkspaceReady(preflight);
   const controller = new AbortController();
   const entry = { controller, promise: null };
   activeJobs.set(taskId, entry);
@@ -1506,7 +1732,7 @@ async function runTask(store, providers, projectWorkspaceHost, taskId) {
         return;
       }
       if (runInfo.firstRole === 'researcher') {
-        const researchResult = await callProviderStep(store, providers, taskId, 'researcher', 'research', controller.signal);
+        const researchResult = await callProviderStep(store, providers, projectWorkspaceHost, taskId, 'researcher', 'research', controller.signal);
         await store.mutate(taskId, (task) => {
           if (activeGoal(task).id !== runInfo.goalVersionId || task.execution?.id !== runInfo.runId) throw Object.assign(new Error('研究结果属于旧目标或旧运行。'), { code: 'stale_result' });
           validateResearchResult(task, researchResult);
@@ -1516,7 +1742,7 @@ async function runTask(store, providers, projectWorkspaceHost, taskId) {
         });
       }
 
-      const generated = await callProviderStep(store, providers, taskId, 'writer', 'generate', controller.signal);
+      const generated = await callProviderStep(store, providers, projectWorkspaceHost, taskId, 'writer', 'generate', controller.signal);
       const created = await store.mutate(taskId, (task) => {
         if (activeGoal(task).id !== runInfo.goalVersionId || task.execution?.id !== runInfo.runId) throw Object.assign(new Error('候选结果属于旧目标或旧运行。'), { code: 'stale_result' });
         const artifact = createArtifact(task, generated, task.provider, runInfo.goalVersionId);
@@ -1535,11 +1761,11 @@ async function runTask(store, providers, projectWorkspaceHost, taskId) {
         setTaskState(task, 'running', 'reviewer', '原生候选文件已生成并渲染检查；独立审阅角色正在逐项核对。');
       });
 
-      const reviewResult = await callProviderStep(store, providers, taskId, 'reviewer', 'review', controller.signal, created.result.id);
+      const reviewResult = await callProviderStep(store, providers, projectWorkspaceHost, taskId, 'reviewer', 'review', controller.signal, created.result.id);
       await store.mutate(taskId, async (task) => {
         if (activeGoal(task).id !== runInfo.goalVersionId || task.execution?.id !== runInfo.runId) throw Object.assign(new Error('审阅结果属于旧目标或旧运行。'), { code: 'stale_result' });
         const artifact = task.artifacts.find((entry) => entry.id === created.result.id);
-        const reviewOptions = await trustedReviewOptions(task, artifact, store.taskDir(taskId), projectWorkspaceHost);
+        const reviewOptions = await trustedReviewOptions(task, artifact, store.taskDir(taskId), projectWorkspaceHost, reviewResult._hostProjectReviewEvidenceSha256 || null);
         const review = recordReview(task, created.result.id, reviewResult, reviewOptions);
         completeWork(task, 'reviewer', { reviewId: review.id, passed: review.passed, summary: review.summary, sourceEvidenceCount: review.sourceEvidence.length });
         const steward = task.workItems.find((item) => item.role === 'steward');
@@ -1808,6 +2034,19 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
         const task = await store.get(workspaceMatch[1]);
         return json(res, 200, { projectWorkspace: projectWorkspaceHost.publicState(task) });
       }
+      const scopeMatch = pathname.match(/^\/api\/tasks\/([a-z0-9-]+)\/project-scope$/);
+      if (req.method === 'GET' && scopeMatch) {
+        const task = await store.get(scopeMatch[1]);
+        const repository = await projectWorkspaceHost.repository();
+        const scope = publicProjectScope(task);
+        return json(res, 200, {
+          projectScope: scope ? { ...scope, current: scope.status === 'proposed'
+            ? JSON.stringify(task.projectScopeProposal.taskInputBinding) === JSON.stringify(projectTaskBinding(task)) && task.projectScopeProposal.repositoryTreeSha256 === repository.treeSha256
+            : acceptedProposalCurrent(task.projectScopeProposal, projectTaskBinding(task), repository.treeSha256) } : null,
+          repository,
+          taskInputBinding: projectTaskBinding(task),
+        });
+      }
       const previewMatch = pathname.match(/^\/api\/tasks\/([a-z0-9-]+)\/artifacts\/([a-z0-9-]+)\/previews\/(\d+)$/);
       if (req.method === 'GET' && previewMatch) {
         const task = await store.get(previewMatch[1]);
@@ -1835,8 +2074,10 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           if (task.type === 'project' && format !== 'patch') throw new Error('代码项目只交付已确认的 patch，不提供正文或办公文件导出。');
           if (format === 'patch') {
             if (task.type !== 'project') throw new Error('只有代码项目候选支持 patch 下载。');
+            assertProjectReviewMode(task);
             const bytes = await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(task.id), artifact);
             assertProjectExecutionAuditCurrent(task, artifact);
+            if (projectReviewEvidenceRequired(task)) await assertStoredProjectReviewEvidence(task, artifact, store.taskDir(task.id), projectWorkspaceHost);
             return { task, artifact, patch: true, bytes };
           }
           if (!['docx', 'xlsx', 'pptx'].includes(format)) return { task, artifact };
@@ -1887,6 +2128,17 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
       if (req.method === 'POST' && actionMatch) {
         const [, taskId, action] = actionMatch;
         const body = await readJson(req);
+        if (action === 'project-scope/propose') {
+          const changed = await proposeProjectScope(store, providers, projectWorkspaceHost, taskId, body);
+          return json(res, 201, { task: publicTask(changed.task), projectScope: publicProjectScope(changed.task) });
+        }
+        if (action === 'project-scope/accept') {
+          if (activeJobs.has(taskId)) return problem(res, 409, '任务运行期间不能接受新的项目范围。', 'already_running');
+          const changed = await store.mutate(taskId, (task) => acceptProjectScopeProposal(task, String(body.proposalId || ''), {
+            expectedFingerprint: body.expectedFingerprint,
+          }));
+          return json(res, 200, { task: publicTask(changed.task), projectScope: publicProjectScope(changed.task) });
+        }
         if (action === 'project-workspace/attach') {
           if (activeJobs.has(taskId)) return problem(res, 409, '任务运行期间不能更换代码工作区。', 'already_running');
           const changed = await store.mutate(taskId, async (task) => {
@@ -2182,7 +2434,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
           return json(res, 200, { task: publicTask(changed.task), memory: changed.result });
         }
         if (action === 'plan') {
-          const changed = await planTask(store, providers, taskId);
+          const changed = await planTask(store, providers, projectWorkspaceHost, taskId);
           return json(res, 200, { task: publicTask(changed.task), workItems: changed.result });
         }
         if (action === 'continue') {
@@ -2201,7 +2453,7 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             || (snapshot.plan.projectRootGoalVersionId && snapshot.plan.projectRootGoalVersionId !== snapshot.projectRootGoalVersionId)
             || modelPlanInputsChanged(snapshot);
           if (planStale) {
-            const planned = await planTask(store, providers, taskId);
+            const planned = await planTask(store, providers, projectWorkspaceHost, taskId);
             snapshot = planned.task;
             if (snapshot.status === 'waiting_user' || !snapshot.workItems.length || (snapshot.provider === 'codex-cli' && !snapshot.plan)) {
               return json(res, 200, { task: publicTask(await hydrateProjectContext(store, snapshot)), action: 'await_user', message: deriveTaskContinuity(snapshot).progress.nextStep });
@@ -2318,13 +2570,13 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             reviewContext = prepared.result;
             entry.kind = 'review'; entry.role = reviewContext.role;
             const result = reviewContext.dynamic
-              ? await callDynamicReview(store, providers, taskId, prepared.task.workItems.find((item) => item.id === reviewContext.reviewerId), reviewMatch[1], controller.signal, reviewContext.runId)
-              : await callProviderStep(store, providers, taskId, reviewContext.role, 'review', controller.signal, reviewMatch[1]);
+              ? await callDynamicReview(store, providers, projectWorkspaceHost, taskId, prepared.task.workItems.find((item) => item.id === reviewContext.reviewerId), reviewMatch[1], controller.signal, reviewContext.runId)
+              : await callProviderStep(store, providers, projectWorkspaceHost, taskId, reviewContext.role, 'review', controller.signal, reviewMatch[1]);
             const changed = await store.mutate(taskId, async (draft) => {
               await assertProjectGoalFresh(store, draft, prepared.task.projectRootGoalVersionId, prepared.task.projectRootInputFingerprint);
               const artifact = draft.artifacts.find((item) => item.id === reviewMatch[1]);
               if (!artifact || artifactContentSha256(artifact) !== reviewContext.artifactHash) throw Object.assign(new Error('候选成果在审阅期间已变化，这次结果不能写入。'), { code: 'stale_result' });
-              const reviewOptions = await trustedReviewOptions(draft, artifact, store.taskDir(taskId), projectWorkspaceHost);
+              const reviewOptions = await trustedReviewOptions(draft, artifact, store.taskDir(taskId), projectWorkspaceHost, result._hostProjectReviewEvidenceSha256 || null);
               const review = recordReview(draft, reviewMatch[1], result, reviewOptions);
               const storedResult = { reviewId: review.id, passed: review.passed, summary: review.summary, sourceEvidenceCount: review.sourceEvidence.length };
               if (reviewContext.dynamic) {
@@ -2409,9 +2661,11 @@ export async function createIrixiServer({ root = dataRoot, providers: providedPr
             if (activeJobs.has(taskId)) throw new Error('任务仍有工作在进行，不能使用旧核对结果确认。');
             await assertProjectGoalFresh(store, task);
             if (task.type === 'project') {
+              assertProjectReviewMode(task);
               const artifact = task.artifacts.find((entry) => entry.id === confirmMatch[1]);
               await projectWorkspaceHost.assertArtifactFilesCurrent(task, store.taskDir(taskId), artifact);
               assertProjectExecutionAuditCurrent(task, artifact);
+              if (projectReviewEvidenceRequired(task)) await assertStoredProjectReviewEvidence(task, artifact, store.taskDir(taskId), projectWorkspaceHost);
             }
             return confirmArtifact(task, confirmMatch[1]);
           });

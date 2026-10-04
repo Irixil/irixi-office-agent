@@ -48,6 +48,14 @@
           "content": { "type": "string" }
         }, "required": ["path", "expectedFileSha256", "expectedCandidateSha256", "content"], "additionalProperties": false },
         { "type": "object", "properties": {
+          "expectedCandidateSha256": { "type": "string" },
+          "changes": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "type": "object", "properties": {
+            "path": { "type": "string" },
+            "expectedFileSha256": { "type": "string" },
+            "content": { "type": "string" }
+          }, "required": ["path", "expectedFileSha256", "content"], "additionalProperties": false } }
+        }, "required": ["expectedCandidateSha256", "changes"], "additionalProperties": false },
+        { "type": "object", "properties": {
           "expectedCandidateSha256": { "type": "string" }
         }, "required": ["expectedCandidateSha256"], "additionalProperties": false },
         { "type": "object", "properties": {

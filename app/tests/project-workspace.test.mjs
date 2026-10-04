@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { addSuggestion, createTask, invalidateCurrentWork, publicTask } from '../core.mjs';
-import { __test, createProjectWorkspaceHost, projectArtifactIsCurrent } from '../project-workspace.mjs';
+import { __test, createProjectWorkspaceHost, projectArtifactIsCurrent, projectTaskBinding } from '../project-workspace.mjs';
+import { registeredRepository, validateProjectScopeResult } from '../project-scope.mjs';
 
 const safeCapability = {
   available: true,
@@ -155,6 +156,10 @@ test('注册 UI 按任务选择固定 fixture 且目标函数边界唯一', asyn
   assert.match(source, /state\.projectFixtureSelections\[task\.id\] \|\| workspace\?\.fixtureId/);
   assert.match(source, /name="fixtureId" data-project-fixture-select/);
   assert.match(source, /state\.projectFixtureSelections\[state\.task\.id\] = fixture\.id/);
+  assert.match(source, /data-project-scope-propose/);
+  assert.match(source, /data-project-scope-accept/);
+  assert.match(source, /data-generic-scope/);
+  assert.match(source, /2 个可改纯函数模块/);
 });
 
 test('capability positive-read 只接受实际 bytes 与 SHA-256 同时精确匹配', async (t) => {
@@ -172,6 +177,57 @@ test('capability positive-read 只接受实际 bytes 与 SHA-256 同时精确匹
   assert.equal(JSON.parse(wrongLength.stdout).passed, false);
   const wrongHash = await __test.runChild(process.execPath, [wrapper], { input: request(bytes.length, '0'.repeat(64)), cwd: root });
   assert.equal(JSON.parse(wrongHash.stdout).passed, false);
+});
+
+test('通用 JSON wrapper 绑定唯一 envelope，宿主策略先拒绝副作用入口', async (t) => {
+  const root = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const wrapper = path.resolve('app/project-runtime/generic-json-function-wrapper.mjs');
+  const run = async (source, timeoutMs = 1_000) => {
+    const modulePath = path.join(root, `candidate-${crypto.randomUUID()}.mjs`);
+    await fs.writeFile(modulePath, source);
+    return __test.runChild(process.execPath, [wrapper, modulePath], {
+      cwd: root, timeoutMs,
+      input: `${JSON.stringify({ caseId: 'case-1', nonce: 'a'.repeat(32), exportName: 'transform', args: [2] })}\n`,
+    });
+  };
+  const good = await run('export function transform(value) { return { value: value + 1 }; }\n');
+  const envelope = __test.parseSingleEnvelope(good.stdout, ['type', 'caseId', 'nonce', 'value']);
+  assert.deepEqual(envelope.value, { value: 3 });
+  const monkey = await run('JSON.stringify = () => "forged"; process.stdout.write = () => true; console.log = () => {}; export function transform(value) { return { value }; }\n');
+  assert.deepEqual(__test.parseSingleEnvelope(monkey.stdout, ['type', 'caseId', 'nonce', 'value']).value, { value: 2 });
+  const iteratorMonkey = await run('Array.prototype[Symbol.iterator] = () => { throw new Error("forged iterator"); }; export function transform(value) { return { value }; }\n');
+  assert.deepEqual(__test.parseSingleEnvelope(iteratorMonkey.stdout, ['type', 'caseId', 'nonce', 'value']).value, { value: 2 });
+  const noisy = await run('console.log("NOISE"); export function transform(value) { return value; }\n');
+  assert.throws(() => __test.parseSingleEnvelope(noisy.stdout, ['type', 'caseId', 'nonce', 'value']));
+  const exited = await run('process.exit(0); export function transform(value) { return value; }\n');
+  assert.equal(exited.stdout, '');
+  const hanging = await run('while (true) {} export function transform(value) { return value; }\n', 100);
+  assert.equal(hanging.timedOut, true);
+  const flooding = await run('console.log("x".repeat(20000)); export function transform(value) { return value; }\n');
+  assert.equal(flooding.outputLimitExceeded, true);
+  for (const source of [
+    'export function transform() { return NaN; }\n',
+    'export function transform() { return new Date(0); }\n',
+    'export function transform() { return { toJSON() { return 3; } }; }\n',
+    'export function transform() { return Object.defineProperty({}, "value", { get() { return 3; } }); }\n',
+    'Object.prototype.toJSON = () => 3; export function transform(value) { return { value }; }\n',
+    'export function transform(value) { return new Proxy({ value }, {}); }\n',
+    'export function transform() { return "x".repeat(20000); }\n',
+    'export function transform(value) { return Object.create({ value }); }\n',
+    'export function transform(value) { const result = { value }; result.self = result; return result; }\n',
+  ]) {
+    const invalid = await run(source);
+    assert.notEqual(invalid.code, 0);
+    assert.equal(invalid.stdout, '');
+  }
+  for (const source of [
+    'import fs from "node:fs"; export function transform(v) { return v; }',
+    'export async function transform(v) { return v; }',
+    'export function transform(v) { process.kill(1); return v; }',
+    'export function transform(v) { return fetch("https://example.com"); }',
+    'export function transform(v) { return globalThis.constructor; }',
+  ]) assert.throws(() => __test.assertGenericModulePolicy(source), /纯函数模块/);
 });
 
 test('授权根目录链接被拒绝且不会在外部创建暂存副本', async (t) => {
@@ -239,6 +295,79 @@ test('旧宿主 verifier hash 的 grant 不能为新候选生成通过记录', a
     tool: 'workspace.check', args: { checkId: 'greet-name-contract-v1', expectedCandidateSha256: task.projectWorkspace.candidate.candidateSha256 },
   }), (error) => error.status === 409 && error.code === 'project_check_changed');
   assert.equal(task.projectWorkspace.candidate.checks.length, 0);
+});
+
+test('通用范围以全量 CAS 原子发布多文件并逐项运行 syntax 与 JSON 行为检查', { timeout: 30_000 }, async (t) => {
+  const projectRoot = await fs.mkdtemp(tempPrefix);
+  const taskDir = await fs.mkdtemp(tempPrefix);
+  t.after(() => fs.rm(projectRoot, { recursive: true, force: true }));
+  t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
+  await fs.mkdir(path.join(projectRoot, 'app', 'public'), { recursive: true });
+  await fs.writeFile(path.join(projectRoot, 'package.json'), '{"type":"module"}\n');
+  await fs.writeFile(path.join(projectRoot, 'app', 'alpha.mjs'), 'export function alpha(value) { return value; }\n');
+  await fs.writeFile(path.join(projectRoot, 'app', 'beta.mjs'), 'export function beta(value) { return value; }\n');
+  const task = createTask({ title: '通用纯函数', goal: '整理并确认有限源码需求', type: 'project', successCriteria: ['用户确认用例'], boundaries: ['不写原项目'] });
+  const repository = await registeredRepository(projectRoot);
+  const binding = projectTaskBinding(task);
+  const proposal = validateProjectScopeResult({
+    repositoryId: 'irixi-office-agent', deliverable: 'project_patch',
+    goal: { statement: '让两个同步纯函数分别执行确认的数值变换。', successCriteria: ['alpha(1)=2', 'beta(2)=4'], boundaries: ['无 import、网络、文件或异步副作用'] },
+    readablePaths: ['app/alpha.mjs', 'app/beta.mjs'], editablePaths: ['app/alpha.mjs', 'app/beta.mjs'],
+    checks: [
+      { id: 'node-syntax-v1', modulePath: null, namedExport: null, cases: null },
+      { id: 'json-function-v1', modulePath: 'app/alpha.mjs', namedExport: 'alpha', cases: [{ id: 'alpha-one', argsJson: '[1]', expectedJson: '2' }] },
+      { id: 'json-function-v1', modulePath: 'app/beta.mjs', namedExport: 'beta', cases: [{ id: 'beta-two', argsJson: '[2]', expectedJson: '4' }] },
+    ],
+    rationale: '两个模块都由独立行为用例覆盖。',
+  }, repository, binding);
+  task.projectScopeProposal = { ...proposal, status: 'accepted', acceptedTaskInputBinding: binding };
+  const host = createProjectWorkspaceHost({ projectRoot, capabilityOverride: safeCapability });
+  const capability = await host.capabilities();
+  await host.attachDraft(task, taskDir, {
+    proposalId: proposal.id, expectedProposalFingerprint: proposal.fingerprint,
+    expectedGoalVersionId: binding.goalVersionId, expectedProjectRootGoalVersionId: binding.projectRootGoalVersionId,
+    expectedProjectRootInputFingerprint: binding.projectRootInputFingerprint,
+    expectedMaterialApplicabilityFingerprint: binding.materialApplicabilityFingerprint,
+    expectedPreviousScopeFingerprint: null, expectedCapabilityFingerprint: capability.fingerprint,
+  });
+  task.execution = { id: 'run-generic' };
+  task.workItems = [{ id: 'work-generic', status: 'running', role: 'developer' }];
+  task.agentSessions = [];
+  const store = memoryStore(task, taskDir);
+  const initialSha = task.projectWorkspace.candidate.candidateSha256;
+  const alpha = task.projectWorkspace.candidate.manifest.find((entry) => entry.path === 'app/alpha.mjs');
+  const beta = task.projectWorkspace.candidate.manifest.find((entry) => entry.path === 'app/beta.mjs');
+  await assert.rejects(host.runTool(store, task.id, 'work-generic', { tool: 'workspace.write', args: {
+    expectedCandidateSha256: initialSha,
+    changes: [{ path: 'app/alpha.mjs', expectedFileSha256: alpha.sha256, content: 'export function alpha(value) { return value; }\n' }],
+  } }), (error) => error.code === 'project_no_change');
+  assert.equal(task.projectWorkspace.candidate.candidateSha256, initialSha);
+  await assert.rejects(host.runTool(store, task.id, 'work-generic', { tool: 'workspace.write', args: {
+    expectedCandidateSha256: initialSha,
+    changes: [
+      { path: 'app/alpha.mjs', expectedFileSha256: alpha.sha256, content: 'export function alpha(value) { return value + 1; }\n' },
+      { path: 'app/beta.mjs', expectedFileSha256: '0'.repeat(64), content: 'export function beta(value) { return value * 2; }\n' },
+    ],
+  } }), /迟到修改/);
+  assert.equal(task.projectWorkspace.candidate.candidateSha256, initialSha);
+  const written = await host.runTool(store, task.id, 'work-generic', { tool: 'workspace.write', args: {
+    expectedCandidateSha256: initialSha,
+    changes: [
+      { path: 'app/alpha.mjs', expectedFileSha256: alpha.sha256, content: 'export function alpha(value) { return value + 1; }\n' },
+      { path: 'app/beta.mjs', expectedFileSha256: beta.sha256, content: 'export function beta(value) { return value * 2; }\n' },
+    ],
+  } });
+  assert.equal(written.changes.length, 2);
+  assert.notEqual(written.candidateSha256, initialSha);
+  const checks = [];
+  for (const descriptor of task.projectWorkspace.checks) checks.push(await host.runTool(store, task.id, 'work-generic', {
+    tool: 'workspace.check', args: { checkId: descriptor.id, expectedCandidateSha256: written.candidateSha256 },
+  }));
+  assert.equal(checks.every((entry) => entry.passed), true);
+  assert.deepEqual(checks.map((entry) => entry.casePassed), [2, 1, 1]);
+  const diff = await host.runTool(store, task.id, 'work-generic', { tool: 'workspace.diff', args: { expectedCandidateSha256: written.candidateSha256 } });
+  assert.deepEqual(diff.changes.map((entry) => entry.path), ['app/alpha.mjs', 'app/beta.mjs']);
+  assert.equal(diff.sourceIntegrity.allUnchanged, true);
 });
 
 test('候选写入逐段拒绝 symlink 与 hardlink，外部 canary 不变', async (t) => {

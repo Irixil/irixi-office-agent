@@ -34,5 +34,7 @@ export function projectWorkspaceAttachExpectation(form) {
     expectedMaterialApplicabilityFingerprint: value.expectedMaterialApplicabilityFingerprint ?? null,
     expectedPreviousScopeFingerprint: value.expectedPreviousScopeFingerprint ?? null,
     expectedCapabilityFingerprint: value.expectedCapabilityFingerprint ?? null,
+    proposalId: value.proposalId ?? null,
+    expectedProposalFingerprint: value.expectedProposalFingerprint ?? null,
   };
 }

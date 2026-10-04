@@ -8,11 +8,21 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { materialContext } from './material-applicability.mjs';
+import {
+  acceptedProposalCurrent,
+  assertPlainJson,
+  GENERIC_EXECUTION_MODE,
+  GENERIC_FIXTURE_ID,
+  registeredRepository,
+  SCOPE_LIMITS,
+  scopeFingerprint as genericFingerprint,
+} from './project-scope.mjs';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const HOST_VERIFIER_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_FIXTURE_ROOT = path.join(moduleDir, 'project-fixtures', 'node-single-file-v1', 'workspace');
 const DEFAULT_WRAPPER = path.join(moduleDir, 'project-runtime', 'fixed-export-wrapper.mjs');
+const GENERIC_JSON_WRAPPER = path.join(moduleDir, 'project-runtime', 'generic-json-function-wrapper.mjs');
 const CONTINUITY_WRAPPER = path.join(moduleDir, 'project-runtime', 'fixed-continuity-wrapper.mjs');
 const DEFAULT_PROBE_WRAPPER = path.join(moduleDir, 'project-runtime', 'capability-probe-wrapper.mjs');
 const IRIXI_PROJECT_ROOT = path.resolve(moduleDir, '..');
@@ -20,7 +30,7 @@ const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const MAX_TEXT_BYTES = 128 * 1024;
 const MAX_TOTAL_BYTES = 512 * 1024;
 const MAX_OUTPUT_BYTES = 4 * 1024;
-const POLICY_VERSION = 1;
+const POLICY_VERSION = 2;
 const PROFILE_VERSION = 'macos-node-contract-v1';
 const SAFE_SEGMENT = /^[^/\\\u0000]+$/u;
 
@@ -234,6 +244,13 @@ function assertReplacementRegion(fixture, relative, content) {
   }
 }
 
+function assertGenericModulePolicy(content) {
+  const forbidden = /\b(?:import|await|process|globalThis|fetch|require|eval|Function|WebSocket|XMLHttpRequest|setTimeout|setInterval)\b/u;
+  if (forbidden.test(content) || /\basync\s+function\b/u.test(content) || /=>\s*import\s*\(/u.test(content)) {
+    throw projectError('本版 JSON 纯函数模块不能包含 import、异步执行、进程或外部副作用入口。', 'project_pure_module_required');
+  }
+}
+
 function assertRegionOutsideMatches(fixture, relative, sourceBytes, candidateBytes) {
   if (!fixture.region || fixture.region.path !== relative) return;
   const source = fixedRegionFor(fixture, relative, sourceBytes);
@@ -353,7 +370,7 @@ function workspaceMatchesFixtureDefinition(workspace, fixture) {
   if (!workspace || !fixture) return false;
   const expectedMode = fixture.executionMode || null;
   const expectedContractFingerprint = fingerprint(fixture.publicContract);
-  if (expectedMode === 'host_fixed_transaction_v1') {
+  if (expectedMode === 'host_fixed_transaction_v1' || expectedMode === GENERIC_EXECUTION_MODE) {
     return workspace.executionMode === expectedMode
       && workspace.publicContractFingerprint === expectedContractFingerprint;
   }
@@ -365,6 +382,13 @@ function projectWorkspaceDefinitionIsCurrent(task) {
   if (task.type !== 'project') return true;
   const workspace = task.projectWorkspace;
   if (!workspace) return false;
+  if (workspace.fixtureId === GENERIC_FIXTURE_ID) {
+    const proposal = task.projectScopeProposal;
+    return proposal?.status === 'accepted'
+      && workspace.proposalId === proposal.id
+      && workspace.proposalFingerprint === proposal.fingerprint
+      && workspace.publicContractFingerprint === fingerprint(workspace.publicContract);
+  }
   const fixture = DEFAULT_FIXTURES[workspace.fixtureId];
   return fixture ? workspaceMatchesFixtureDefinition(workspace, fixture) : true;
 }
@@ -452,6 +476,8 @@ export function publicProjectWorkspace(task) {
   return {
     policyVersion: workspace.policyVersion,
     fixtureId: workspace.fixtureId,
+    proposalId: workspace.proposalId || null,
+    proposalFingerprint: workspace.proposalFingerprint || null,
     label: workspace.label,
     executionMode: workspace.executionMode || null,
     publicContract: workspace.publicContract || null,
@@ -748,17 +774,63 @@ function exactExpected(body, key, actual) {
   if ((body[key] ?? null) !== (actual ?? null)) throw conflict(`项目授权页面已过期：${key} 已变化。`);
 }
 
+function genericFixtureFromProposal(proposal, projectRoot) {
+  const checks = structuredClone(proposal.checks || []).map((entry, index) => ({
+    ...entry,
+    key: entry.id === 'node-syntax-v1' ? entry.id : `json-function-v1-${index + 1}`,
+  }));
+  const jsonCheck = checks.find((entry) => entry.id === 'json-function-v1');
+  const publicChecks = checks.map((entry) => entry.id === 'json-function-v1'
+    ? { id: entry.id, modulePath: entry.modulePath, namedExport: entry.namedExport, cases: entry.cases }
+    : { id: entry.id });
+  return {
+    id: GENERIC_FIXTURE_ID,
+    label: 'Irixi 有限源码项目',
+    executionMode: GENERIC_EXECUTION_MODE,
+    sourceRoot: projectRoot,
+    snapshotPaths: [...new Set(['package.json', ...proposal.readablePaths])].sort(),
+    readablePaths: [...proposal.readablePaths],
+    editablePaths: [...proposal.editablePaths],
+    candidateModulePath: jsonCheck?.modulePath || proposal.editablePaths[0],
+    wrapperPath: GENERIC_JSON_WRAPPER,
+    genericChecks: checks,
+    publicContract: {
+      id: 'bounded-json-source-v1',
+      input: '用户明确确认的有限源码文件与 JSON 纯函数用例',
+      behavior: proposal.goal.statement,
+      deliverable: 'project_patch',
+      readablePaths: [...proposal.readablePaths],
+      editablePaths: [...proposal.editablePaths],
+      checks: publicChecks,
+      writeScope: '一次模型候选生成只能批量替换已授权完整文件；宿主随后运行固定检查和 diff。',
+    },
+    check: { id: checks[0]?.id || 'node-syntax-v1', trustedParentPath: 'package.json' },
+    limits: { maxFiles: 12, maxFileBytes: SCOPE_LIMITS.fileBytes, maxTotalBytes: SCOPE_LIMITS.totalBytes },
+  };
+}
+
 export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDir, '..'), fixtures = DEFAULT_FIXTURES, nodePath = process.execPath, sandboxExecPath = SANDBOX_EXEC, capabilityOverride = null } = {}) {
   const registry = new Map(Object.values(fixtures).map((fixture) => [fixture.id, fixture]));
   const fixedWrapper = path.resolve(DEFAULT_WRAPPER);
+  const genericJsonWrapper = path.resolve(GENERIC_JSON_WRAPPER);
   const probeWrapper = path.resolve(DEFAULT_PROBE_WRAPPER);
+
+  function fixtureForTask(task) {
+    if (task.projectWorkspace?.fixtureId === GENERIC_FIXTURE_ID) {
+      const proposal = task.projectScopeProposal;
+      if (!proposal || proposal.status !== 'accepted' || task.projectWorkspace.proposalFingerprint !== proposal.fingerprint) return null;
+      return genericFixtureFromProposal(proposal, projectRoot);
+    }
+    return registry.get(task.projectWorkspace?.fixtureId);
+  }
 
   async function resolvedRuntime() {
     const resolvedNode = await fs.realpath(nodePath);
     const resolvedSandbox = await fs.realpath(sandboxExecPath);
     const resolvedWrapper = await fs.realpath(fixedWrapper);
+    const resolvedGenericJsonWrapper = await fs.realpath(genericJsonWrapper);
     const resolvedProbe = await fs.realpath(probeWrapper);
-    return { nodePath: resolvedNode, sandboxExecPath: resolvedSandbox, wrapperPath: resolvedWrapper, probePath: resolvedProbe };
+    return { nodePath: resolvedNode, sandboxExecPath: resolvedSandbox, wrapperPath: resolvedWrapper, genericJsonWrapperPath: resolvedGenericJsonWrapper, probePath: resolvedProbe };
   }
 
   async function capabilitySummary() {
@@ -775,6 +847,7 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
         sandboxExecSha256: sha256(await fs.readFile(runtime.sandboxExecPath)),
         hostVerifierSha256: sha256(await fs.readFile(HOST_VERIFIER_PATH)),
         wrapperSha256: sha256(await fs.readFile(runtime.wrapperPath)),
+        genericJsonWrapperSha256: sha256(await fs.readFile(runtime.genericJsonWrapperPath)),
         probeWrapperSha256: sha256(await fs.readFile(runtime.probePath)),
       };
       return { available: process.platform === 'darwin', reason: process.platform === 'darwin' ? '授权时仍会对实际候选路径运行完整隔离探针。' : '固定项目检查目前只支持通过探针验证的 macOS sandbox-exec。', fingerprint: fingerprint(base), ...base };
@@ -824,6 +897,19 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
       throw error;
     }
     const port = listener.address().port;
+    const signalCanary = spawn(runtime.nodePath, ['--max-old-space-size=32', '-e', 'setInterval(() => {}, 1000)'], {
+      shell: false, stdio: 'ignore', env: { LANG: 'C', LC_ALL: 'C' },
+    });
+    try {
+      await new Promise((resolve, reject) => {
+        signalCanary.once('spawn', resolve);
+        signalCanary.once('error', reject);
+      });
+    } catch (error) {
+      await new Promise((resolve) => listener.close(resolve));
+      await fs.unlink(otherTaskCanary).catch(() => {});
+      throw error;
+    }
     const cases = [
       ['positive-read', { action: 'positive-read', path: candidateModule, expectedBytes: candidateBefore.length, expectedSha256: sha256(candidateBefore) }],
       ['original-read-denied', { action: 'denied-read', path: originalFile }],
@@ -833,10 +919,12 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
       ['home-read-denied', { action: 'denied-read', path: os.homedir() }],
       ['outside-write-denied', { action: 'denied-write', path: outsideWrite }],
       ['candidate-write-denied', { action: 'denied-write', path: candidateWrite }],
+      ['process-signal-denied', { action: 'denied-signal', pid: signalCanary.pid }],
       ['spawn-denied', { action: 'denied-spawn' }],
       ['network-denied', { action: 'denied-network', port }],
       ['environment-clean', { action: 'clean-env' }],
     ];
+    let signalCanaryProtected = false;
     try {
       for (const [name, request] of cases) {
         const nonce = crypto.randomBytes(16).toString('hex');
@@ -855,23 +943,39 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
           profileSha256: result.profileSha256,
         });
       }
+      try { signalCanaryProtected = process.kill(signalCanary.pid, 0); }
+      catch { signalCanaryProtected = false; }
     } finally {
       await new Promise((resolve) => listener.close(resolve));
+      if (signalCanary.exitCode === null && signalCanary.signalCode === null) {
+        signalCanary.kill('SIGKILL');
+        await new Promise((resolve) => signalCanary.once('close', resolve));
+      }
       await fs.unlink(otherTaskCanary).catch(() => {});
     }
     const candidateAfter = await readRegular(candidateRoot, candidateRelative);
     const writesAbsent = !fsSync.existsSync(outsideWrite) && sha256(candidateBefore) === sha256(candidateAfter);
-    const available = probes.every((item) => item.accepted) && networkConnections === 0 && writesAbsent;
+    const available = probes.every((item) => item.accepted) && networkConnections === 0 && writesAbsent && signalCanaryProtected;
     const runtimeSummary = await capabilitySummary();
-    const summary = { available, reason: available ? '实际候选路径的隔离正负探针全部通过。' : '实际候选路径的隔离探针未全部通过，固定检查已关闭。', probes, networkConnections, writesAbsent, runtimeFingerprint: runtimeSummary.fingerprint };
-    summary.fingerprint = fingerprint({ profileVersion: PROFILE_VERSION, runtime: runtimeSummary, probes: probes.map(({ name, accepted, profileSha256 }) => ({ name, accepted, profileSha256 })), networkConnections, writesAbsent });
+    const summary = { available, reason: available ? '实际候选路径的隔离正负探针全部通过。' : '实际候选路径的隔离探针未全部通过，固定检查已关闭。', probes, networkConnections, writesAbsent, signalCanaryProtected, runtimeFingerprint: runtimeSummary.fingerprint };
+    summary.fingerprint = fingerprint({ profileVersion: PROFILE_VERSION, runtime: runtimeSummary, probes: probes.map(({ name, accepted, profileSha256 }) => ({ name, accepted, profileSha256 })), networkConnections, writesAbsent, signalCanaryProtected });
     return summary;
   }
 
   async function attachDraft(task, taskDir, body) {
     if (task.type !== 'project') throw new Error('只有代码项目任务可以授权项目工作区。');
     if (task.provider !== 'codex-cli') throw new Error('代码项目必须使用真实 Codex 提供者。');
-    const fixture = registry.get(String(body.fixtureId || ''));
+    let proposal = null;
+    let repository = null;
+    let fixture = registry.get(String(body.fixtureId || ''));
+    if (body.proposalId) {
+      proposal = task.projectScopeProposal;
+      if (!proposal || proposal.id !== body.proposalId || proposal.status !== 'accepted') throw conflict('项目范围建议尚未被明确接受或页面已过期。', 'project_scope_stale');
+      exactExpected(body, 'expectedProposalFingerprint', proposal.fingerprint);
+      repository = await registeredRepository(projectRoot);
+      if (!acceptedProposalCurrent(proposal, projectTaskBinding(task), repository.treeSha256)) throw conflict('目标输入或登记源码结构已变化，请重新整理并确认项目范围。', 'project_scope_stale');
+      fixture = genericFixtureFromProposal(proposal, projectRoot);
+    }
     if (!fixture) throw new Error('未知的固定项目工作区。');
     const binding = projectTaskBinding(task);
     exactExpected(body, 'expectedGoalVersionId', binding.goalVersionId);
@@ -918,32 +1022,46 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     const checkerSha256 = sha256(checkerBytes);
     const hostVerifierSha256 = sha256(await fs.readFile(HOST_VERIFIER_PATH));
     const wrapperSha256 = sha256(wrapperBytes);
-    const importedChecker = await import(`${pathToFileURL(resolveInside(finalSourceRoot, fixture.check.trustedParentPath)).href}?sha=${checkerSha256}`);
-    const contract = importedChecker.contract;
-    if (!contract || contract.id !== fixture.check.id || !Array.isArray(contract.cases) || !contract.cases.length) throw projectError('固定检查契约无效。', 'project_check_invalid');
-    const contractSha256 = contractFingerprint(fixture, contract);
-    const inputSetSha256 = fingerprint(contract.cases.map(({ id, input }) => ({ id, input })));
-    const expectedSetSha256 = fingerprint(contract.cases.map(({ id, expected }) => ({ id, expected })));
+    let checkDescriptors;
+    if (fixture.executionMode === GENERIC_EXECUTION_MODE) {
+      checkDescriptors = fixture.genericChecks.map((check) => {
+        const body = check.id === 'json-function-v1'
+          ? { id: check.id, modulePath: check.modulePath, namedExport: check.namedExport, cases: check.cases }
+          : { id: check.id, editablePaths: fixture.editablePaths };
+        return {
+          id: check.key, kind: check.id, specification: structuredClone(body),
+          trustedParentSha256: checkerSha256, hostVerifierSha256, trustedVerifierSha256: hostVerifierSha256,
+          childWrapperSha256: wrapperSha256, contractSha256: genericFingerprint(body),
+          inputSetSha256: genericFingerprint(check.cases?.map(({ id, args }) => ({ id, args })) || fixture.editablePaths),
+          expectedSetSha256: genericFingerprint(check.cases?.map(({ id, expected }) => ({ id, expected })) || []),
+          executionContractSha256: EXECUTION_CONTRACT_SHA256,
+        };
+      });
+    } else {
+      const importedChecker = await import(`${pathToFileURL(resolveInside(finalSourceRoot, fixture.check.trustedParentPath)).href}?sha=${checkerSha256}`);
+      const contract = importedChecker.contract;
+      if (!contract || contract.id !== fixture.check.id || !Array.isArray(contract.cases) || !contract.cases.length) throw projectError('固定检查契约无效。', 'project_check_invalid');
+      checkDescriptors = [{
+        id: fixture.check.id,
+        trustedParentSha256: checkerSha256,
+        hostVerifierSha256,
+        trustedVerifierSha256: hostVerifierSha256,
+        childWrapperSha256: wrapperSha256,
+        contractSha256: contractFingerprint(fixture, contract),
+        inputSetSha256: fingerprint(contract.cases.map(({ id, input }) => ({ id, input }))),
+        expectedSetSha256: fingerprint(contract.cases.map(({ id, expected }) => ({ id, expected }))),
+        executionContractSha256: EXECUTION_CONTRACT_SHA256,
+      }];
+    }
     const sandboxCapability = await probeCapability({
       grantRoot, originalRoot, candidateRoot: finalCandidateRoot,
       candidateModule: resolveInside(finalCandidateRoot, fixture.candidateModulePath),
-      trustedParentPath: resolveInside(finalSourceRoot, fixture.check.trustedParentPath), signal: null,
+      trustedParentPath: fixture.executionMode === GENERIC_EXECUTION_MODE ? HOST_VERIFIER_PATH : resolveInside(finalSourceRoot, fixture.check.trustedParentPath), signal: null,
     });
-    const checkDescriptor = {
-      id: fixture.check.id,
-      trustedParentSha256: checkerSha256,
-      hostVerifierSha256,
-      trustedVerifierSha256: hostVerifierSha256,
-      childWrapperSha256: wrapperSha256,
-      contractSha256,
-      inputSetSha256,
-      expectedSetSha256,
-      executionContractSha256: EXECUTION_CONTRACT_SHA256,
-    };
-    sandboxCapability.contractBindingFingerprint = fingerprint(checkDescriptor);
-    sandboxCapability.fingerprint = fingerprint({ probeFingerprint: sandboxCapability.fingerprint || null, checkDescriptor });
+    sandboxCapability.contractBindingFingerprint = fingerprint(checkDescriptors);
+    sandboxCapability.fingerprint = fingerprint({ probeFingerprint: sandboxCapability.fingerprint || null, checkDescriptors });
     const publicContractFingerprint = fingerprint(fixture.publicContract);
-    const scopeFingerprint = fingerprint({ policyVersion: POLICY_VERSION, fixtureId: fixture.id, executionMode: fixture.executionMode || null, publicContractFingerprint, grantId, sourceSnapshotSha256, readablePaths: fixture.readablePaths, editablePaths: fixture.editablePaths, checks: [checkDescriptor], sandboxCapabilityFingerprint: sandboxCapability.fingerprint || null, taskInputBinding: binding });
+    const scopeFingerprint = fingerprint({ policyVersion: POLICY_VERSION, fixtureId: fixture.id, proposalFingerprint: proposal?.fingerprint || null, executionMode: fixture.executionMode || null, publicContractFingerprint, grantId, sourceSnapshotSha256, readablePaths: fixture.readablePaths, editablePaths: fixture.editablePaths, checks: checkDescriptors, sandboxCapabilityFingerprint: sandboxCapability.fingerprint || null, taskInputBinding: binding });
     if (task.projectWorkspace) {
       task.projectWorkspaceHistory ??= [];
       task.projectWorkspaceHistory.push({ ...structuredClone(task.projectWorkspace), archivedAt: new Date().toISOString() });
@@ -952,10 +1070,12 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     task.projectWorkspace = {
       policyVersion: POLICY_VERSION, fixtureId: fixture.id, label: fixture.label, executionMode: fixture.executionMode || null,
       publicContract: structuredClone(fixture.publicContract), publicContractFingerprint, grantId,
+      proposalId: proposal?.id || null, proposalFingerprint: proposal?.fingerprint || null,
+      repositoryId: proposal?.repositoryId || null, repositoryTreeSha256: repository?.treeSha256 || null,
       status: sandboxCapability.available ? 'ready' : 'sandbox_unavailable',
       reason: sandboxCapability.available ? null : sandboxCapability.reason,
       sourceSnapshotId, sourceSnapshotSha256, sourceManifest: sourceManifestBefore,
-      readablePaths: [...fixture.readablePaths], editablePaths: [...fixture.editablePaths], checks: [checkDescriptor],
+      readablePaths: [...fixture.readablePaths], editablePaths: [...fixture.editablePaths], checks: checkDescriptors,
       taskInputBinding: binding,
       scopeFingerprint, grantedAt: new Date().toISOString(), grantRelativeRoot,
       originalManifestSha256: sourceSnapshotSha256, sandboxCapability,
@@ -972,12 +1092,16 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
   async function assertOriginalCurrent(task) {
     assertWorkspaceCurrent(task);
     const workspace = task.projectWorkspace;
-    const fixture = registry.get(workspace?.fixtureId);
+    const fixture = fixtureForTask(task);
     if (!fixture) throw new Error('项目 fixture 已不可用。');
     if (!workspaceMatchesFixtureDefinition(workspace, fixture)) {
       throw conflict('固定项目的公开输入接口或执行模式已变化，请重新授权工作区。', 'project_contract_changed');
     }
     const root = await fs.realpath(fixture.sourceRoot);
+    if (fixture.executionMode === GENERIC_EXECUTION_MODE) {
+      const repository = await registeredRepository(projectRoot);
+      if (repository.treeSha256 !== workspace.repositoryTreeSha256) throw conflict('登记源码结构已在授权后变化，请重新整理并授权范围。', 'project_source_changed');
+    }
     const current = await manifestFor(root, fixture.snapshotPaths, fixture.limits);
     if (manifestHash(current) !== workspace.originalManifestSha256) throw conflict('原始项目已在授权后变化，请重新授权工作区。', 'project_source_changed');
     return fixture;
@@ -988,7 +1112,7 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     if (!workspace) throw new Error('尚未授权项目工作区。');
     assertWorkspaceCurrent(task);
     if (workspace.status !== 'ready') throw new Error(workspace.reason || '固定项目检查的隔离能力不可用。');
-    const fixture = registry.get(workspace.fixtureId);
+    const fixture = fixtureForTask(task);
     if (!fixture) throw projectError('固定项目工作区定义不可用。', 'project_fixture_unavailable');
     const currentBinding = projectTaskBinding(task);
     const runId = task.execution?.id || null;
@@ -1094,6 +1218,96 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     return record;
   }
 
+  async function runGenericCheck({ task, taskDir, item, signal, checkId }) {
+    const { workspace, candidate, fixture } = await ensureCandidateOwner(task, taskDir, item);
+    const specification = fixture.genericChecks.find((entry) => entry.key === checkId);
+    const descriptor = workspace.checks.find((entry) => entry.id === checkId);
+    if (!specification || !descriptor) throw projectError('未知或未授权的固定检查。', 'project_check_invalid');
+    const candidateRoot = resolveInside(taskDir, candidate.relativeRoot);
+    const before = await manifestFor(candidateRoot, fixture.readablePaths, fixture.limits);
+    if (manifestHash(before) !== candidate.candidateSha256) throw conflict('候选已在固定检查前变化。');
+    const runtime = await resolvedRuntime();
+    const runtimeSummary = await capabilitySummary();
+    if (!runtimeSummary.available || runtimeSummary.fingerprint !== workspace.sandboxCapability.runtimeFingerprint) throw conflict('固定检查运行时已变化，请重新授权。', 'project_runtime_changed');
+    const sourceRoot = resolveInside(taskDir, path.posix.join(workspace.grantRelativeRoot, 'source'));
+    const checkerBytes = await readRegular(sourceRoot, fixture.check.trustedParentPath);
+    const wrapperBytes = await fs.readFile(runtime.genericJsonWrapperPath);
+    const specificationBody = specification.id === 'json-function-v1'
+      ? { id: specification.id, modulePath: specification.modulePath, namedExport: specification.namedExport, cases: specification.cases }
+      : { id: specification.id, editablePaths: fixture.editablePaths };
+    if (descriptor.hostVerifierSha256 !== sha256(await fs.readFile(HOST_VERIFIER_PATH))
+      || descriptor.trustedParentSha256 !== sha256(checkerBytes)
+      || descriptor.childWrapperSha256 !== sha256(wrapperBytes)
+      || descriptor.contractSha256 !== genericFingerprint(specificationBody)
+      || descriptor.inputSetSha256 !== genericFingerprint(specification.cases?.map(({ id, args }) => ({ id, args })) || fixture.editablePaths)
+      || descriptor.expectedSetSha256 !== genericFingerprint(specification.cases?.map(({ id, expected }) => ({ id, expected })) || [])
+      || descriptor.executionContractSha256 !== EXECUTION_CONTRACT_SHA256) throw conflict('固定检查定义、wrapper 或 verifier 已变化。', 'project_check_changed');
+    const caseResults = [];
+    if (specification.id === 'node-syntax-v1') {
+      for (const relative of fixture.editablePaths) {
+        const candidateFile = resolveInside(candidateRoot, relative);
+        const source = (await readRegular(candidateRoot, relative)).toString('utf8');
+        if (fixture.genericChecks.some((entry) => entry.id === 'json-function-v1' && entry.modulePath === relative)) assertGenericModulePolicy(source);
+        const profile = sandboxProfile({ nodePath: runtime.nodePath, readableFiles: [candidateFile] });
+        const result = await runChild(runtime.sandboxExecPath, ['-p', profile, runtime.nodePath, '--max-old-space-size=64', '--check', candidateFile], {
+          env: { LANG: 'C', LC_ALL: 'C' }, timeoutMs: 2_000, signal, cwd: candidateRoot,
+        });
+        const passed = result.code === 0 && !result.signal && !result.timedOut && !result.truncated && !result.outputLimitExceeded;
+        caseResults.push({
+          caseId: `syntax-${relative}`, passed, exitCode: result.code, signal: result.signal, timedOut: result.timedOut,
+          truncated: result.truncated, outputLimitExceeded: result.outputLimitExceeded,
+          stdoutBytes: result.stdoutBytes, stdoutPrefixSha256: result.stdoutPrefixSha256,
+          stderrBytes: result.stderrBytes, stderrPrefixSha256: result.stderrPrefixSha256,
+          elapsedMs: result.elapsedMs, profileSha256: sha256(profile), protocolCode: passed ? null : 'syntax_failed',
+        });
+      }
+    } else {
+      const candidateModule = resolveInside(candidateRoot, specification.modulePath);
+      assertGenericModulePolicy((await readRegular(candidateRoot, specification.modulePath)).toString('utf8'));
+      for (const testCase of specification.cases) {
+        assertPlainJson(testCase.args); assertPlainJson(testCase.expected);
+        const nonce = crypto.randomBytes(16).toString('hex');
+        const request = { caseId: testCase.id, nonce, exportName: specification.namedExport, args: testCase.args };
+        const child = await runSandboxed(runtime, [runtime.genericJsonWrapperPath, candidateModule], runtime.genericJsonWrapperPath, request, null, signal, 2_000, { args: [candidateModule], cwd: candidateRoot });
+        let passed = false;
+        let protocolCode = null;
+        try {
+          if (child.timedOut) throw Object.assign(new Error('timeout'), { code: 'timeout' });
+          if (child.outputLimitExceeded || child.truncated) throw Object.assign(new Error('output_limit'), { code: 'output_limit' });
+          if (child.code !== 0 || child.signal) throw Object.assign(new Error('abnormal_exit'), { code: 'abnormal_exit' });
+          const envelope = parseSingleEnvelope(child.stdout, ['type', 'caseId', 'nonce', 'value']);
+          if (envelope.type !== 'json-function-result-v1' || envelope.caseId !== testCase.id || envelope.nonce !== nonce) throw Object.assign(new Error('binding_mismatch'), { code: 'binding_mismatch' });
+          assertPlainJson(envelope.value);
+          if (canonical(envelope.value) !== canonical(testCase.expected)) throw Object.assign(new Error('expected_mismatch'), { code: 'expected_mismatch' });
+          passed = true;
+        } catch (error) { protocolCode = error.code || 'protocol_invalid'; }
+        caseResults.push({
+          caseId: testCase.id, passed, exitCode: child.code, signal: child.signal, timedOut: child.timedOut,
+          truncated: child.truncated, outputLimitExceeded: child.outputLimitExceeded,
+          stdoutBytes: child.stdoutBytes, stdoutPrefixSha256: child.stdoutPrefixSha256,
+          stderrBytes: child.stderrBytes, stderrPrefixSha256: child.stderrPrefixSha256,
+          elapsedMs: child.elapsedMs, profileSha256: child.profileSha256, protocolCode,
+        });
+      }
+    }
+    const after = await manifestFor(candidateRoot, fixture.readablePaths, fixture.limits);
+    if (manifestHash(after) !== candidate.candidateSha256 || canonical(before) !== canonical(after)) throw conflict('候选在固定检查期间变化，结果已拒收。');
+    const casePassed = caseResults.filter((entry) => entry.passed).length;
+    const record = {
+      id: makeId('check'), checkId, passed: casePassed === caseResults.length,
+      hostVerifierSha256: descriptor.hostVerifierSha256, trustedParentSha256: descriptor.trustedParentSha256,
+      childWrapperSha256: descriptor.childWrapperSha256, contractSha256: descriptor.contractSha256,
+      inputSetSha256: descriptor.inputSetSha256, expectedSetSha256: descriptor.expectedSetSha256,
+      executionContractSha256: descriptor.executionContractSha256, runtimeFingerprint: runtimeSummary.fingerprint,
+      caseTotal: caseResults.length, casePassed, resultDigest: checkResultDigest(caseResults),
+      candidateSha256: candidate.candidateSha256, workspaceScopeFingerprint: workspace.scopeFingerprint,
+      sandboxCapabilityFingerprint: workspace.sandboxCapability.fingerprint, taskInputBinding: projectTaskBinding(task), cases: caseResults,
+      completedAt: new Date().toISOString(),
+    };
+    candidate.checks.push(record); candidate.checks = candidate.checks.slice(-30); candidate.updatedAt = record.completedAt;
+    return record;
+  }
+
   async function runTool(store, taskId, itemId, request, { signal } = {}) {
     const changed = await store.mutate(taskId, async (task) => {
       const item = task.workItems.find((entry) => entry.id === itemId);
@@ -1123,6 +1337,54 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
         };
       }
       if (request.tool === 'workspace.write') {
+        if (fixture.executionMode === GENERIC_EXECUTION_MODE) {
+          if (args.expectedCandidateSha256 !== candidate.candidateSha256) throw conflict('候选已变化，迟到批量修改已拒绝。');
+          const changes = Array.isArray(args.changes) ? args.changes : [];
+          if (!changes.length || changes.length > fixture.editablePaths.length) throw projectError('批量候选必须包含 1 个到授权上限内的文件修改。', 'project_write_batch_invalid');
+          const names = changes.map((entry) => assertRelative(entry.path));
+          if (new Set(names).size !== names.length || names.some((relative) => !fixture.editablePaths.includes(relative))) throw projectError('批量候选包含重复或未授权文件。', 'project_write_batch_invalid');
+          const manifestBefore = await manifestFor(candidateRoot, fixture.readablePaths, fixture.limits);
+          if (manifestHash(manifestBefore) !== candidate.candidateSha256) throw conflict('候选文件已在工具记录外变化，迟到修改已拒绝。');
+          for (const entry of changes) {
+            const before = await readRegular(candidateRoot, entry.path);
+            if (entry.expectedFileSha256 !== sha256(before)) throw conflict(`文件已变化，迟到修改已拒绝：${entry.path}`);
+            const content = String(entry.content ?? '');
+            const bytes = Buffer.from(content, 'utf8');
+            if (content.includes('\u0000') || bytes.length > fixture.limits.maxFileBytes) throw projectError('候选文件含空字符或超过大小上限。', 'project_write_batch_invalid');
+            if (fixture.genericChecks.some((check) => check.id === 'json-function-v1' && check.modulePath === entry.path)) assertGenericModulePolicy(content);
+          }
+          const nextRevision = candidate.revision + 1;
+          const grantRoot = resolveInside(store.taskDir(taskId), workspace.grantRelativeRoot);
+          const finalRelativeRoot = path.posix.join(workspace.grantRelativeRoot, `candidate-${nextRevision}`);
+          const finalRoot = resolveInside(store.taskDir(taskId), finalRelativeRoot);
+          const stagingRoot = path.join(grantRoot, `.candidate-${nextRevision}-${crypto.randomUUID()}.tmp`);
+          await copyManifest(candidateRoot, stagingRoot, manifestBefore);
+          try {
+            for (const entry of changes) await writeAtomicText(stagingRoot, entry.path, Buffer.from(String(entry.content), 'utf8'));
+            const nextManifest = await manifestFor(stagingRoot, fixture.readablePaths, fixture.limits);
+            const nextSha = manifestHash(nextManifest);
+            const stagedDiff = await diffCandidate(sourceRoot, stagingRoot, fixture.editablePaths, fixture);
+            if (!stagedDiff.changes.length) throw projectError('候选没有产生实际源码变化；事务已停止，不会隐式重试。', 'project_no_change');
+            await fs.rename(stagingRoot, finalRoot);
+            candidate.revision = nextRevision;
+            candidate.relativeRoot = finalRelativeRoot;
+            candidate.manifest = nextManifest;
+            candidate.candidateSha256 = nextSha;
+            candidate.mutationSequence += 1;
+            candidate.checks = [];
+            candidate.sourceIntegrity = null;
+            candidate.diffSha256 = stagedDiff.diffSha256;
+            candidate.updatedAt = new Date().toISOString();
+            return {
+              changes: changes.map((entry) => ({ path: entry.path, bytes: Buffer.byteLength(String(entry.content)), fileSha256: sha256(Buffer.from(String(entry.content), 'utf8')) })),
+              candidateSha256: nextSha, mutationSequence: candidate.mutationSequence,
+              diffSha256: stagedDiff.diffSha256, workspaceScopeFingerprint: workspace.scopeFingerprint,
+            };
+          } catch (error) {
+            await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
+            throw error;
+          }
+        }
         const relative = assertRelative(args.path);
         if (!fixture.editablePaths.includes(relative)) throw new Error('这个文件不在当前工作区的可修改范围。');
         if (args.expectedCandidateSha256 !== candidate.candidateSha256) throw conflict('候选已变化，迟到修改已拒绝。');
@@ -1169,6 +1431,11 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
         return { ...diff, sourceIntegrity, sourceSnapshotSha256: workspace.sourceSnapshotSha256, candidateSha256: candidate.candidateSha256, workspaceScopeFingerprint: workspace.scopeFingerprint };
       }
       if (request.tool === 'workspace.check') {
+        if (fixture.executionMode === GENERIC_EXECUTION_MODE) {
+          if (!fixture.genericChecks.some((entry) => entry.key === args.checkId)) throw new Error('未知或未授权的固定检查。');
+          if (args.expectedCandidateSha256 !== candidate.candidateSha256) throw conflict('候选已变化，请对当前版本重新检查。');
+          return runGenericCheck({ task, taskDir: store.taskDir(taskId), item, signal, checkId: args.checkId });
+        }
         if (args.checkId !== fixture.check.id) throw new Error('未知或未授权的固定检查。');
         if (args.expectedCandidateSha256 !== candidate.candidateSha256) throw conflict('候选已变化，请对当前版本重新检查。');
         return runContractCheck({ task, taskDir: store.taskDir(taskId), item, signal });
@@ -1245,8 +1512,12 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
   }
 
   function assertCurrentPassingCheck(task, workspace, candidate, check, fixture, runtimeFingerprint) {
-    const descriptor = workspace.checks?.find((entry) => entry.id === fixture.check.id);
-    if (!descriptor || !check || check.checkId !== fixture.check.id || typeof check.id !== 'string'
+    return assertCurrentPassingCheckId(task, workspace, candidate, check, fixture.check.id, runtimeFingerprint);
+  }
+
+  function assertCurrentPassingCheckId(task, workspace, candidate, check, checkId, runtimeFingerprint) {
+    const descriptor = workspace.checks?.find((entry) => entry.id === checkId);
+    if (!descriptor || !check || check.checkId !== checkId || typeof check.id !== 'string'
       || check.passed !== true || !Array.isArray(check.cases) || check.cases.length === 0
       || check.caseTotal !== check.cases.length
       || check.casePassed !== check.cases.filter((entry) => entry.passed === true).length
@@ -1285,7 +1556,7 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     if (!currentRuntime.available || currentRuntime.fingerprint !== workspace.sandboxCapability.runtimeFingerprint) throw conflict('系统、Node、sandbox-exec、可信 verifier 或固定 wrapper 已变化。', 'project_runtime_changed');
     const sourceIntegrity = await sourceIntegrityEvidence(task, sourceRoot, fixture);
     const checkerBytes = await readRegular(sourceRoot, fixture.check.trustedParentPath);
-    if (sha256(checkerBytes) !== workspace.checks[0].trustedParentSha256) throw conflict('固定检查契约文件已变化。', 'project_check_changed');
+    if (workspace.checks.some((entry) => entry.trustedParentSha256 !== sha256(checkerBytes))) throw conflict('固定检查契约文件已变化。', 'project_check_changed');
     const manifest = await manifestFor(candidateRoot, fixture.readablePaths, fixture.limits);
     if (manifestHash(manifest) !== candidate.candidateSha256) throw conflict('候选文件已在工具记录外变化。');
     const sourceCandidateBytes = await readRegular(sourceRoot, fixture.candidateModulePath);
@@ -1293,9 +1564,11 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     assertRegionOutsideMatches(fixture, fixture.candidateModulePath, sourceCandidateBytes, candidateBytes);
     const diff = await diffCandidate(sourceRoot, candidateRoot, fixture.editablePaths, fixture);
     if (!diff.changes.length) throw new Error('代码候选没有实际修改。');
-    const check = candidate.checks.findLast((entry) => entry.passed && entry.candidateSha256 === candidate.candidateSha256);
-    if (!check) throw new Error('当前代码候选尚未通过固定检查。');
-    assertCurrentPassingCheck(task, workspace, candidate, check, fixture, currentRuntime.fingerprint);
+    const checks = fixture.executionMode === GENERIC_EXECUTION_MODE
+      ? workspace.checks.map((descriptor) => candidate.checks.findLast((entry) => entry.checkId === descriptor.id && entry.passed && entry.candidateSha256 === candidate.candidateSha256))
+      : [candidate.checks.findLast((entry) => entry.passed && entry.candidateSha256 === candidate.candidateSha256)];
+    if (checks.some((entry) => !entry)) throw new Error('当前代码候选尚未通过全部固定检查。');
+    checks.forEach((entry) => assertCurrentPassingCheckId(task, workspace, candidate, entry, entry.checkId, currentRuntime.fingerprint));
     const patchRelativePath = path.posix.join(workspace.grantRelativeRoot, 'artifacts', `${candidate.id}.patch`);
     await writeAtomicText(taskDir, patchRelativePath, diff.patch);
     return {
@@ -1306,7 +1579,7 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
       runtimeFingerprint: workspace.sandboxCapability.runtimeFingerprint,
       sourceIntegrity, sourceIntegritySha256: sourceIntegrity.integritySha256,
       regionIntegrity: diff.regionIntegrity, regionIntegritySha256: diff.regionIntegrity?.integritySha256 || null,
-      changes: diff.changes, patch: diff.patch, checks: [structuredClone(check)], patchRelativePath, patchSha256: sha256(diff.patch),
+      changes: diff.changes, patch: diff.patch, checks: checks.map((entry) => structuredClone(entry)), patchRelativePath, patchSha256: sha256(diff.patch),
       taskInputBinding: projectTaskBinding(task),
     };
   }
@@ -1351,23 +1624,68 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
     const hostVerifierSha256 = sha256(await fs.readFile(HOST_VERIFIER_PATH));
     const fixtureWrapper = wrapperPathFor(fixture);
     const wrapperBytes = await fs.readFile(fixtureWrapper);
-    const evidenceCheck = evidence.checks?.[0];
-    assertCurrentPassingCheck(task, workspace, workspace.candidate, evidenceCheck, fixture, runtime.fingerprint);
-    if (!evidenceCheck || evidenceCheck.executionContractSha256 !== EXECUTION_CONTRACT_SHA256
-      || hostVerifierSha256 !== evidenceCheck.hostVerifierSha256
-      || sha256(checkerBytes) !== evidenceCheck.trustedParentSha256 || sha256(wrapperBytes) !== evidenceCheck.childWrapperSha256) throw conflict('可信 verifier、固定 wrapper 或执行契约已变化。', 'project_runtime_changed');
-    const imported = await import(`${pathToFileURL(resolveInside(sourceRoot, fixture.check.trustedParentPath)).href}?sha=${sha256(checkerBytes)}`);
-    const contract = imported.contract;
-    const contractSha256 = contractFingerprint(fixture, contract);
-    const inputSetSha256 = fingerprint(contract.cases.map(({ id, input }) => ({ id, input })));
-    const expectedSetSha256 = fingerprint(contract.cases.map(({ id, expected }) => ({ id, expected })));
-    if (contractSha256 !== evidenceCheck.contractSha256 || inputSetSha256 !== evidenceCheck.inputSetSha256 || expectedSetSha256 !== evidenceCheck.expectedSetSha256) throw conflict('固定检查契约已变化。', 'project_runtime_changed');
+    const expectedCheckIds = workspace.checks.map((entry) => entry.id).sort();
+    if (canonical((evidence.checks || []).map((entry) => entry.checkId).sort()) !== canonical(expectedCheckIds)) throw conflict('固定检查证据集合缺失或多余。', 'project_check_stale');
+    for (const evidenceCheck of evidence.checks) {
+      assertCurrentPassingCheckId(task, workspace, workspace.candidate, evidenceCheck, evidenceCheck.checkId, runtime.fingerprint);
+      if (evidenceCheck.executionContractSha256 !== EXECUTION_CONTRACT_SHA256
+        || hostVerifierSha256 !== evidenceCheck.hostVerifierSha256
+        || sha256(checkerBytes) !== evidenceCheck.trustedParentSha256 || sha256(wrapperBytes) !== evidenceCheck.childWrapperSha256) throw conflict('可信 verifier、固定 wrapper 或执行契约已变化。', 'project_runtime_changed');
+    }
+    if (fixture.executionMode !== GENERIC_EXECUTION_MODE) {
+      const evidenceCheck = evidence.checks[0];
+      const imported = await import(`${pathToFileURL(resolveInside(sourceRoot, fixture.check.trustedParentPath)).href}?sha=${sha256(checkerBytes)}`);
+      const contract = imported.contract;
+      const contractSha256 = contractFingerprint(fixture, contract);
+      const inputSetSha256 = fingerprint(contract.cases.map(({ id, input }) => ({ id, input })));
+      const expectedSetSha256 = fingerprint(contract.cases.map(({ id, expected }) => ({ id, expected })));
+      if (contractSha256 !== evidenceCheck.contractSha256 || inputSetSha256 !== evidenceCheck.inputSetSha256 || expectedSetSha256 !== evidenceCheck.expectedSetSha256) throw conflict('固定检查契约已变化。', 'project_runtime_changed');
+    }
     const patch = await readRegular(taskDir, evidence.patchRelativePath, MAX_TOTAL_BYTES);
     if (sha256(patch) !== evidence.patchSha256 || patch.toString('utf8') !== evidence.patch) throw conflict('代码 patch 文件已变化。');
     return patch;
   }
 
   return {
+    async repository() {
+      const repository = await registeredRepository(projectRoot);
+      return {
+        repositoryId: repository.repositoryId,
+        id: repository.repositoryId,
+        label: 'Irixi Office Agent',
+        files: repository.files.map(({ path: relative, bytes, sha256: hash, selectable }) => ({ path: relative, bytes, sha256: hash, selectable })),
+        treeSha256: repository.treeSha256,
+        limits: structuredClone(SCOPE_LIMITS),
+        checkCatalog: [
+          { id: 'node-syntax-v1', purpose: '对获准修改的 JS/MJS 文件运行固定 Node 语法检查。' },
+          { id: 'json-function-v1', purpose: '逐用例隔离调用无 import 的同步 named export；expected 只由宿主保存和比较。' },
+        ],
+      };
+    },
+    async scopeInput() {
+      const repository = await registeredRepository(projectRoot);
+      return {
+        repositoryId: repository.repositoryId,
+        treeSha256: repository.treeSha256,
+        files: await Promise.all(repository.files.map(async (entry) => ({
+          path: entry.path,
+          bytes: entry.bytes,
+          sha256: entry.sha256,
+          selectable: entry.selectable !== false,
+          excerpt: entry.selectable === false ? null : (await readRegular(projectRoot, entry.path, SCOPE_LIMITS.fileBytes)).toString('utf8').slice(0, 3_000),
+          excerptTruncated: entry.selectable !== false && entry.bytes > 3_000,
+        }))),
+        limits: structuredClone(SCOPE_LIMITS),
+        checkCatalog: [
+          { id: 'node-syntax-v1', purpose: '固定 Node 语法检查' },
+          { id: 'json-function-v1', purpose: '同步 named export 的父侧 JSON 用例比较' },
+        ],
+      };
+    },
+    async assertWorkspaceReady(task) {
+      try { await assertOriginalCurrent(task); return true; }
+      catch (error) { throw sanitizeProjectError(error, '代码工作区已变化，请重新整理范围并授权。'); }
+    },
     async capabilities() {
       const base = await capabilitySummary();
       const fixtureCapabilities = await Promise.all([...registry.values()].map(async (fixture) => {
@@ -1418,5 +1736,5 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
 export const __test = {
   canonical, fingerprint, assertRelative, resolveInside, manifestFor, manifestHash,
   sandboxProfile, parseSingleEnvelope, diffCandidate, unifiedPatch, applySingleHunk, sameBinding,
-  runChild, PROFILE_TEMPLATE_SHA256, EXECUTION_CONTRACT_SHA256, DEFAULT_FIXTURES,
+  runChild, assertGenericModulePolicy, PROFILE_TEMPLATE_SHA256, EXECUTION_CONTRACT_SHA256, DEFAULT_FIXTURES,
 };
