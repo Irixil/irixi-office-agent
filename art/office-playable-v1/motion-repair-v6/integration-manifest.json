@@ -1,0 +1,88 @@
+{
+  "id": "office-playable-motion-v6-integration",
+  "status": "art-contract-ready-runtime-verification-and-user-visual-acceptance-pending",
+  "supersedesForIntegration": "../seated-work-v5 and concept-runtime-v4 steward-mole state art",
+  "room": "../concept-runtime-v4/room-base-1440x810.png",
+  "secondFloorFunctional": false,
+  "seatedRoles": {
+    "writer": {
+      "action": "noteTaking",
+      "runtimeKeys": ["noteTaking", "working"],
+      "safeSwitchFrameIndices": [0,1,12,13],
+      "manifest": "writer/note-taking-v6/manifest.json",
+      "sheet": "writer/note-taking-v6/spritesheet.png",
+      "frameDurationsMs": [420,160,180,150,170,240,150,170,320,170,160,260,180,420]
+    },
+    "researcher": {
+      "action": "researchWriting",
+      "runtimeKeys": ["researchWriting", "working"],
+      "safeSwitchFrameIndices": [0,1,12,13],
+      "manifest": "researcher/research-writing-v6/manifest.json",
+      "sheet": "researcher/research-writing-v6/spritesheet.png",
+      "frameDurationsMs": [480,180,200,160,200,300,170,220,520,180,170,260,180,480]
+    },
+    "reviewer": {
+      "action": "manuscriptReview",
+      "runtimeKeys": ["manuscriptReview", "working"],
+      "safeSwitchFrameIndices": [0,1,12,13],
+      "manifest": "reviewer/manuscript-review-v6/manifest.json",
+      "sheet": "reviewer/manuscript-review-v6/spritesheet.png",
+      "frameDurationsMs": [560,190,210,180,220,340,180,240,620,210,190,300,200,560]
+    },
+    "archivist": {
+      "action": "stampDocument",
+      "runtimeKeys": ["stampDocument", "working"],
+      "safeSwitchFrameIndices": [0,1,12,13],
+      "manifest": "archivist/stamp-document-v6/manifest.json",
+      "sheet": "archivist/stamp-document-v6/spritesheet.png",
+      "frameDurationsMs": [440,170,190,150,180,260,150,190,420,180,170,280,170,440]
+    }
+  },
+  "stewardMole": {
+    "manifest": "steward-mole/manifest.json",
+    "routeContract": "steward-mole/route-contract.json",
+    "behaviorSequence": [
+      "wait-empty",
+      "pickup-books",
+      "walk-carry-down",
+      "walk-carry-left",
+      "walk-carry-up",
+      "shelve-books",
+      "walk-empty-down",
+      "walk-empty-right",
+      "walk-empty-up",
+      "wait-empty"
+    ],
+    "homeWorldFoot": [960,310],
+    "shelfWorldFoot": [548,256],
+    "outboundWaypoints": [[960,310],[960,400],[548,400],[548,256]],
+    "returnWaypoints": [[548,256],[548,400],[960,400],[960,310]],
+    "propVisibility": {
+      "fixedDeskStackWorldBBox": [960,269,1022,309],
+      "hideFixedDeskStackWhen": "pickup-books starts",
+      "moleOwnsStackFromPickupFrame": 4,
+      "shelveFrameCount": 7,
+      "shelfOwnsStackAfterShelveFrame": 4,
+      "shelfPatch": "steward-mole/props/book-stack-shelved-patch.png",
+      "shelfPatchWorldBBox": [508,80,578,137],
+      "returnState": "empty-handed"
+    }
+  },
+  "evidence": {
+    "loopQa": "loop-qa.json",
+    "writer30s": "writer/note-taking-v6/room-preview-30s.gif",
+    "researcher30s": "researcher/research-writing-v6/room-preview-30s.gif",
+    "reviewer30s": "reviewer/manuscript-review-v6/room-preview-30s.gif",
+    "archivist30s": "archivist/stamp-document-v6/room-preview-30s.gif",
+    "moleDelivery30s": "steward-mole/evidence/delivery-loop-room-preview-30s.gif",
+    "molePickupWorldStages": "steward-mole/evidence/pickup-world-contact-stages.png",
+    "moleShelveWorldStages": "steward-mole/evidence/shelve-world-contact-stages.png"
+  },
+  "integrationNotes": [
+    "Use each seated manifest's frameDurationsMs; fallbackFrameDurationMs is compatibility-only.",
+    "Do not mirror mole walk sheets; all eight directional empty/carry sheets are authored separately.",
+    "Apply the book prop visibility handoff exactly at the listed pickup and shelve frame boundaries.",
+    "The route remains entirely on the first floor; stairs and second floor stay disabled.",
+    "Art packaging is complete, but live runtime state switching, collision, timing and user visual acceptance remain pending."
+  ]
+}

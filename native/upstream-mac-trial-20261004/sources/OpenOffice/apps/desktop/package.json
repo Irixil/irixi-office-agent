@@ -1,0 +1,20 @@
+{
+  "name": "bit-office-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "predev": "mkdir -p src-tauri/sidecar/web && touch src-tauri/sidecar/gateway.js src-tauri/sidecar/node",
+    "dev": "[ -f \"$HOME/.cargo/env\" ] && . \"$HOME/.cargo/env\"; tauri dev",
+    "build": "[ -f \"$HOME/.cargo/env\" ] && . \"$HOME/.cargo/env\"; tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@tauri-apps/plugin-autostart": "^2.0.0",
+    "@tauri-apps/plugin-notification": "^2.0.0"
+  }
+}

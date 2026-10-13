@@ -1,0 +1,569 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  overflow: hidden;
+  height: 100%;
+}
+html {
+  background: #0a0a0b;
+}
+
+:root {
+  /* ── Office scene (pixel art, warm purple) ── */
+  --office-bg: #16122a;
+  --office-panel: #1e1a30;
+  --office-border: #3d2e54;
+  --office-text: #eddcb8;
+  --office-gold: #e8b040;
+
+  /* ── Console/chat (Studio theme defaults — neutral gray + blue accent) ── */
+  --term-bg: #0a0a0b;
+  --term-panel: #111113;
+  --term-card: #18181b;
+  --term-surface: #18181b;
+  --term-border: #27272a;
+  --term-border-dim: #1c1c1f;
+  --term-green: #3b82f6;
+  --term-green-dim: #64748b;
+  --term-text: #94a3b8;
+  --term-text-bright: #e2e8f0;
+  --term-accent: #3b82f6;
+  --term-accent-rgb: 59,130,246;
+  --term-code-bg: #09090b;
+  --term-code-text: #94a3b8;
+  --term-scroll-thumb: #27272a;
+  --term-sem-green: #22c55e;
+  --term-sem-yellow: #eab308;
+  --term-sem-red: #ef4444;
+  --term-sem-blue: #3b82f6;
+  --term-sem-purple: #a78bfa;
+  --term-sem-cyan: #06b6d4;
+
+  /* ── Design Tokens ── */
+  /* Font — sans for UI chrome, mono for code/data */
+  --font-sans: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  --font-size-base: 13px;
+  --font-size-sm: 12px;
+  --font-size-xs: 11px;
+
+  /* Spacing (4px grid) */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Border radius — modern: rounded for UI, sharp for code */
+  --radius-none: 0px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Shadows / Elevation — 4-tier depth system */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 0 var(--term-border-dim);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35), 0 4px 16px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4), 0 8px 32px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 8px 24px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.4);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 -1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-inset-deep: inset 0 3px 8px rgba(0, 0, 0, 0.4), inset 0 -1px 3px rgba(0, 0, 0, 0.2);
+
+  /* Surface highlight — subtle top-edge light for raised panels */
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --highlight-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* Separator system — structural vs content dividers */
+  --separator-groove-dark: rgba(0, 0, 0, 0.5);
+  --separator-groove-light: rgba(255, 255, 255, 0.04);
+  --separator-subtle: rgba(255, 255, 255, 0.025);
+
+  /* Motion */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ── Legacy aliases (for components not yet migrated) ── */
+  --px-bg-deep: var(--office-bg);
+  --px-bg-panel: var(--office-panel);
+  --px-bg-card: #231e38;
+  --px-bg-chat: var(--term-surface);
+  --px-border: var(--office-border);
+  --px-border-warm: #5a3d14;
+  --px-gold: #e8b040;
+  --px-gold-dim: #a87820;
+  --px-text: #eddcb8;
+  --px-text-muted: #9a8a68;
+  --px-text-dim: #6a5a48;
+  --px-amber: #e0900a;
+  --px-amber-bg: rgba(232, 176, 64, 0.14);
+}
+/* ── Theme transition smoothing ──
+   Smooth cross-fade when switching between terminal themes */
+body,
+.crt-screen,
+.term-info-bar,
+.term-input-area,
+.btb {
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+/* Hide native scrollbar, use custom indicator instead */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+/* Custom scrollbar indicator — Ghostty-style: thin, high-contrast, smooth */
+.custom-scrollbar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.custom-scrollbar.visible {
+  opacity: 1;
+}
+.custom-scrollbar-thumb {
+  position: absolute;
+  right: 1px;
+  width: 3px;
+  min-height: 24px;
+  background: var(--term-scroll-thumb);
+  border-radius: 1.5px;
+  transition: background 0.2s ease, width 0.15s ease;
+}
+.custom-scrollbar:hover .custom-scrollbar-thumb,
+.custom-scrollbar-thumb:hover {
+  width: 5px;
+  right: 0;
+  background: rgba(var(--term-accent-rgb), 0.25);
+}
+/* Custom select styling for WebView compatibility */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239a8a68'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  padding-right: 24px !important;
+  border-radius: 3px;
+}
+select option {
+  background: var(--term-panel);
+  color: var(--term-text);
+}
+.px-font {
+  font-family: 'Press Start 2P', monospace;
+}
+/* ── CRT Terminal Effects ── */
+@keyframes crt-scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+@keyframes crt-flicker {
+  0% { opacity: 0.98; }
+  5% { opacity: 0.96; }
+  10% { opacity: 0.98; }
+  15% { opacity: 0.97; }
+  20% { opacity: 0.99; }
+  50% { opacity: 0.96; }
+  80% { opacity: 0.98; }
+  100% { opacity: 0.97; }
+}
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes msg-fadein {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* CRT effects disabled — clean professional look */
+.crt-screen {
+  position: relative;
+}
+.crt-screen::after {
+  display: none;
+}
+.crt-scanline-bar {
+  display: none;
+}
+.term-msg {
+  animation: msg-fadein 0.12s ease-out;
+}
+.term-cursor {
+  display: inline-block;
+  animation: cursor-blink 1s step-end infinite;
+  color: var(--term-green);
+}
+/* ── Typography — Chat content uses mono, UI uses sans ──
+   Hierarchy via subtle size/weight differences. */
+.chat-markdown, .chat-markdown *,
+.term-msg, .term-msg *,
+.crt-screen a, .crt-screen code, .crt-screen span {
+  font-size: var(--font-size-base) !important; font-family: var(--font-mono) !important;
+  font-weight: 400 !important; line-height: 1.7 !important;
+  letter-spacing: -0.01em;
+}
+/* ── Headings: subtle differentiation ── */
+.chat-markdown h1 {
+  font-size: var(--font-size-base) !important; font-weight: 500 !important;
+  color: var(--term-text-bright) !important;
+  margin: 14px 0 6px !important; padding: 0 0 4px !important;
+  border-bottom: 1px solid var(--term-border-dim) !important;
+}
+.chat-markdown h2 {
+  font-size: var(--font-size-base) !important; font-weight: 500 !important;
+  color: var(--term-text-bright) !important;
+  margin: 12px 0 4px !important; padding: 0 !important;
+}
+.chat-markdown h3 {
+  font-size: var(--font-size-base) !important; font-weight: 500 !important;
+  color: var(--term-text) !important;
+  margin: 10px 0 3px !important; padding: 0 !important;
+}
+.chat-markdown h4, .chat-markdown h5, .chat-markdown h6 {
+  font-size: var(--font-size-base) !important; font-weight: 400 !important;
+  color: var(--term-text) !important;
+  margin: 8px 0 2px !important; padding: 0 !important;
+}
+/* ── Inline emphasis ── */
+.chat-markdown strong, .chat-markdown b {
+  font-weight: 500 !important; color: var(--term-text-bright) !important;
+}
+.chat-markdown em, .chat-markdown i {
+  font-style: italic !important; color: var(--term-text) !important;
+}
+/* ── Code: same color as body text — no color jump ── */
+.chat-markdown code {
+  font-size: inherit !important; font-family: inherit !important;
+  background: var(--term-code-bg) !important;
+  padding: 2px 6px !important; border-radius: var(--radius-sm) !important;
+  border: none !important;
+  color: var(--term-text) !important; opacity: 1 !important;
+}
+.chat-markdown pre {
+  margin: 6px 0 !important; padding: 10px 14px !important;
+  background: var(--term-code-bg) !important;
+  border-left: 2px solid var(--term-border-dim) !important;
+  border-radius: 0 !important;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.chat-markdown pre code {
+  color: var(--term-text) !important; opacity: 1 !important;
+  background: none !important; padding: 0 !important;
+  border: none !important; border-radius: 0 !important;
+  letter-spacing: 0 !important;
+}
+/* ── Block elements ── */
+.chat-markdown p { margin: 0 0 6px !important; }
+.chat-markdown p:last-child { margin-bottom: 0 !important; }
+.chat-markdown ul { margin: 4px 0 8px !important; padding-left: 20px !important; list-style-type: disc !important; }
+.chat-markdown ol { margin: 4px 0 8px !important; padding-left: 20px !important; list-style-type: decimal !important; }
+.chat-markdown li { margin: 2px 0 !important; }
+.chat-markdown li::marker { color: var(--term-dim) !important; }
+.chat-markdown hr { border: none !important; border-top: 1px solid var(--term-border-dim) !important; margin: 10px 0 !important; }
+.chat-markdown blockquote {
+  margin: 6px 0 !important; padding: 4px 12px !important;
+  border-left: 2px solid var(--term-border) !important;
+  color: var(--term-dim) !important;
+}
+/* ── Links: clean underline on hover ── */
+.chat-markdown a, .crt-screen a {
+  color: var(--term-green) !important; text-decoration: none !important;
+  transition: color 0.1s ease;
+}
+.chat-markdown a:hover, .crt-screen a:hover {
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+  text-decoration-thickness: 1px !important;
+}
+/* ── Tables ── */
+.chat-markdown table {
+  border-collapse: collapse !important; margin: 8px 0 !important; width: 100% !important;
+}
+.chat-markdown th {
+  padding: 4px 12px !important; text-align: left !important;
+  font-weight: 400 !important; color: var(--term-text) !important;
+  border-bottom: 1px solid var(--term-border) !important;
+}
+.chat-markdown td {
+  padding: 3px 12px !important;
+  border-bottom: 1px solid var(--term-border-dim) !important;
+}
+.chat-markdown tr:hover td {
+  background: rgba(var(--term-accent-rgb),0.03) !important;
+}
+@keyframes dot1 {
+  0%, 24%  { opacity: 0; }
+  25%, 100% { opacity: 1; }
+}
+@keyframes dot2 {
+  0%, 49%  { opacity: 0; }
+  50%, 100% { opacity: 1; }
+}
+@keyframes dot3 {
+  0%, 74%  { opacity: 0; }
+  75%, 100% { opacity: 1; }
+}
+.working-dots {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  vertical-align: middle;
+}
+.working-dots::before,
+.working-dots::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.working-dots::before {
+  animation: dot1 2s step-end infinite;
+}
+.working-dots::after {
+  animation: dot3 2s step-end infinite;
+}
+.working-dots-mid {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dot2 2s step-end infinite;
+}
+@keyframes px-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes px-pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(200,155,48,0); }
+  50% { box-shadow: 0 0 8px 2px rgba(200,155,48,0.25); }
+}
+/* ── Dot-grid background (disabled for clean look) ── */
+.term-dotgrid {
+  background-image: none;
+}
+/* ── Text rendering — Ghostty-grade: subpixel off, crisp edges ── */
+.crt-screen, .crt-screen * {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "liga" 1, "calt" 1, "ss01" 1;
+}
+/* ── Text selection — subtle, non-distracting ── */
+.crt-screen ::selection { background: rgba(var(--term-accent-rgb),0.15); color: var(--term-text-bright); }
+/* ── Input well — single subtle border, no double-ring ── */
+.term-input-well {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  background: var(--term-bg);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--term-border);
+  padding: 0 2px;
+  transition: border-color var(--duration-fast) ease;
+}
+.term-input-well:focus-within {
+  border-color: var(--term-green-dim);
+}
+/* ── Input focus — no outline ── */
+.term-input:focus { outline: none; }
+.term-input::placeholder { color: var(--term-green-dim); opacity: 0.5; }
+textarea::placeholder { color: var(--term-green-dim); opacity: 0.5; }
+/* ── Button — precise, no wobble ── */
+.term-btn { transition: border-color 0.15s ease, color 0.15s ease; }
+.term-btn:active { opacity: 0.85; }
+/* ── Horizontal scroll for paths ── */
+.term-path-scroll { overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.term-path-scroll::-webkit-scrollbar { display: none; }
+/* ── Scene loading overlay fade-out ── */
+@keyframes scene-overlay-fadeout {
+  from { opacity: 1; }
+  to { opacity: 0; visibility: hidden; }
+}
+@keyframes review-overlay-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Review scanning animation */
+@keyframes review-scan-sweep {
+  0%, 100% { top: 8%; }
+  50% { top: 88%; }
+}
+@keyframes review-scan-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; }
+}
+/* ── Chat area — recessed surface with subtle inset shadow ── */
+.term-chat-area {
+  background-image: none;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+/* ── Surface texture — subtle noise for raised panels ── */
+.term-info-bar,
+.btb,
+.tm-container,
+.cp-container,
+.tm-header,
+.tm-footer {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='4' height='4' fill='none'/%3E%3Crect width='1' height='1' x='0' y='0' fill='%23ffffff' fill-opacity='0.012'/%3E%3Crect width='1' height='1' x='2' y='2' fill='%23ffffff' fill-opacity='0.008'/%3E%3C/svg%3E"),
+    linear-gradient(to bottom, rgba(255,255,255,0.02) 0%, transparent 100%);
+}
+/* ── Clean mode: disable all textures and effects ── */
+.term-clean .crt-screen { animation: none !important; }
+.term-clean .crt-screen::after { display: none !important; }
+.term-clean .crt-scanline-bar { display: none !important; }
+.term-clean .term-dotgrid { background-image: none !important; }
+.term-clean .term-chat-area { background-image: none !important; }
+.term-clean .term-input:focus { animation: none !important; box-shadow: none !important; outline: none; }
+/* ── Kill child transitions during console expand/collapse (prevents layout thrash) ── */
+.console-transitioning * { transition: none !important; }
+/* ── Pause animations when page hidden (saves GPU) ── */
+.term-paused .crt-screen,
+.term-paused .crt-scanline-bar,
+.term-paused .term-cursor,
+.term-paused .working-dots,
+.term-paused .working-dots::before,
+.term-paused .working-dots::after,
+.term-paused .working-dots-mid {
+  animation-play-state: paused !important;
+}
+/* ── Ghostty-grade polish ── */
+/* Smooth momentum scrolling */
+[data-scrollbar] {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+/* Timestamp monospace alignment */
+.term-msg .term-ts {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0 !important;
+}
+/* Info bar — raised panel: shadow-fade replaces hard border */
+.term-info-bar {
+  box-shadow:
+    0 3px 6px -2px rgba(0, 0, 0, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    inset 0 -1px 0 var(--separator-groove-dark),
+    var(--highlight-top);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.025) 0%,
+    transparent 100%
+  );
+  border-bottom: none;
+}
+/* Input area — anchored bottom panel with stronger visual presence */
+.term-input-area {
+  transition: box-shadow 0.2s ease;
+  border-top: none;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  box-shadow:
+    0 -4px 12px -2px rgba(0, 0, 0, 0.5),
+    0 -1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 var(--separator-groove-light),
+    var(--highlight-top-strong);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.025) 0%,
+    transparent 40%
+  );
+}
+.term-input-area:focus-within {
+  box-shadow:
+    0 -4px 12px -2px rgba(0, 0, 0, 0.5),
+    0 -1px 3px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(var(--term-accent-rgb), 0.18),
+    var(--highlight-top-strong);
+}
+
+/* ── Global focus-visible — keyboard accessibility ── */
+:focus-visible {
+  outline: 1px solid var(--term-green);
+  outline-offset: 2px;
+}
+/* Suppress focus ring for mouse/touch interactions */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+/* Inputs already have their own focus treatment — no extra rings */
+.term-input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* ── Reduced motion — respect user preference ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Pane depth — each agent pane is a distinct elevated surface ── */
+/* Agent pane container (the outer div wrapping info-bar + chat + input) */
+[data-scrollbar] {
+  box-shadow: var(--shadow-inset);
+}
+
+/* ── Divider enhancement — groove depth between panes ── */
+/* Subtle center glow on hover */
+.pane-resize::before {
+  content: '';
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  left: 0;
+  width: 5px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(var(--term-accent-rgb), 0.05) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-normal) ease;
+}
+.pane-resize:hover::before {
+  opacity: 1;
+}
+
+/* ── Modal animation ── */
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-content-in {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}

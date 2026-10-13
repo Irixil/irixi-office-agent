@@ -1,0 +1,149 @@
+{
+  "id": "archivist-rest-states-v6",
+  "revision": "rest-states-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "role": "archivist",
+  "species": "fancy-rat",
+  "frameSize": [
+    192,
+    208
+  ],
+  "anchor": [
+    96,
+    194
+  ],
+  "worldAnchor": [
+    1200,
+    730
+  ],
+  "sharedScale": 0.305,
+  "fixedContentBottom": 136,
+  "workStateManifest": "../../motion-repair-v6/archivist/stamp-document-v6/manifest.json",
+  "workSafeSwitchFrameIndices": [
+    0,
+    1,
+    12,
+    13
+  ],
+  "workToRestPolicy": "leave work only on a listed work safe frame, enter idle frame 0; enter sleeping or slack only from idle frame 0 or 3",
+  "restToWorkPolicy": "finish sleeping/slack into idle frame 3, then return to work frame 0 or 13",
+  "states": {
+    "idle": {
+      "runtimeKey": "idle",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        760,
+        420,
+        240,
+        600
+      ],
+      "cycleDurationMs": 2020,
+      "loop": true,
+      "returnTo": null,
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        0,
+        3
+      ],
+      "spritesheet": "idle/spritesheet.png",
+      "fullframePattern": "idle/fullframe/archivist-idle_{index:02d}.png",
+      "keyframePattern": "idle/keyframe/archivist-idle_{index:02d}.png",
+      "keyframePrompts": "idle/keyframe-prompts.md",
+      "preview": "idle/preview.gif",
+      "roomPreview": "idle/room-preview.gif"
+    },
+    "sleeping": {
+      "runtimeKey": "sleeping",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        700,
+        700,
+        1300,
+        700
+      ],
+      "cycleDurationMs": 3400,
+      "loop": true,
+      "returnTo": null,
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        0,
+        3
+      ],
+      "spritesheet": "sleeping/spritesheet.png",
+      "fullframePattern": "sleeping/fullframe/archivist-sleeping_{index:02d}.png",
+      "keyframePattern": "sleeping/keyframe/archivist-sleeping_{index:02d}.png",
+      "keyframePrompts": "sleeping/keyframe-prompts.md",
+      "preview": "sleeping/preview.gif",
+      "roomPreview": "sleeping/room-preview.gif"
+    },
+    "slack": {
+      "runtimeKey": "slack",
+      "frameCount": 4,
+      "keyframeIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameDurationsMs": [
+        320,
+        360,
+        560,
+        420
+      ],
+      "cycleDurationMs": 1660,
+      "loop": false,
+      "returnTo": "idle",
+      "safeEntryFrameIndices": [
+        0
+      ],
+      "safeExitFrameIndices": [
+        3
+      ],
+      "spritesheet": "slack/spritesheet.png",
+      "fullframePattern": "slack/fullframe/archivist-slack_{index:02d}.png",
+      "keyframePattern": "slack/keyframe/archivist-slack_{index:02d}.png",
+      "keyframePrompts": "slack/keyframe-prompts.md",
+      "preview": "slack/preview.gif",
+      "roomPreview": "slack/room-preview.gif"
+    }
+  },
+  "propAndContactContract": "one red-handled brass stamp stands untouched on its base beside one cream document; both paws are empty",
+  "layering": [
+    "room base",
+    "existing v6 station dedup patch",
+    "rest-state seated character",
+    "existing desk-front occluder"
+  ],
+  "noCupProps": true,
+  "localRuntimeOnly": true,
+  "generation": "All twelve source pose sheets were generated with built-in ImageGen from the approved v6 role references. Local processing created no pose; it only split, keyed/cleaned alpha, used one shared role scale and fixed sheet transforms, aligned anchors, packed, timed and composed evidence.",
+  "sourceHashes": {
+    "idle": "7f870732cebc38ef57be01a73465273ea700e6db9b0e600d55edf32f40fa0e59",
+    "sleeping": "ee43f33f5f30dda6819065a3e438c9c7b7557550ed1c38a9b1fc1ff04efa0fac",
+    "slack": "c39afb9e6cd960551b85c55ad6131b3b2e41af48a1db7b85069fb71457d12aed"
+  },
+  "evidence": {
+    "actualPlayback": "evidence/archivist-rest-state-playback.gif",
+    "actualRoomPlayback": "evidence/archivist-rest-state-room-playback.gif",
+    "actualPlaybackFrameCount": 24,
+    "actualPlaybackDurationMs": 14520,
+    "validation": "validation.json"
+  }
+}

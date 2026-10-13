@@ -4,3 +4,27 @@ data/tasks/*
 .dz/
 .irixi-runtime/
 .impeccable/
+
+# Keep local credentials, runtime data and evidence out of commits.
+node_modules
+.env
+.env.*
+*.log
+*.jsonl
+*.pem
+*.key
+.codex/
+.agents/
+evidence/
+!docs/evidence/
+docs/evidence/*
+!docs/evidence/stage-progress-20261002.md
+
+# Private configuration and local preparation records are never upload inputs.
+**/*.local.json
+**/historical-bindings.local.json
+private-config-NOT-FOR-UPLOAD/
+source-snapshot-LOCAL-ONLY/
+*-PRIVATE.json
+LOCAL_REVIEW.md
+UPLOAD_REVIEW.md

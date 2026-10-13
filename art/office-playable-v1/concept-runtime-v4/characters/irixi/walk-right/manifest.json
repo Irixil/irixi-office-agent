@@ -1,0 +1,36 @@
+{
+  "id": "irixi-v4-walk-right-4",
+  "status": "integration-ready-art-validated",
+  "direction": "right",
+  "canvas": [
+    208,
+    256
+  ],
+  "anchor": [
+    104,
+    238
+  ],
+  "frameCount": 4,
+  "frameOrder": [
+    "fullframe/irixi-walk-right_00.png",
+    "fullframe/irixi-walk-right_01.png",
+    "fullframe/irixi-walk-right_02.png",
+    "fullframe/irixi-walk-right_03.png"
+  ],
+  "phaseOrder": [
+    "contact-a",
+    "down",
+    "passing-up",
+    "contact-b"
+  ],
+  "loop": true,
+  "targetFps": 60,
+  "sourceAnimationFps": 8.3333333333,
+  "frameDurationMs": 120,
+  "timingMode": "fixed-frame-duration",
+  "topology": {
+    "cane": "anatomical-left hand",
+    "monocle": "anatomical-right eye"
+  },
+  "localProcessing": "largest-component cleanup, equal-cell split, one shared scale, fixed anchor, packing only"
+}

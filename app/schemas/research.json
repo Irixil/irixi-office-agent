@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "statement": { "type": "string" },
+          "materialId": { "type": "string" },
+          "sourceName": { "type": "string" },
+          "locator": { "type": "string", "pattern": "^L[0-9]+-L[0-9]+$" },
+          "quote": { "type": "string" }
+        },
+        "required": ["statement", "materialId", "sourceName", "locator", "quote"],
+        "additionalProperties": false
+      }
+    },
+    "missingFacts": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["summary", "observations", "missingFacts"],
+  "additionalProperties": false
+}

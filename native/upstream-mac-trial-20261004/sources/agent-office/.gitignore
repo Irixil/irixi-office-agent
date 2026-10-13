@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*
+!.env.example
+
+# Data / SQLite
+*.db
+*.sqlite
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Phaser cache
+.phaser/
+
+# Docker volumes
+ollama/
+
+LINKEDIN_POST.md
+BLOG.md
+X_THREAD.md
+
+# Lockfiles (regenerated on install)
+package-lock.json
+
+# Docusaurus build
+docs/.docusaurus/
+docs/build/
+
+# Temp / debug files
+*.tmp
+*.bak

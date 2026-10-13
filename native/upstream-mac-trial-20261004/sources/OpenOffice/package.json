@@ -1,0 +1,24 @@
+{
+  "name": "bit-office-root",
+  "private": true,
+  "version": "0.1.101",
+  "scripts": {
+    "dev": "pnpm --filter bit-office dev & pnpm --filter web dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:gateway": "pnpm --filter bit-office dev",
+    "start": "pnpm --filter web build && pnpm --filter bit-office start",
+    "build": "pnpm -r build",
+    "build:release": "pnpm --filter web build && pnpm --filter bit-office build",
+    "publish:release": "pnpm run build:release && cd apps/gateway && npm publish",
+    "lint": "pnpm -r lint",
+    "start:local": "bash scripts/start-local.sh",
+    "dev:desktop": "pnpm --filter bit-office-desktop dev",
+    "build:desktop": "bash scripts/install-desktop.sh",
+    "postinstall": "bash scripts/install-agents.sh || true",
+    "agents:install": "bash scripts/install-agents.sh",
+    "agents:update": "bash scripts/install-agents.sh --update"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

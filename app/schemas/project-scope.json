@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "properties": {
+    "repositoryId": { "type": "string", "const": "irixi-office-agent" },
+    "goal": {
+      "type": "object",
+      "properties": {
+        "statement": { "type": "string" },
+        "successCriteria": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "type": "string" } },
+        "boundaries": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "type": "string" } }
+      },
+      "required": ["statement", "successCriteria", "boundaries"],
+      "additionalProperties": false
+    },
+    "deliverable": { "type": "string", "const": "project_patch" },
+    "readablePaths": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string" } },
+    "editablePaths": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "type": "string" } },
+    "checks": {
+      "type": "array", "minItems": 1, "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "enum": ["node-syntax-v1", "json-function-v1"] },
+          "modulePath": { "type": ["string", "null"] },
+          "namedExport": { "type": ["string", "null"] },
+          "cases": {
+            "type": ["array", "null"], "minItems": 1, "maxItems": 12,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "argsJson": { "type": "string" },
+                "expectedJson": { "type": "string" }
+              },
+              "required": ["id", "argsJson", "expectedJson"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["id", "modulePath", "namedExport", "cases"],
+        "additionalProperties": false
+      }
+    },
+    "rationale": { "type": "string" }
+  },
+  "required": ["repositoryId", "goal", "deliverable", "readablePaths", "editablePaths", "checks", "rationale"],
+  "additionalProperties": false
+}

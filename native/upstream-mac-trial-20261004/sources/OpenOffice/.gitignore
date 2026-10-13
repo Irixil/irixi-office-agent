@@ -1,0 +1,22 @@
+apps/web/.next
+apps/web/public/Office Tileset
+docs/CLAUDE_MULTI_AGENT_ORCHESTRATION_SKILL.md
+docs/Claude_Remote_Arcade_Full_Guide.md
+docs/Claude_Remote_Arcade_Key_Node_Supplement.md
+docs/plans/2026-02-24-claude-remote-arcade-design.md
+docs/plans/2026-02-24-claude-remote-arcade-plan.md
+CLAUDE.md
+.workspace
+.worktrees
+demo.mp4
+demo1.mp4
+apps/web/out
+apps/web/public/sw.js
+apps/web/tsconfig.tsbuildinfo
+docs
+.env
+settings.local.json
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/sidecar
+CONVENTIONS.md
+.codex-agent

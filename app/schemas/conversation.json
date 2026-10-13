@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "reply": { "type": "string" },
+    "kind": { "type": "string", "enum": ["answer", "progress", "clarification", "cannot_answer"] },
+    "sourceRefs": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["reply", "kind", "sourceRefs"],
+  "additionalProperties": false
+}

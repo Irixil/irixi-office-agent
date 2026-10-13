@@ -1,0 +1,81 @@
+{
+  "id": "irixi-v4-runtime-1",
+  "status": "four-direction-walk-art-ready-runtime-pending",
+  "revision": "irixi-v4-2",
+  "identitySource": "../../concept-overall-v4-slender.png",
+  "frameSize": [208, 256],
+  "anchor": [104, 238],
+  "visibleHeightRange": [223, 226],
+  "baseline": {
+    "runtime": "baseline/irixi-down.png",
+    "standardizedGenerationReference": "baseline/irixi-down-standard.png",
+    "identityLock": "baseline/identity-lock.md",
+    "metrics": "baseline/baseline-metrics.json"
+  },
+  "directions": {
+    "order": ["down", "left", "right", "up"],
+    "runtime": {
+      "down": "directions/runtime/irixi-down.png",
+      "left": "directions/runtime/irixi-left.png",
+      "right": "directions/runtime/irixi-right.png",
+      "up": "directions/runtime/irixi-up.png"
+    },
+    "contactSheet": "directions/four-direction-contact.png",
+    "metrics": "directions/turnaround-metrics.json",
+    "note": "Each direction is separately generated; no opposite direction is created by mirroring."
+  },
+  "animations": {
+    "walkDown": {
+      "manifest": "walk-down/manifest.json",
+      "spritesheet": "walk-down/spritesheet.png",
+      "preview": "walk-down/preview.gif",
+      "contactSheet": "walk-down/contact-sheet.png",
+      "frameCount": 14,
+      "frameDurationMs": 80,
+      "loop": true
+    },
+    "walkLeft": {
+      "manifest": "walk-left/manifest.json",
+      "spritesheet": "walk-left/spritesheet.png",
+      "preview": "walk-left/preview.gif",
+      "contactSheet": "walk-left/contact-sheet.png",
+      "frameCount": 4,
+      "frameDurationMs": 120,
+      "loop": true
+    },
+    "walkRight": {
+      "manifest": "walk-right/manifest.json",
+      "spritesheet": "walk-right/spritesheet.png",
+      "preview": "walk-right/preview.gif",
+      "contactSheet": "walk-right/contact-sheet.png",
+      "frameCount": 4,
+      "frameDurationMs": 120,
+      "loop": true
+    },
+    "walkUp": {
+      "manifest": "walk-up/manifest.json",
+      "spritesheet": "walk-up/spritesheet.png",
+      "preview": "walk-up/preview.gif",
+      "contactSheet": "walk-up/contact-sheet.png",
+      "frameCount": 4,
+      "frameDurationMs": 120,
+      "loop": true
+    }
+  },
+  "identityLocks": {
+    "monocle": "anatomical-right eye",
+    "cane": "anatomical-left hand",
+    "otherHand": "empty",
+    "body": "two wing-arms and two legs",
+    "prohibited": ["mirrored direction", "hand swap", "duplicate cane", "detached cane", "short-wide redesign"]
+  },
+  "localProcessing": "flat-key removal where needed, main-component cleanup, equal-cell splitting, one shared scale per generated sheet, fixed foot-anchor placement, packing and validation only",
+  "remaining": [
+    "Phaser playback, movement speed, camera-scale sharpness and room occlusion are not yet runtime-verified.",
+    "No idle breathing, interaction, stair or emote animation is included yet."
+  ],
+  "evidence": {
+    "validation": "validation.json",
+    "validationNotes": "validation.md"
+  }
+}

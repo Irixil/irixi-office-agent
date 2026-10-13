@@ -1,0 +1,132 @@
+{
+  "id": "steward-mole-book-delivery-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "role": "steward",
+  "species": "mole",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "worldHomeAnchor": [
+    960,
+    310
+  ],
+  "sharedCharacterScale": 0.26216484607745777,
+  "actions": [
+    {
+      "action": "wait-empty",
+      "manifest": "wait-empty/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 2500,
+      "loop": true
+    },
+    {
+      "action": "walk-empty-down",
+      "manifest": "walk-empty-down/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 640,
+      "loop": true
+    },
+    {
+      "action": "walk-carry-down",
+      "manifest": "walk-carry-down/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 760,
+      "loop": true
+    },
+    {
+      "action": "walk-empty-left",
+      "manifest": "walk-empty-left/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 640,
+      "loop": true
+    },
+    {
+      "action": "walk-carry-left",
+      "manifest": "walk-carry-left/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 760,
+      "loop": true
+    },
+    {
+      "action": "walk-empty-right",
+      "manifest": "walk-empty-right/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 640,
+      "loop": true
+    },
+    {
+      "action": "walk-carry-right",
+      "manifest": "walk-carry-right/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 760,
+      "loop": true
+    },
+    {
+      "action": "walk-empty-up",
+      "manifest": "walk-empty-up/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 640,
+      "loop": true
+    },
+    {
+      "action": "walk-carry-up",
+      "manifest": "walk-carry-up/manifest.json",
+      "frameCount": 4,
+      "cycleDurationMs": 760,
+      "loop": true
+    },
+    {
+      "action": "pickup-books",
+      "manifest": "pickup-books/manifest.json",
+      "frameCount": 8,
+      "cycleDurationMs": 1980,
+      "loop": false
+    },
+    {
+      "action": "shelve-books",
+      "manifest": "shelve-books/manifest.json",
+      "frameCount": 7,
+      "cycleDurationMs": 2120,
+      "loop": false
+    }
+  ],
+  "props": {
+    "master": "props/book-stack-master.png",
+    "desk": "props/book-stack-at-desk.png",
+    "shelved": "props/book-stack-shelved-patch.png",
+    "deskWorldTopLeft": [
+      960,
+      269
+    ],
+    "shelfWorldTopLeft": [
+      508,
+      80
+    ],
+    "shelfPatchWorldBBox": [
+      508,
+      80,
+      578,
+      137
+    ]
+  },
+  "routeContract": "route-contract.json",
+  "evidence": {
+    "preview30s": "evidence/delivery-loop-room-preview-30s.gif",
+    "keySceneContactSheet": "evidence/delivery-key-scene-contact-sheet.png",
+    "durationMs": 30000,
+    "pickupWorldStages": "evidence/pickup-world-contact-stages.png",
+    "shelveWorldStages": "evidence/shelve-world-contact-stages.png"
+  },
+  "generation": "Every pose was generated with ImageGen; local work only split, alpha-cleaned, normalized one shared scale, packed, timed and composited.",
+  "notProvenHere": [
+    "runtime path following",
+    "collision response",
+    "state transitions under real task events",
+    "user visual acceptance"
+  ]
+}

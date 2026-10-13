@@ -4,8 +4,23 @@
     "title": { "type": "string" },
     "summary": { "type": "string" },
     "content": { "type": "string" },
-    "sources": { "type": "array", "items": { "type": "string" } }
+    "sources": { "type": "array", "items": { "type": "string" } },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "statement": { "type": "string" },
+          "materialId": { "type": "string" },
+          "sourceName": { "type": "string" },
+          "locator": { "type": "string", "pattern": "^L[0-9]+-L[0-9]+$" },
+          "quote": { "type": "string" }
+        },
+        "required": ["statement", "materialId", "sourceName", "locator", "quote"],
+        "additionalProperties": false
+      }
+    }
   },
-  "required": ["title", "summary", "content", "sources"],
+  "required": ["title", "summary", "content", "sources", "claims"],
   "additionalProperties": false
 }

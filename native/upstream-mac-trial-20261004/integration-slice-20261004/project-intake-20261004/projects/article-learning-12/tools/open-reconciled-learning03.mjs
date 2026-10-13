@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+// Explicit next bounded batch after same-turn genuine raw GET recovery.
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import assert from 'node:assert/strict';
+const root=path.resolve(import.meta.dirname,'..'),base='http://127.0.0.1:9109',sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const args=process.argv.slice(2);assert.deepEqual(args,['--open','c114e5dc0078a8463f6f55a3b6d5da63fd04f0a746633f7e8d02a6bb0e5ed0c7']);
+async function api(route,body){const r=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{Origin:base,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(10000)});const v=await r.json();assert.ok(r.ok,route+' refused: '+v.error);return v;}
+const proofBytes=await fs.readFile(path.join(root,'evidence/learning02-bound-raw-host-core-proof-zero-model.json')),proof=JSON.parse(proofBytes),coord=JSON.parse(await fs.readFile(path.join(root,'backend/learning02-exact-raw-transport-coordination/response.json')));
+const cap=JSON.parse(await fs.readFile(path.join(root,'state/model-capability.json'))),priorBytes=await fs.readFile(cap.learning.ledgerFile),prior=JSON.parse(priorBytes),state=JSON.parse(JSON.parse(await fs.readFile(path.join(root,'backend/actual-native-learning-learning02-contract/native-local-storage.json')))['irixi.article-learning-12.session.v1']);
+assert.equal(cap.learning.enabled,false);assert.equal(cap.learning.ledgerFile,path.join(root,proof.ledgerFile));assert.equal(sha(priorBytes),proof.ledgerSha256);assert.equal(prior.sealed.reasonCode,'host_native_learning_output_contract_invalid');assert.equal(prior.calls.length,1);assert.equal(state.turns.length,1);assert.equal(state.turns[0].status,'done');assert.equal(state.turns[0].textSha256,proof.rawStdoutSha256);assert.equal(state.explanations.length,1);
+const [authority,intake]=await Promise.all([api('/api/irixi-authority'),api('/api/irixi-intake')]);assert.equal(authority.current,true);assert.equal(intake.goal.confirmed,true);assert.equal(authority.goalVersionId,proof.goalVersionId);assert.equal(authority.artifact.candidateSha256,args[1]);assert.ok(authority.artifact.confirmation);assert.equal(authority.artifact.review.nativeVerdict,'PASS');
+const request={expectedGoalVersionId:proof.goalVersionId,expectedCandidateSha256:args[1],acknowledgement:'preserve_reconciled_sealed_learning_batch',expectedReconciledEventId:coord.eventId,expectedPriorLearningLedgerSha256:proof.ledgerSha256,expectedHostProofSha256:sha(proofBytes)};
+const owned=path.join(root,'backend/learning03-reconciled-explicit-open');await fs.mkdir(owned,{recursive:false,mode:0o700});const save=(n,v)=>fs.writeFile(path.join(owned,n),JSON.stringify(v,null,2)+'\n',{flag:'wx',mode:0o600});
+await save('before.json',{authority,intake,request,authorizationSource:'Parent explicitly authorized bounded next batch after exact original valid lesson GET recovery, preserving02; wrong and correct independent retelling are two separate actual calls.',modelCalls:0});
+const response=await api('/api/irixi-learning/open-batch',request);await save('response.json',response);assert.equal(response.ordinal,3);assert.equal(response.cap,2);assert.equal(response.windowMs,1200000);await assert.rejects(fs.access(response.ledgerFile));assert.equal(sha(await fs.readFile(cap.learning.ledgerFile)),sha(priorBytes));
+const after=await api('/api/irixi-intake');assert.equal(after.modelAvailability.learning.remaining,2);assert.equal(after.modelAvailability.learning.sealed,false);assert.equal(after.modelAvailability.learning.running,false);await save('after.json',after);
+console.log(JSON.stringify({opened:true,ordinal:3,priorSealed02Unchanged:true,modelCalls:0,cap:2,windowMs:1200000,evidence:owned}));

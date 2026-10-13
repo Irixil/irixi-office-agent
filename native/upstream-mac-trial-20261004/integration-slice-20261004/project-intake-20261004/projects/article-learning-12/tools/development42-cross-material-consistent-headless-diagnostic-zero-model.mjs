@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+// Executes the frozen development42 real-HTML gate with one narrowly changed
+// loopback fixture: the history endpoint returns a complete, internally valid B
+// material while state.record remains from A, and re-registration correctly
+// returns B. Candidate application bytes remain unchanged.
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const run=promisify(execFile),args=process.argv.slice(2),arg=k=>{const i=args.indexOf(k);return i<0?null:args[i+1]};
+const workspace=path.resolve(arg('--workspace')||''),evidence=path.resolve(arg('--evidence')||'');
+if(!workspace||!evidence)throw Error('Use --workspace frozen-source --evidence new.json');
+const project=path.resolve(import.meta.dirname,'..'),baseFile=path.join(project,'tools/development42-historical-reregister-headless-gate-zero-model.mjs'),sha=v=>crypto.createHash('sha256').update(v).digest('hex');
+const articleB='[P1] 完整一致的另一篇受控文章 B；其正文与哈希均不同于历史 A。\n',articleBSha256=sha(articleB),tmp=await fs.mkdtemp(path.join(os.tmpdir(),'d42-cross-material-')),runner=path.join(tmp,'runner.mjs'),runnerEvidence=path.join(tmp,'runner-evidence.json');
+let source=await fs.readFile(baseFile,'utf8');
+const projectAnchor="const project=path.resolve(import.meta.dirname,'..'),chromeBinary='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';";
+assert.ok(source.includes(projectAnchor));source=source.replace(projectAnchor,`const project=${JSON.stringify(project)},chromeBinary='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';`);
+const historyAnchor="if(historyMismatch){historicalMaterial.articleSha256='e'.repeat(64);historicalMaterial.materialEventId='mismatched-history-event'}";
+assert.ok(source.includes(historyAnchor));source=source.replace(historyAnchor,`if(historyMismatch){historicalMaterial.articleText=${JSON.stringify(articleB)};historicalMaterial.articleSha256=${JSON.stringify(articleBSha256)};historicalMaterial.materialEventId='consistent-b-history-event';historicalMaterial.label='受控文章 B';historicalMaterial.source='controlled-cross-material-fixture'}`);
+const materialHashAnchor="articleSha256:materialMismatch==='article'?'f'.repeat(64):old.material.articleSha256";
+assert.ok(source.includes(materialHashAnchor));source=source.replace(materialHashAnchor,`articleSha256:historyMismatch?sha(input.articleText):materialMismatch==='article'?'f'.repeat(64):old.material.articleSha256`);
+const checkAnchor="const historyMismatchResult=await mismatchAttempt('history');check(mode==='baseline'?'candidate31_history_record_and_returned_material_mismatch_is_accepted':'history_record_and_returned_material_mismatch_is_rejected',mode==='baseline'?historyMismatchResult.accepted:!historyMismatchResult.accepted,historyMismatchResult);";
+assert.ok(source.includes(checkAnchor));source=source.replace(checkAnchor,"const historyMismatchResult=await mismatchAttempt('history');check('consistent_cross_material_history_is_accepted_by_candidate42',historyMismatchResult.accepted,{...historyMismatchResult,articleBSha256:"+JSON.stringify(articleBSha256)+"});");
+await fs.writeFile(runner,source);let child;try{child=await run(process.execPath,[runner,'--workspace',workspace,'--mode','candidate','--evidence',runnerEvidence],{maxBuffer:8*1024*1024,timeout:30000});const actual=JSON.parse(await fs.readFile(runnerEvidence,'utf8')),cross=actual.cases.find(x=>x.id==='consistent_cross_material_history_is_accepted_by_candidate42');const authorityFile=path.resolve(project,'../../../authority/article-project-controller.mjs'),authority=await fs.readFile(authorityFile,'utf8');const report={schemaVersion:1,recordedAt:new Date().toISOString(),result:cross?.passed?'REPRODUCED_CONTROLLED_HOST_CONTRACT_SHAPE':'NOT_REPRODUCED',nativeModelCalls:0,productApiCalls:0,physicalInput:false,headless:true,businessSourceEdited:false,workspace,sourceHashes:{baseGate:sha(await fs.readFile(baseFile)),candidateAchievements:sha(await fs.readFile(path.join(workspace,'achievements.js'))),authorityController:sha(authority),runner:sha(source)},fixture:{historyRecordArticleSha256:JSON.parse(await fs.readFile(path.join(project,'backend/learning-08-original-retest-client-failure/actual-local-record.json'),'utf8')).material.articleSha256,returnedMaterialArticleSha256:articleBSha256,returnedMaterialCanonicalText:articleB,reRegistrationReturnsMatchingArticleSha256:true},actualApplicationResult:cross,normalProductPathAssessment:{observedFromNormalUi:false,handlerCanRepresentShape:true,reason:'Historical GET returns saved.detail.state unchanged while selecting material by saved.detail.materialEventId. PUT validates the outer expected material event but does not validate state.record.material against that event. Thus the controlled shape is compatible with the handler contract after a previously inconsistent saved state, but this audit did not observe normal candidate42 UI creating such a state.'},runnerReport:{passed:actual.passed,cases:actual.cases,stats:actual.stats},limitations:['Loopback HTTP responses are controlled; no live TaskStore or product API was read or written.','This proves client behavior for a handler-compatible inconsistent saved state, not that the normal UI generated that state in production.']};await fs.writeFile(evidence,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({result:report.result,cross:report.actualApplicationResult,evidence}))}finally{await fs.rm(tmp,{recursive:true,force:true})}

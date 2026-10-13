@@ -1,0 +1,147 @@
+{
+  "id": "steward-mole-pickup-books-v6",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "action": "pickup-books",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "frameCount": 8,
+  "frameDurationsMs": [
+    260,
+    180,
+    260,
+    220,
+    240,
+    240,
+    220,
+    360
+  ],
+  "cycleDurationMs": 1980,
+  "loop": false,
+  "returnTo": "walk-carry-down",
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 8,
+    "rows": 1
+  },
+  "fullframePattern": "frames/pickup-books_{index:02d}.png",
+  "propOwnershipBeginsFrame": 4,
+  "propReleaseAfterFrame": null,
+  "bookStackContract": "exactly three books: green bottom, burgundy middle, navy top; cream pages; no scroll or fourth book",
+  "sharedCharacterScale": 0.26216484607745777,
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        24,
+        65,
+        152,
+        194
+      ],
+      "visibleSize": [
+        128,
+        129
+      ]
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        19,
+        61,
+        157,
+        194
+      ],
+      "visibleSize": [
+        138,
+        133
+      ]
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        35,
+        82,
+        141,
+        194
+      ],
+      "visibleSize": [
+        106,
+        112
+      ]
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        28,
+        71,
+        147,
+        194
+      ],
+      "visibleSize": [
+        119,
+        123
+      ]
+    },
+    {
+      "frame": 4,
+      "visibleBBox": [
+        30,
+        61,
+        146,
+        194
+      ],
+      "visibleSize": [
+        116,
+        133
+      ]
+    },
+    {
+      "frame": 5,
+      "visibleBBox": [
+        34,
+        66,
+        142,
+        194
+      ],
+      "visibleSize": [
+        108,
+        128
+      ]
+    },
+    {
+      "frame": 6,
+      "visibleBBox": [
+        36,
+        61,
+        139,
+        194
+      ],
+      "visibleSize": [
+        103,
+        133
+      ]
+    },
+    {
+      "frame": 7,
+      "visibleBBox": [
+        40,
+        64,
+        137,
+        194
+      ],
+      "visibleSize": [
+        97,
+        130
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "pickup-key": "77bc90e3dd59ea35b73badc649d258290cd51df38c4ce920ef45bcb281e93849",
+    "pickup-between": "497efeb057fcf823259e99c491cd43146ff23ec589e677836c6f0056df249525"
+  }
+}

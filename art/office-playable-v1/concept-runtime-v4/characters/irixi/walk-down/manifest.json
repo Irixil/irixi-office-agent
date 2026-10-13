@@ -1,0 +1,68 @@
+{
+  "id": "irixi-v4-walk-down-14",
+  "status": "integration-ready-art-validated",
+  "source": "../baseline/irixi-down.png",
+  "canvas": [
+    208,
+    256
+  ],
+  "anchor": [
+    104,
+    238
+  ],
+  "frameCount": 14,
+  "keyframeIndices": [
+    2,
+    5,
+    8,
+    11
+  ],
+  "anchorIndices": [
+    0,
+    2,
+    5,
+    8,
+    11,
+    13
+  ],
+  "segmentInsertions": [
+    1,
+    2,
+    2,
+    2,
+    1
+  ],
+  "frameOrder": [
+    "fullframe/irixi-walk-down_00.png",
+    "fullframe/irixi-walk-down_01.png",
+    "fullframe/irixi-walk-down_02.png",
+    "fullframe/irixi-walk-down_03.png",
+    "fullframe/irixi-walk-down_04.png",
+    "fullframe/irixi-walk-down_05.png",
+    "fullframe/irixi-walk-down_06.png",
+    "fullframe/irixi-walk-down_07.png",
+    "fullframe/irixi-walk-down_08.png",
+    "fullframe/irixi-walk-down_09.png",
+    "fullframe/irixi-walk-down_10.png",
+    "fullframe/irixi-walk-down_11.png",
+    "fullframe/irixi-walk-down_12.png",
+    "fullframe/irixi-walk-down_13.png"
+  ],
+  "loop": true,
+  "targetFps": 60,
+  "sourceAnimationFps": 12.5,
+  "frameDurationMs": 80,
+  "durationMs": 1120,
+  "timingMode": "fixed-frame-duration",
+  "previewBackground": "#FFFFFF",
+  "coordinateSpace": "screen-space while facing down/front",
+  "activeLimb": "anatomical-left arm at screen-right",
+  "activeShoulder": "anatomical-left shoulder at screen-right",
+  "anchorLimb": "anatomical-right empty arm at screen-left",
+  "carriedProp": "one cane owned by anatomical-left/screen-right hand",
+  "passiveAccessory": "monocle owned by anatomical-right/screen-left eye",
+  "detachedProp": "none",
+  "sharedMasterScale": 0.7422680412371134,
+  "sharedRuntimeScale": 0.6277777777777778,
+  "localProcessing": "largest-component alpha cleanup, equal-cell splitting, one shared scale, fixed foot anchor, packing and preview only; no pose drawing or interpolation"
+}

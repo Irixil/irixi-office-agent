@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "Open Office",
+  "version": "0.1.101",
+  "identifier": "com.openoffice.desktop",
+  "build": {
+    "frontendDist": "../../web/out",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "bash scripts/build-desktop.sh",
+    "beforeDevCommand": "pnpm --filter bit-office dev & pnpm --filter web dev"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; frame-src http://localhost:* http://127.0.0.1:*; media-src 'self' data: blob:"
+    },
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Open Office",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "maximized": true,
+        "url": "pair"
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "sidecar/node": "sidecar/node",
+      "sidecar/gateway.js": "sidecar/gateway.js",
+      "sidecar/web/": "sidecar/web/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": false
+    }
+  }
+}

@@ -1,0 +1,451 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { nativeActionPayload, nativeCoworkerPresence, nativeProductAsOfficeTask, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, safeLocalPath } from '../public/native-product-state.js';
+
+const PLAN_SHA256 = 'a'.repeat(64);
+
+function projection(overrides = {}) {
+  return {
+    taskId: 'task-native-1',
+    title: '真实代码任务',
+    goalStatement: '完成同一任务的原生执行与审阅',
+    goalVersionId: 'goal-native-1',
+    current: true,
+    status: 'in_progress',
+    execution: { id: 'execution-1', phase: 'developer', stopReason: null },
+    artifact: null,
+    registeredExecution: { goalVersionId: 'goal-native-1', displayPrompt: '执行当前任务', promptSha256: 'prompt-1' },
+    product: {
+      projectId: 'project-1', registrySha256: 'registry-1', bindingCurrent: true, bindingError: null, workspaceScopeFingerprint: 'scope-1',
+      allowedWritePaths: ['src/a.js'], checks: ['node-test'],
+      capabilities: { team: true, worktree: true, staticPreviewEntries: ['index.html'], staticPreviewFiles: ['index.html', 'app.js', 'styles.css'], autoMerge: false, manualMerge: false, commandPreview: false },
+      native: { allowedRoles: ['developer', 'reviewer'], maxModelCalls: 4, maxDurationMs: 600000 },
+    },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', sessions: [], actions: { canRun: true, canReview: false, canConfirm: false, canPreview: false, canCancel: false } },
+    links: { nativeTask: '/native?taskId=task-native-1', actions: '/api/product/tasks/task-native-1/actions', candidate: '/api/product/candidate', confirm: '/api/irixi-authority/confirm', patch: '/api/irixi-authority/patch', preview: '/product-preview/token/index.html' },
+    ...overrides,
+  };
+}
+
+test('新建原生任务保持空成功条件和边界，不由前端补写', () => {
+  assert.deepEqual(normalizeNativeTaskDraft({ title: ' 任务 ', statement: ' 目标 ', successCriteria: '', boundaries: '  ' }), {
+    title: '任务', statement: '目标', successCriteria: [], boundaries: [],
+  });
+  assert.deepEqual(normalizeNativeTaskDraft({ statement: '目标', successCriteria: ' 条件一 \n\n条件二', boundaries: [' 边界一 ', ''] }), {
+    title: '', statement: '目标', successCriteria: ['条件一', '条件二'], boundaries: ['边界一'],
+  });
+});
+
+test('无任务初始化响应是正常设置态，不要求执行或产品登记', () => {
+  const value = normalizeNativeProductState({
+    task: null,
+    status: 'waiting_task',
+    execution: null,
+    registry: null,
+    setup: { projects: [], selectedProject: null, selectedScope: null },
+  });
+  assert.equal(value.setupOnly, true);
+  assert.equal(value.setupStatus, 'waiting_task');
+  assert.equal(value.taskId, null);
+  assert.equal(value.officeStatus, 'idle');
+  assert.deepEqual(value.setup.projects, []);
+  assert.equal(value.links.createTask, '/api/product/tasks');
+  assert.equal(value.links.projects, '/api/product/projects');
+});
+
+test('待选范围与待授权是正常设置态，并保留完整目标和登记项目', () => {
+  const task = {
+    id: 'task-setup-1', title: '原生设置', goalVersionId: 'goal-setup-1', statement: '接入登记项目',
+    successCriteria: ['保留完整条件'], boundaries: ['设置阶段不执行'],
+  };
+  const project = {
+    projectId: 'project-live-1', label: '已登记项目', scopeFingerprint: 'scope-live-1',
+    allowedWritePaths: ['src/main.ts'], checkIds: ['typecheck'], current: true,
+  };
+  const waiting = normalizeNativeProductState({ task, status: 'waiting_scope', execution: null, registry: null, setup: { projects: [project], selectedProject: null, selectedScope: null } });
+  assert.equal(waiting.setupPending, true);
+  assert.equal(waiting.setupStatus, 'waiting_scope');
+  assert.equal(waiting.officeStatus, 'ready');
+  assert.deepEqual(waiting.successCriteria, ['保留完整条件']);
+  assert.deepEqual(waiting.setup.projects[0], project);
+  assert.equal(nativeProductAsOfficeTask(waiting).goal.versions[0].boundaries[0], '设置阶段不执行');
+
+  const selected = normalizeNativeProductState({
+    task, status: 'waiting_scope_authorization', execution: null, registry: null,
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, selectedAt: '2026-10-11T11:18:50.134Z', current: true } },
+    native: { actions: { canAuthorizeScope: true } },
+  });
+  assert.equal(selected.setupStatus, 'waiting_scope_authorization');
+  assert.equal(selected.setup.selectedScope.current, true);
+  assert.equal(selected.native.actions.canAuthorizeScope, true);
+  assert.deepEqual(nativeActionPayload(selected, 'authorize_scope', { projectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint }), {
+    projectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint,
+    action: 'authorize_scope', expectedGoalVersionId: task.goalVersionId,
+  });
+
+  const authorized = normalizeNativeProductState({
+    task, status: 'ready_to_run', execution: null, registry: null,
+    canPrepareRun: true, canRun: false, blockedReason: 'native_runtime_not_started',
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, selectedAt: '2026-10-11T11:30:55.144Z', current: true } },
+  });
+  assert.equal(authorized.setupPending, true);
+  assert.equal(authorized.setupStatus, 'ready_to_run');
+  assert.equal(authorized.canPrepareRun, true);
+  assert.equal(authorized.native.actions.canRun, false);
+  assert.equal(authorized.execution, null);
+  assert.equal(authorized.product, null);
+  assert.match(authorized.nextStep, /尚未开始/);
+  assert.deepEqual(nativeActionPayload(authorized, 'prepare_run', { expectedScopeFingerprint: project.scopeFingerprint }), {
+    expectedScopeFingerprint: project.scopeFingerprint,
+    action: 'prepare_run',
+    expectedGoalVersionId: task.goalVersionId,
+  });
+
+  const unavailable = normalizeNativeProductState({
+    task, status: 'runtime_unavailable',
+    execution: { id: 'execution-setup-1', phase: 'planned' },
+    registry: { status: 'runtime_starting', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: 'registry-setup-1', registeredEventId: 'event-registry-1' },
+    canPrepareRun: true, canReconnect: true,
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
+    blockedReason: 'native_runtime_unavailable',
+  });
+  assert.equal(unavailable.setupPending, true);
+  assert.equal(unavailable.setupStatus, 'runtime_unavailable');
+  assert.equal(unavailable.execution.id, 'execution-setup-1');
+  assert.equal(unavailable.registry.projectId, project.projectId);
+  assert.equal(unavailable.registry.registrySha256, 'registry-setup-1');
+  assert.equal(unavailable.canPrepareRun, true);
+  assert.equal(unavailable.officeStatus, 'partial');
+  assert.match(unavailable.nextStep, /执行与产品登记仍保留/);
+  assert.deepEqual(nativeActionPayload(unavailable, 'instructions', { text: '输入变化' }), {
+    text: '输入变化', action: 'instructions', expectedGoalVersionId: task.goalVersionId,
+    expectedExecutionId: 'execution-setup-1', expectedRegistrySha256: 'registry-setup-1',
+  });
+});
+
+test('原生来源标记的真实 roster 与 Lead 可以在无 session 时投影，但运行仍绑定当前执行', () => {
+  const value = normalizeNativeProductState(projection({
+    actor: null,
+    status: 'waiting_user',
+    execution: { id: 'execution-1', phase: 'planned', stopReason: null },
+    team: { source: 'openoffice-native', agents: [
+      { id: 'product-lead', name: 'Lead', actor: 'Lead', stationRole: 'coordinator', status: 'idle', isTeamLead: true },
+      { id: 'product-senior-developer', name: 'Senior Developer', actor: 'Senior Developer', stationRole: 'writer', status: 'idle' },
+      { id: 'product-reviewer', name: 'Reviewer', actor: 'Reviewer', stationRole: 'reviewer', status: 'idle' },
+    ] },
+    native: {
+      bindingCurrent: true,
+      registrySha256: 'registry-1',
+      source: 'openoffice-native',
+      aiEnabled: true,
+      agents: [
+        { id: 'product-lead', name: 'Lead', role: 'Lead', isTeamLead: true },
+        { id: 'product-senior-developer', name: 'Senior Developer', role: 'Senior Developer', isTeamLead: false },
+        { id: 'product-reviewer', name: 'Reviewer', role: 'Reviewer', isTeamLead: false },
+      ],
+      runAgentId: 'product-lead',
+      phase: 'design',
+      plan: { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256 },
+      sessions: [],
+      actions: { canRun: true, canApprovePlan: true, canResume: false, stopClass: null },
+    },
+  }));
+  assert.deepEqual(value.team.map((agent) => agent.id), ['product-lead', 'product-senior-developer', 'product-reviewer']);
+  assert.equal(value.native.runAgentId, 'product-lead');
+  assert.deepEqual(value.native.plan, { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256 });
+  assert.equal(value.native.agents.find((agent) => agent.id === value.native.runAgentId).isTeamLead, true);
+  assert.equal(value.native.actions.canRun, true);
+  assert.equal(value.native.actions.canContinue, false);
+  assert.equal(value.officeStatus, 'ready');
+  assert.deepEqual(nativeActionPayload(value, 'run'), {
+    action: 'run', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+  });
+  assert.deepEqual(nativeActionPayload(value, 'approve_plan'), {
+    action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+    expectedPlanSha256: PLAN_SHA256,
+  });
+  assert.deepEqual(nativeActionPayload(value, 'approve_plan', { expectedPlanSha256: 'spoofed-plan' }), {
+    action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+    expectedPlanSha256: PLAN_SHA256,
+  });
+  const officeTask = nativeProductAsOfficeTask(value);
+  assert.deepEqual(nativeCoworkerPresence(value, officeTask, 'writer'), {
+    member: officeTask.team.agents.find((agent) => agent.id === 'product-senior-developer'),
+    workItem: null,
+    active: false,
+  });
+
+  const missingAiFlag = normalizeNativeProductState(projection({
+    actor: null,
+    execution: { id: 'execution-1', phase: 'planned' },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', source: 'openoffice-native', agents: [{ id: 'product-lead', name: 'Lead', role: 'Lead', isTeamLead: true }], runAgentId: 'product-lead', actions: { canRun: true } },
+  }));
+  assert.equal(missingAiFlag.native.aiEnabled, null);
+  assert.equal(missingAiFlag.native.actions.canRun, false);
+  assert.equal(missingAiFlag.officeStatus, 'ready');
+
+  const missingPlan = normalizeNativeProductState(projection({
+    actor: null,
+    execution: { id: 'execution-1', phase: 'planned' },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', source: 'openoffice-native', actions: { canApprovePlan: true } },
+  }));
+  assert.equal(missingPlan.native.actions.canApprovePlan, false);
+  assert.throws(() => nativeActionPayload(missingPlan, 'approve_plan'), /没有可批准且绑定有效/);
+
+  const stalePlan = normalizeNativeProductState(projection({
+    actor: null,
+    execution: { id: 'execution-1', phase: 'planned' },
+    native: { bindingCurrent: false, registrySha256: 'registry-1', source: 'openoffice-native', plan: { text: '旧计划', sha256: 'stale-plan' }, actions: { canApprovePlan: true } },
+  }));
+  assert.equal(stalePlan.native.plan, null);
+  assert.equal(stalePlan.native.actions.canApprovePlan, false);
+  assert.throws(() => nativeActionPayload(stalePlan, 'approve_plan'), /没有可批准且绑定有效/);
+
+  const malformedPlan = normalizeNativeProductState(projection({
+    actor: null,
+    execution: { id: 'execution-1', phase: 'planned' },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', source: 'openoffice-native', plan: { text: '摘要格式错误', sha256: 'A'.repeat(64) }, actions: { canApprovePlan: true } },
+  }));
+  assert.equal(malformedPlan.native.plan, null);
+  assert.equal(malformedPlan.native.actions.canApprovePlan, false);
+  assert.throws(() => nativeActionPayload(malformedPlan, 'approve_plan'), /没有可批准且绑定有效/);
+
+  const actionMetadataOnly = normalizeNativeProductState(projection({
+    actor: null,
+    execution: { id: 'execution-1', phase: 'planned' },
+    native: {
+      bindingCurrent: true,
+      registrySha256: 'registry-1',
+      source: 'openoffice-native',
+      agents: [{ id: 'product-lead', name: 'Lead', role: 'Lead', isTeamLead: true }],
+      runAgentId: 'product-lead',
+      actions: { canRun: true, aiEnabled: true },
+    },
+  }));
+  assert.equal(actionMetadataOnly.native.aiEnabled, null);
+  assert.equal(actionMetadataOnly.native.actions.canRun, false);
+});
+
+test('原生同事讨论只接受当前目标历史，并同时受模型能力和完整执行绑定约束', () => {
+  const value = normalizeNativeProductState(projection({
+    team: { source: 'openoffice-native', agents: [
+      { id: 'product-senior-developer', name: 'Senior Developer', actor: 'Senior Developer', stationRole: 'writer', status: 'idle' },
+    ] },
+    conversations: [
+      { id: 'message-1', at: '2026-10-11T12:00:00.000Z', actor: 'user', status: 'saved', text: '现在做到哪一步？', agentId: 'product-senior-developer', role: 'Senior Developer' },
+      { id: 'message-2', at: '2026-10-11T12:00:10.000Z', actor: 'assistant', status: 'completed', text: '正在核对范围。', sourceTaskId: 'native-chat-1', agentId: 'product-senior-developer', role: 'Senior Developer' },
+      { id: 'message-3', actor: 'assistant', status: 'failed', text: null, sourceTaskId: 'native-chat-2', agentId: 'product-senior-developer', role: 'Senior Developer' },
+      { id: '', actor: 'assistant', status: 'completed', text: '不能进入投影' },
+    ],
+    native: {
+      bindingCurrent: true,
+      registrySha256: 'registry-1',
+      source: 'openoffice-native',
+      aiEnabled: true,
+      agents: [{ id: 'product-senior-developer', name: 'Senior Developer', role: 'Senior Developer', isTeamLead: false }],
+      sessions: [],
+      actions: { canChat: true },
+    },
+  }));
+  assert.equal(value.native.actions.canChat, true);
+  assert.deepEqual(value.conversations.map(({ id, actor, status, text, agentId }) => ({ id, actor, status, text, agentId })), [
+    { id: 'message-1', actor: 'user', status: 'saved', text: '现在做到哪一步？', agentId: 'product-senior-developer' },
+    { id: 'message-2', actor: 'assistant', status: 'completed', text: '正在核对范围。', agentId: 'product-senior-developer' },
+    { id: 'message-3', actor: 'assistant', status: 'failed', text: null, agentId: 'product-senior-developer' },
+  ]);
+  assert.deepEqual(nativeActionPayload(value, 'chat', { text: '只读讨论', agentId: 'product-senior-developer' }), {
+    text: '只读讨论', agentId: 'product-senior-developer', action: 'chat',
+    expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+  });
+
+  const zeroModel = normalizeNativeProductState(projection({
+    native: { bindingCurrent: true, registrySha256: 'registry-1', aiEnabled: false, sessions: [], actions: { canChat: true } },
+  }));
+  assert.equal(zeroModel.native.actions.canChat, false);
+  assert.throws(() => nativeActionPayload({ ...value, current: false, execution: null }, 'chat', { text: '旧绑定', agentId: 'product-senior-developer' }), /执行绑定不完整/);
+});
+
+test('只在原生状态明确给出角色时点亮对应办公室工位', () => {
+  const unknown = normalizeNativeProductState(projection({ team: { agents: [{ id: 'product-developer', actor: 'developer', name: 'developer', status: 'idle' }] } }));
+  const unknownTask = nativeProductAsOfficeTask(unknown);
+  assert.equal(unknown.stationRole, null);
+  assert.deepEqual(unknown.team, []);
+  assert.equal(unknownTask.activeRole, null);
+  assert.deepEqual(unknownTask.workItems, []);
+
+  const developer = normalizeNativeProductState(projection({ actor: 'developer' }));
+  const developerTask = nativeProductAsOfficeTask(developer);
+  assert.equal(developer.stationRole, 'writer');
+  assert.equal(developerTask.activeRole, 'writer');
+  assert.deepEqual(developerTask.workItems, []);
+
+  const roster = normalizeNativeProductState(projection({
+    actor: 'developer',
+    team: [{ id: 'developer-1', actor: 'developer', name: '原生开发员', status: 'working' }],
+    workItems: [{ id: 'work-1', agentId: 'developer-1', title: '修改代码', status: 'in_progress' }],
+    native: { bindingCurrent: true, registrySha256: 'registry-1', aiEnabled: true, sessions: [{ agentId: 'developer-1', role: 'developer', status: 'running' }], actions: { canRun: true } },
+  }));
+  const rosterTask = nativeProductAsOfficeTask(roster);
+  assert.equal(rosterTask.team.agents[0].name, '原生开发员');
+  assert.equal(rosterTask.workItems[0].role, 'writer');
+  assert.equal(rosterTask.workItems[0].status, 'running');
+  assert.equal(roster.native.actions.canRun, true);
+  assert.equal(roster.links.actions, '/api/product/tasks/task-native-1/actions');
+});
+
+test('审阅通过与确认分别映射为等待确认和允许下载', () => {
+  const reviewed = normalizeNativeProductState(projection({
+    status: 'completed',
+    execution: null,
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1', hostCheck: { passed: true }, review: { id: 'review-1', passed: true } },
+  }));
+  assert.equal(reviewed.officeStatus, 'waiting_user');
+  assert.match(reviewed.nextStep, /等待你核对并确认/);
+
+  const confirmed = normalizeNativeProductState(projection({
+    status: 'completed',
+    execution: null,
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1', review: { id: 'review-1', passed: true }, confirmation: { approvalId: 'approval-1', artifactVersion: 2, goalVersionId: 'goal-native-1' } },
+  }));
+  assert.equal(confirmed.officeStatus, 'ready_to_export');
+  assert.match(confirmed.nextStep, /下载同一份已确认 patch/);
+});
+
+test('真实候选必须与当前任务、目标、版本和候选摘要完全绑定', () => {
+  const product = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1', hostCheck: { passed: true }, review: { id: 'review-1', passed: true } },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', aiEnabled: true, actions: { canInspectDiff: true, canConfirm: true, canApprovePlan: true } },
+  }));
+  assert.equal(product.links.candidate, '/api/product/candidate');
+  assert.equal(product.native.actions.canInspectDiff, true);
+  assert.equal(product.native.actions.canApprovePlan, false);
+  assert.deepEqual(nativeActionPayload(product, 'revise', { expectedArtifactId: 'spoofed', expectedArtifactVersion: 99, reason: '修正范围。' }), {
+    action: 'revise', expectedArtifactId: 'artifact-1', expectedArtifactVersion: 2, reason: '修正范围。',
+    expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+  });
+  const candidate = normalizeNativeCandidate({
+    taskId: product.taskId, goalVersionId: product.goalVersionId, artifactId: 'artifact-1', artifactVersion: 2,
+    candidateSha256: 'candidate-1', diffSha256: 'diff-1', patchSha256: 'patch-1', patch: 'diff --git a/a b/a',
+    files: [{ path: 'a', sha256: 'file-1', bytes: 12 }], checks: [{ id: 'check-1', passed: true }], review: null, confirmation: null,
+  }, product);
+  assert.equal(candidate.files[0].path, 'a');
+  assert.equal(candidate.checks[0].passed, true);
+  assert.throws(() => normalizeNativeCandidate({ ...candidate, artifactVersion: 3 }, product), /不属于当前任务、目标或版本/);
+});
+
+test('静态预览动作绑定当前候选摘要，状态只接受同源就绪链接', () => {
+  const product = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1', hostCheck: { passed: true } },
+    preview: { status: 'pending', taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1', registrySha256: 'registry-1', artifactId: 'artifact-1', artifactVersion: 2, entry: 'index.html', candidateSha256: 'candidate-1' },
+    native: { bindingCurrent: true, registrySha256: 'registry-1', aiEnabled: true, actions: { canPreview: true } },
+  }));
+  assert.equal(product.preview.status, 'pending');
+  assert.equal(product.links.preview, null);
+  assert.deepEqual(nativeActionPayload(product, 'preview', { entry: 'index.html', expectedCandidateSha256: 'spoofed' }), {
+    action: 'preview', entry: 'index.html', expectedCandidateSha256: 'candidate-1', expectedGoalVersionId: 'goal-native-1',
+    expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1', expectedArtifactId: 'artifact-1', expectedArtifactVersion: 2,
+  });
+  const ready = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1' },
+    preview: { status: 'ready', taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1', registrySha256: 'registry-1', artifactId: 'artifact-1', artifactVersion: 2, entry: 'index.html', candidateSha256: 'candidate-1' },
+    previewLink: '/product-preview/token/index.html',
+  }));
+  assert.equal(ready.links.preview, '/product-preview/token/index.html');
+  const staleReady = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 2, candidateSha256: 'candidate-1' },
+    preview: { status: 'ready', taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1', registrySha256: 'registry-1', artifactId: 'artifact-1', artifactVersion: 2, entry: 'index.html', candidateSha256: 'old-candidate' },
+    previewLink: '/product-preview/token/index.html',
+  }));
+  assert.equal(staleReady.preview, null);
+  assert.equal(staleReady.links.preview, null);
+});
+
+test('目标失效优先于旧候选，不能继续显示为可交付', () => {
+  const value = normalizeNativeProductState(projection({
+    current: false,
+    status: 'completed',
+    artifact: { id: 'artifact-old', version: 1, review: { id: 'review-old', passed: true }, confirmation: { approvalId: 'approval-old', artifactVersion: 1, goalVersionId: 'goal-old' } },
+  }));
+  assert.equal(value.officeStatus, 'partial');
+  assert.match(value.nextStep, /旧执行与旧候选不能继续/);
+});
+
+test('产品登记绑定失效与暂停状态都不会显示同事忙碌', () => {
+  const stale = normalizeNativeProductState(projection({ product: { ...projection().product, bindingCurrent: false, bindingError: '旧绑定' }, actor: 'developer' }));
+  assert.equal(stale.current, false);
+  assert.equal(nativeProductAsOfficeTask(stale).activeRole, null);
+
+  const paused = normalizeNativeProductState(projection({ status: 'paused', actor: 'developer' }));
+  assert.equal(paused.officeStatus, 'partial');
+  assert.equal(nativeProductAsOfficeTask(paused).activeRole, null);
+
+  const unregistered = normalizeNativeProductState(projection({ product: null, actor: 'developer' }));
+  assert.equal(unregistered.current, false);
+  assert.equal(nativeProductAsOfficeTask(unregistered).activeRole, null);
+});
+
+test('原生入口只接受同源相对路径', () => {
+  assert.equal(safeLocalPath('/api/product-state?task=1'), '/api/product-state?task=1');
+  assert.equal(safeLocalPath('https://example.com/steal'), null);
+  assert.equal(safeLocalPath('//example.com/steal'), null);
+});
+
+test('关键状态字段缺失时拒绝投影，不静默使用旧任务', () => {
+  assert.throws(() => normalizeNativeProductState(projection({ goalVersionId: null })), /goalVersionId/);
+  assert.throws(() => normalizeNativeProductState(projection({ current: null })), /current/);
+});
+
+test('原生动作始终绑定当前目标、执行与产品登记，调用输入不能覆盖', () => {
+  const product = normalizeNativeProductState(projection());
+  assert.deepEqual(nativeActionPayload(product, 'run', {
+    agentId: 'developer-1',
+    action: 'cancel',
+    expectedGoalVersionId: 'goal-old',
+    expectedExecutionId: 'execution-old',
+    expectedRegistrySha256: 'registry-old',
+  }), {
+    agentId: 'developer-1',
+    action: 'run',
+    expectedGoalVersionId: 'goal-native-1',
+    expectedExecutionId: 'execution-1',
+    expectedRegistrySha256: 'registry-1',
+  });
+  assert.equal(nativeActionPayload(product, 'materials', { name: '资料', text: '正文' }).action, 'materials');
+});
+
+test('失效绑定或未知动作不能形成原生动作载荷', () => {
+  const current = normalizeNativeProductState(projection());
+  const stale = normalizeNativeProductState(projection({ current: false }));
+  assert.throws(() => nativeActionPayload(stale, 'run'), /绑定不完整/);
+  assert.throws(() => nativeActionPayload(current, 'publish'), /不支持/);
+  assert.throws(() => nativeActionPayload(current, 'support'), /不支持/);
+  assert.throws(() => nativeActionPayload(current, 'resume'), /不支持/);
+});
+
+test('设置态没有执行或产品登记时仍可提交设置动作，但不能运行', () => {
+  const draft = normalizeNativeProductState(projection({
+    status: 'draft', execution: null, product: null,
+    native: { bindingCurrent: false, sessions: [], actions: { canGoal: true, canInstructions: true, canMaterials: true } },
+  }));
+  assert.equal(draft.authorityCurrent, true);
+  assert.equal(draft.current, false);
+  assert.deepEqual(nativeActionPayload(draft, 'instructions', { text: '补充验收要求' }), {
+    text: '补充验收要求', action: 'instructions', expectedGoalVersionId: 'goal-native-1',
+  });
+  assert.throws(() => nativeActionPayload(draft, 'run'), /执行绑定不完整/);
+});
+
+test('继续和输入动作只认后端明确资格', () => {
+  const product = normalizeNativeProductState(projection({
+    native: { bindingCurrent: true, registrySha256: 'registry-1', aiEnabled: true, sessions: [], actions: {
+      canContinue: true, canChat: true, canInstructions: true, canMaterials: true,
+    } },
+  }));
+  assert.equal(product.native.actions.canContinue, true);
+  assert.equal(product.native.actions.canChat, true);
+  assert.equal(product.native.actions.canInstructions, true);
+  assert.equal(product.native.actions.canMaterials, true);
+  assert.equal(product.native.actions.canRun, false);
+  assert.equal(product.native.actions.canCancel, false);
+});

@@ -1,0 +1,960 @@
+/* ── UI Primitives — CSS-class-based components ──
+   Uses CSS custom properties from global.css (--term-*) and design tokens (--space-*, etc).
+   All hover/focus states in CSS — no onMouseEnter/Leave JS required.
+   Components: TermButton, TermInput, TermModal, TermBadge
+*/
+
+/* ============================================================
+   BUTTON — .tb (term-button)
+   Variants: .tb-ghost (default), .tb-primary, .tb-danger, .tb-success
+   ============================================================ */
+.tb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 6px 14px;
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--term-text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    border-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease;
+}
+.tb:hover {
+  border-color: var(--term-text);
+  color: var(--term-text-bright);
+  background: rgba(255, 255, 255, 0.04);
+}
+.tb:active {
+  opacity: 0.85;
+}
+.tb:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Ghost (default) — border only, transparent bg */
+.tb-ghost {
+  border-color: var(--term-border);
+  color: var(--term-text);
+}
+.tb-ghost:hover {
+  border-color: var(--term-text);
+  color: var(--term-text-bright);
+}
+
+/* Primary — accent colored border + text */
+.tb-primary {
+  border-color: var(--term-sem-green);
+  color: var(--term-sem-green);
+}
+.tb-primary:hover {
+  border-color: var(--term-sem-green);
+  background: color-mix(in srgb, var(--term-sem-green) 10%, transparent);
+  color: var(--term-sem-green);
+}
+
+/* Danger — red border + text */
+.tb-danger {
+  border-color: var(--term-sem-red);
+  color: var(--term-sem-red);
+}
+.tb-danger:hover {
+  background: color-mix(in srgb, var(--term-sem-red) 10%, transparent);
+}
+
+/* Success — green, same as primary but semantic alias */
+.tb-success {
+  border-color: var(--term-sem-green);
+  color: var(--term-sem-green);
+}
+.tb-success:hover {
+  background: color-mix(in srgb, var(--term-sem-green) 10%, transparent);
+}
+
+/* Warning — yellow */
+.tb-warning {
+  border-color: var(--term-sem-yellow);
+  color: var(--term-sem-yellow);
+}
+.tb-warning:hover {
+  background: color-mix(in srgb, var(--term-sem-yellow) 10%, transparent);
+}
+
+/* Dim — subtle, de-emphasized */
+.tb-dim {
+  border-color: var(--term-border);
+  color: var(--term-green-dim);
+}
+.tb-dim:hover {
+  color: var(--term-text);
+  border-color: var(--term-text);
+}
+
+/* ============================================================
+   INPUT — .ti (term-input-field)
+   Variants: .ti-textarea (multi-line)
+   ============================================================ */
+.ti {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-sm);
+  background: var(--term-bg);
+  color: var(--term-text);
+  font-size: var(--font-size-base);
+  font-family: var(--font-mono);
+  line-height: 20px;
+  outline: none;
+  transition: border-color var(--duration-fast) ease;
+}
+.ti::placeholder {
+  color: var(--term-green-dim);
+  opacity: 0.5;
+}
+.ti:focus {
+  border-color: var(--term-green-dim);
+}
+
+/* Textarea variant — minimal resize, auto-height friendly */
+.ti-textarea {
+  resize: none;
+  overflow: hidden;
+}
+
+/* Inline input — no border, transparent bg, for terminal-style inputs */
+.ti-inline {
+  border: none;
+  background: transparent;
+  color: var(--term-text-bright);
+  caret-color: var(--term-green);
+  padding: 6px 5px;
+}
+.ti-inline:focus {
+  border: none;
+  box-shadow: none;
+}
+
+/* ============================================================
+   MODAL — .tm (term-modal)
+   Structure: .tm-backdrop > .tm-container > .tm-header + .tm-body + .tm-footer
+   ============================================================ */
+.tm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background-color: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modal-backdrop-in var(--duration-normal) var(--ease-out);
+}
+
+.tm-container {
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  width: 90%;
+  max-width: 420px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-content-in var(--duration-slow) var(--ease-out);
+}
+
+.tm-header {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--font-size-base);
+  color: var(--term-text-bright);
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 3px 6px -2px rgba(0, 0, 0, 0.4),
+    inset 0 -1px 0 var(--separator-groove-dark),
+    var(--highlight-top);
+}
+
+.tm-body {
+  padding: var(--space-4);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  color: var(--term-text);
+  line-height: 1.6;
+}
+
+.tm-footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  box-shadow:
+    0 -3px 6px -2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 var(--separator-groove-light);
+}
+
+/* Close button inside header */
+.tm-close {
+  padding: 2px 8px;
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--term-green-dim);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1;
+  transition: color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+.tm-close:hover {
+  color: var(--term-text);
+  border-color: var(--term-text);
+}
+
+/* ============================================================
+   BADGE — .tg (term-badge)
+   Variants: .tg-green, .tg-yellow, .tg-red, .tg-blue, .tg-purple, .tg-dim
+   ============================================================ */
+.tg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 7px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+}
+
+.tg-green {
+  color: var(--term-sem-green);
+  background: color-mix(in srgb, var(--term-sem-green) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-green) 25%, transparent);
+}
+.tg-yellow {
+  color: var(--term-sem-yellow);
+  background: color-mix(in srgb, var(--term-sem-yellow) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-yellow) 25%, transparent);
+}
+.tg-red {
+  color: var(--term-sem-red);
+  background: color-mix(in srgb, var(--term-sem-red) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-red) 25%, transparent);
+}
+.tg-blue {
+  color: var(--term-sem-blue);
+  background: color-mix(in srgb, var(--term-sem-blue) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-blue) 25%, transparent);
+}
+.tg-purple {
+  color: var(--term-sem-purple);
+  background: color-mix(in srgb, var(--term-sem-purple) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-purple) 25%, transparent);
+}
+.tg-dim {
+  color: var(--term-green-dim);
+  background: color-mix(in srgb, var(--term-green-dim) 8%, transparent);
+  border-color: color-mix(in srgb, var(--term-green-dim) 20%, transparent);
+}
+
+/* ============================================================
+   BUTTON SIZE — .tb-sm (compact)
+   ============================================================ */
+.tb-sm {
+  padding: 4px 10px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* ============================================================
+   SECTION LABEL — .tsl (term-section-label)
+   Used for "AI BACKEND", "SKILLS", "WORKING DIRECTORY" etc.
+   ============================================================ */
+.tsl {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--term-green-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-1);
+  line-height: 1.2;
+}
+
+/* ============================================================
+   AGENT CARD — .tac (term-agent-card)
+   Grid card for agent selection in HireModal/HireTeamModal
+   ============================================================ */
+.tac {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 6px 10px;
+  border: 1px solid var(--term-border);
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+  position: relative;
+  transition:
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease,
+    transform var(--duration-fast) ease;
+}
+.tac:hover {
+  border-color: color-mix(in srgb, var(--term-green) 40%, transparent);
+  background: color-mix(in srgb, var(--term-green) 3%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  transform: translateY(-1px);
+}
+.tac-selected {
+  border-color: color-mix(in srgb, var(--term-green) 50%, transparent);
+  background: color-mix(in srgb, var(--term-green) 5%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* ============================================================
+   CLOSE / DISMISS — .tdx (term-dismiss-x)
+   Small X button for dismissing/closing things (info bar, overlays)
+   ============================================================ */
+.tdx {
+  font-size: var(--font-size-base);
+  color: var(--term-green-dim);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: color var(--duration-fast) ease, opacity var(--duration-fast) ease;
+}
+.tdx:hover {
+  color: var(--term-sem-red);
+  opacity: 1;
+}
+
+/* ============================================================
+   BOTTOM TOOLBAR — .btb (bottom-toolbar)
+   Floating pill-shaped toolbar on the office scene
+   ============================================================ */
+.btb {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(8, 8, 12, 0.92);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-lg);
+  padding: 3px 4px;
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.btb-btn {
+  padding: 5px 10px;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--term-green-dim);
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+.btb-btn:hover {
+  background: color-mix(in srgb, var(--term-text) 8%, transparent);
+  color: var(--term-text);
+}
+.btb-btn-active {
+  background: color-mix(in srgb, var(--term-sem-blue) 12%, transparent);
+  border-color: color-mix(in srgb, var(--term-sem-blue) 35%, transparent);
+  color: color-mix(in srgb, var(--term-sem-blue) 90%, white);
+}
+.btb-btn-danger {
+  color: var(--term-sem-red);
+}
+.btb-btn-danger:hover {
+  background: color-mix(in srgb, var(--term-sem-red) 10%, transparent);
+}
+
+/* ============================================================
+   EMPTY STATE — .te (term-empty)
+   Centered placeholder for empty panes/lists
+   ============================================================ */
+.te {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3, 12px);
+  padding: var(--space-12, 48px) var(--space-4);
+  text-align: center;
+  font-family: var(--font-mono);
+  min-height: 160px;
+}
+.te::before {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  opacity: 0.15;
+  background: var(--term-green);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'%3E%3Cpath d='M8 9h8M8 13h5M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z'/%3E%3C/svg%3E");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'%3E%3Cpath d='M8 9h8M8 13h5M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+}
+.te-msg {
+  font-size: 13px;
+  color: var(--term-green-dim);
+  letter-spacing: 0.02em;
+}
+.te-msg::before {
+  content: "> ";
+  opacity: 0.5;
+}
+.te-hint {
+  font-size: 11px;
+  color: var(--term-green-dim);
+  opacity: 0.4;
+  margin-top: 2px;
+}
+
+/* ============================================================
+   PANE STATUS ACCENT — .ap-status-* (agent-pane status border)
+   2px top-border accent on info bar indicating agent state
+   ============================================================ */
+.ap-status-idle {
+  box-shadow: inset 0 2px 0 var(--term-border), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.ap-status-working {
+  box-shadow: inset 0 2px 0 var(--term-sem-blue), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.ap-status-waiting {
+  box-shadow: inset 0 2px 0 var(--term-sem-yellow), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.ap-status-done {
+  box-shadow: inset 0 2px 0 var(--term-sem-green), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.ap-status-error {
+  box-shadow: inset 0 2px 0 var(--term-sem-red), 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================================
+   SCROLL-TO-BOTTOM PILL — .scroll-pill
+   Floating indicator when user has scrolled away from bottom
+   ============================================================ */
+.scroll-pill {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--term-text);
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-normal) ease,
+    transform var(--duration-normal) ease;
+  transform: translateX(-50%) translateY(8px);
+}
+.scroll-pill.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+.scroll-pill:hover {
+  border-color: var(--term-text);
+  color: var(--term-text-bright);
+}
+.scroll-pill-arrow {
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* ============================================================
+   COMMAND PALETTE — .cp (command-palette)
+   Cmd+K fuzzy search overlay
+   ============================================================ */
+.cp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(20vh, 160px);
+  animation: modal-backdrop-in var(--duration-fast) var(--ease-out);
+}
+.cp-container {
+  width: 90%;
+  max-width: 480px;
+  background: var(--term-panel);
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  max-height: 400px;
+  overflow: hidden;
+  animation: modal-content-in var(--duration-normal) var(--ease-out);
+}
+.cp-input {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-bottom: 1px solid var(--term-border-dim);
+  background: transparent;
+  color: var(--term-text-bright);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  outline: none;
+  caret-color: var(--term-green);
+}
+.cp-input::placeholder {
+  color: var(--term-green-dim);
+  opacity: 0.5;
+}
+.cp-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-1) 0;
+  min-height: 0;
+}
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 16px;
+  font-size: var(--font-size-base);
+  font-family: var(--font-mono);
+  color: var(--term-text);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: background var(--duration-fast) ease;
+}
+.cp-item:hover,
+.cp-item-active {
+  background: color-mix(in srgb, var(--term-green) 8%, transparent);
+  color: var(--term-text-bright);
+}
+.cp-item-icon {
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.cp-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-item-hint {
+  font-size: 11px;
+  color: var(--term-green-dim);
+  flex-shrink: 0;
+}
+.cp-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: var(--font-size-base);
+  font-family: var(--font-sans);
+  color: var(--term-green-dim);
+}
+.cp-group-label {
+  padding: 8px 16px 4px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--term-green-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   MULTI-PANE PAGE TRANSITIONS
+   key={currentPage} triggers remount → animation plays
+   ============================================================ */
+.mpv-page-fade {
+  animation: mpv-fade-in 0.15s ease-out;
+}
+.mpv-slide-left {
+  animation: mpv-slide-in-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.mpv-slide-right {
+  animation: mpv-slide-in-right 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes mpv-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes mpv-slide-in-left {
+  from { transform: translateX(30%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes mpv-slide-in-right {
+  from { transform: translateX(-30%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Page indicator dots */
+.mpv-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+.mpv-dot {
+  width: 6px;
+  height: 4px;
+  border-radius: 2px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: var(--term-green-dim);
+  opacity: 0.35;
+  transition: width 0.25s ease, opacity 0.25s ease, background 0.25s ease;
+}
+.mpv-dot:hover {
+  opacity: 0.6;
+}
+.mpv-dot-active {
+  width: 18px;
+  opacity: 1;
+  background: var(--term-green);
+}
+
+/* ============================================================
+   RESIZE HANDLE — .pane-resize (draggable divider between panes)
+   ============================================================ */
+/* Pane resize handle — groove divider (dark edge + light highlight) */
+.pane-resize {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+  z-index: 5;
+  transition: background var(--duration-fast) ease;
+}
+/* Dark groove edge */
+.pane-resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--separator-groove-dark, rgba(0, 0, 0, 0.5));
+  box-shadow:
+    1px 0 0 var(--separator-groove-light, rgba(255, 255, 255, 0.04)),
+    -2px 0 6px rgba(0, 0, 0, 0.25),
+     2px 0 6px rgba(0, 0, 0, 0.25);
+  transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+.pane-resize:hover::after,
+.pane-resize-active::after {
+  background: var(--term-green);
+  box-shadow:
+    1px 0 0 rgba(255, 255, 255, 0.06),
+    0 0 8px rgba(var(--term-accent-rgb), 0.15);
+}
+.pane-resize:hover {
+  background: color-mix(in srgb, var(--term-green) 4%, transparent);
+}
+
+/* ============================================================
+   PLACEHOLDER SLOT — empty grid cell with dashed outline
+   ============================================================ */
+.mpv-placeholder {
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ============================================================
+   PLACEHOLDER HIRE BUTTON — large centered "+" in first empty slot
+   ============================================================ */
+.mpv-placeholder-hire {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: auto;
+  max-width: 160px;
+  padding: var(--space-4) var(--space-6);
+  margin: auto;
+  border: 2px dashed color-mix(in srgb, var(--term-accent) 28%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--term-accent) 4%, transparent);
+  color: color-mix(in srgb, var(--term-accent) 50%, transparent);
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+.mpv-placeholder-hire:hover {
+  border-color: color-mix(in srgb, var(--term-accent) 56%, transparent);
+  background: color-mix(in srgb, var(--term-accent) 12%, transparent);
+  color: var(--term-accent);
+  transform: scale(1.08);
+}
+.mpv-placeholder-hire:active {
+  transform: scale(0.96);
+}
+.mpv-placeholder-hire-icon {
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  font-family: var(--font-mono);
+}
+.mpv-placeholder-hire-label {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+/* ============================================================
+   PROJECT BAR — .pbar
+   Tab-style project switcher at top of workspace.
+   Phase 1: project-centric architecture.
+   ============================================================ */
+.pbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--term-border-dim);
+  background: var(--term-bg);
+  padding: 0 var(--space-2);
+  min-height: 36px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.pbar::-webkit-scrollbar { display: none; }
+
+.pbar-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+}
+
+.pbar-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  min-height: 36px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--term-text);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.6;
+  transition:
+    opacity var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease;
+}
+.pbar-tab:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--term-text) 4%, transparent);
+}
+.pbar-tab-active {
+  opacity: 1;
+  color: var(--term-text-bright);
+  border-bottom-color: var(--term-accent);
+}
+.pbar-tab-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pbar-tab-count {
+  font-size: 10px;
+  font-family: var(--font-sans);
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+  border: 1px solid var(--term-border);
+  border-radius: var(--radius-full);
+  color: var(--term-text);
+  opacity: 0.7;
+  line-height: 16px;
+}
+.pbar-tab-new {
+  font-size: 16px;
+  font-weight: 300;
+  opacity: 0.4;
+  padding: 0 var(--space-3);
+  color: var(--term-text);
+}
+.pbar-tab-new:hover {
+  opacity: 0.8;
+  color: var(--term-accent);
+}
+
+/* -- ProjectBar: Add Agent button (right-aligned) -- */
+.pbar-hire {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  margin-left: auto;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--term-text);
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+}
+.pbar-hire:hover {
+  opacity: 1;
+  color: var(--term-accent);
+}
+.pbar-hire-icon {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1;
+}
+.pbar-hire-label {
+  letter-spacing: 0.03em;
+}
+
+/* -- ProjectBar empty state CTA -- */
+.pbar-empty {
+  justify-content: center;
+  padding: var(--space-3) var(--space-4);
+}
+.pbar-cta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--term-border);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  font-family: var(--font-sans);
+  color: var(--term-text);
+  min-height: 40px;
+}
+.pbar-cta:hover {
+  border-color: var(--term-accent);
+  background: color-mix(in srgb, var(--term-accent) 6%, transparent);
+}
+.pbar-cta-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--term-accent) 12%, transparent);
+  color: var(--term-accent);
+  font-size: 16px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.pbar-cta-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--term-text-bright);
+}
+.pbar-cta-hint {
+  font-size: var(--font-size-xs);
+  color: var(--term-text);
+  opacity: 0.6;
+}
+
+/* ============================================================
+   DRAG-AND-DROP REORDER — grab cursor on header, drop indicator
+   ============================================================ */
+.mpv-cell[draggable="true"] > .term-info-bar {
+  cursor: grab;
+}
+.mpv-cell[draggable="true"] > .term-info-bar:active {
+  cursor: grabbing;
+}
+.mpv-drag-over {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--term-accent) 6%, transparent);
+}

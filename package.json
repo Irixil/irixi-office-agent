@@ -4,10 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node app/server.mjs",
+    "start": "node app/start-native.mjs --enable-ai",
+    "start:zero": "node app/start-native.mjs --zero-model",
+    "start:legacy": "node app/server.mjs",
     "test": "node --test app/tests/*.test.mjs"
   },
   "engines": {
     "node": ">=24"
+  },
+  "dependencies": {
+    "easystarjs": "0.4.4",
+    "phaser": "3.80.1"
   }
 }

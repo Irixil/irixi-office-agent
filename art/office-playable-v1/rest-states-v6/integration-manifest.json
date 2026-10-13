@@ -1,0 +1,89 @@
+{
+  "id": "office-playable-rest-states-v6-integration",
+  "status": "art-contract-ready-runtime-verification-and-user-visual-acceptance-pending",
+  "supplements": "../motion-repair-v6/integration-manifest.json",
+  "scope": "supplemental idle, sleeping and slack states for four seated roles only",
+  "secondFloorFunctional": false,
+  "roles": {
+    "writer": {
+      "manifest": "writer/manifest.json",
+      "runtimeStates": {
+        "idle": "writer/idle/spritesheet.png",
+        "sleeping": "writer/sleeping/spritesheet.png",
+        "slack": "writer/slack/spritesheet.png"
+      },
+      "workManifest": "../motion-repair-v6/writer/note-taking-v6/manifest.json",
+      "worldAnchor": [
+        304,
+        390
+      ],
+      "actualRoomPlayback": "writer/evidence/writer-rest-state-room-playback.gif"
+    },
+    "researcher": {
+      "manifest": "researcher/manifest.json",
+      "runtimeStates": {
+        "idle": "researcher/idle/spritesheet.png",
+        "sleeping": "researcher/sleeping/spritesheet.png",
+        "slack": "researcher/slack/spritesheet.png"
+      },
+      "workManifest": "../motion-repair-v6/researcher/research-writing-v6/manifest.json",
+      "worldAnchor": [
+        240,
+        645
+      ],
+      "actualRoomPlayback": "researcher/evidence/researcher-rest-state-room-playback.gif"
+    },
+    "reviewer": {
+      "manifest": "reviewer/manifest.json",
+      "runtimeStates": {
+        "idle": "reviewer/idle/spritesheet.png",
+        "sleeping": "reviewer/sleeping/spritesheet.png",
+        "slack": "reviewer/slack/spritesheet.png"
+      },
+      "workManifest": "../motion-repair-v6/reviewer/manuscript-review-v6/manifest.json",
+      "worldAnchor": [
+        1200,
+        550
+      ],
+      "actualRoomPlayback": "reviewer/evidence/reviewer-rest-state-room-playback.gif"
+    },
+    "archivist": {
+      "manifest": "archivist/manifest.json",
+      "runtimeStates": {
+        "idle": "archivist/idle/spritesheet.png",
+        "sleeping": "archivist/sleeping/spritesheet.png",
+        "slack": "archivist/slack/spritesheet.png"
+      },
+      "workManifest": "../motion-repair-v6/archivist/stamp-document-v6/manifest.json",
+      "worldAnchor": [
+        1200,
+        730
+      ],
+      "actualRoomPlayback": "archivist/evidence/archivist-rest-state-room-playback.gif"
+    }
+  },
+  "stateSwitchContract": {
+    "workToRest": "work safe frame -> idle frame 0",
+    "idleToSleeping": "idle frame 0 or 3 -> sleeping frame 0",
+    "idleToSlack": "idle frame 0 or 3 -> slack frame 0",
+    "sleepingToIdle": "sleeping frame 3 -> idle frame 0 or 3",
+    "slackToIdle": "slack frame 3 -> idle frame 0 or 3",
+    "idleToWork": "idle frame 3 -> work frame 0 or 13"
+  },
+  "invariants": [
+    "same canvas, anchor, worldAnchor and role-wide scale as motion-repair-v6",
+    "same v6 station patch and existing desk-front occlusion layers",
+    "no whole-person translation, per-frame auto-fit or scale jitter",
+    "rest states are visibly non-working; work props are set down and paws are empty",
+    "no cup, mug, beverage or new prop",
+    "all runtime assets are local; no model call at runtime",
+    "mole, owl, room and second-floor behavior are unchanged"
+  ],
+  "validation": "validation.json",
+  "integrationNotes": [
+    "This directory is additive. Do not replace the v6 working animation sheets.",
+    "Use each state manifest's per-frame durations rather than a single fallback duration.",
+    "The short slack state is non-looping and must return to idle.",
+    "Art packaging is complete; live runtime switching, desk-layer rendering and user visual acceptance remain pending."
+  ]
+}

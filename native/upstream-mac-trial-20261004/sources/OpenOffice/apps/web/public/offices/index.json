@@ -1,0 +1,64 @@
+[
+  {
+    "id": "default",
+    "name": "Retro",
+    "file": "nostalgic.zip"
+  },
+  {
+    "id": "Modern",
+    "name": "Modern",
+    "file": "modern-cozy.zip"
+  }
+  ,
+  {
+    "id": "Cute Whimsical",
+    "name": "Cute Whimsical",
+    "file": "cute-whimsical.zip"
+  },
+  {
+    "id": "Mythological",
+    "name": "Mythological",
+    "file": "mythological.zip"
+  },
+
+  {
+    "id": "Cyberpunk",
+    "name": "Cyberpunk",
+    "file": "cyberpunk.zip"
+  },
+  {
+    "id": "SciFi",
+    "name": "SciFi",
+    "file": "sifi.zip"
+  },
+  {
+    "id": "Post Apocalyptic",
+    "name": "Post Apocalyptic",
+    "file": "postApocalyptic.zip"
+  },
+  {
+    "id": "Historical",
+    "name": "Historical",
+    "file": "historical.zip"
+  },
+  {
+    "id": "Eastern Fantasy",
+    "name": "Eastern Fantasy",
+    "file": "easternFantasy.zip"
+  },
+  {
+    "id": "Western Fantasy",
+    "name": "Western Fantasy",
+    "file": "westernFantasy.zip"
+  },
+  {
+    "id": "Gothic",
+    "name": "Gothic",
+    "file": "gothic.zip"
+  },
+  {
+    "id": "DarkLegend",
+    "name": "DarkLegend",
+    "file": "darkLegend.zip"
+  }
+]
