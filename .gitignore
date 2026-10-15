@@ -15,6 +15,16 @@ node_modules
 *.key
 .codex/
 .agents/
+integrations/**/registered-projects.local.json
+integrations/**/runtime/
+integrations/**/evidence/
+integrations/state/
+integrations/batches/
+integrations/sample-project-intake/
+integrations/**/worktrees/
+integrations/**/node_modules/
+integrations/**/dist/
+integrations/**/build/
 evidence/
 !docs/evidence/
 docs/evidence/*

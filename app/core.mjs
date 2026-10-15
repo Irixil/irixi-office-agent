@@ -69,6 +69,23 @@ function archiveCurrentPlan(task, reason) {
   }
 }
 
+const TERMINAL_EXECUTION_PHASES = new Set(['completed', 'cancelled', 'partial', 'failed']);
+
+function invalidateExecution(task, reason) {
+  if (!task.execution) return;
+  task.executionHistory ??= [];
+  if (TERMINAL_EXECUTION_PHASES.has(task.execution.phase) || Boolean(task.execution.stopReason)) {
+    task.executionHistory.push({ ...structuredClone(task.execution), archiveReason: reason });
+  } else {
+    task.execution.phase = 'cancelled';
+    task.execution.stopReason = reason;
+    task.execution.updatedAt = now();
+    task.executionHistory.push(structuredClone(task.execution));
+  }
+  task.executionHistory = task.executionHistory.slice(-20);
+  task.execution = null;
+}
+
 export function invalidateCurrentWork(task, reason, message) {
   archiveCurrentPlan(task, reason);
   if (task.projectScopeProposal && ['proposed', 'accepted'].includes(task.projectScopeProposal.status)) {
@@ -89,15 +106,7 @@ export function invalidateCurrentWork(task, reason, message) {
     artifact.status = 'superseded_candidate';
     artifact.reviewStatus = 'stale_input';
   }
-  if (task.execution && !['completed', 'cancelled'].includes(task.execution.phase)) {
-    task.executionHistory ??= [];
-    task.execution.phase = 'cancelled';
-    task.execution.stopReason = reason;
-    task.execution.updatedAt = now();
-    task.executionHistory.push(structuredClone(task.execution));
-    task.executionHistory = task.executionHistory.slice(-20);
-    task.execution = null;
-  }
+  invalidateExecution(task, reason);
   task.workItems = [];
   task.plan = null;
   setTaskState(task, 'idle', 'coordinator', message);
@@ -106,15 +115,7 @@ export function invalidateCurrentWork(task, reason, message) {
 function pauseForGoalDecision(task) {
   for (const item of task.workItems || []) if (['running', 'ready', 'pending'].includes(item.status)) item.status = 'stale';
   for (const session of task.agentSessions || []) if (['planned', 'running'].includes(session.status)) session.status = 'stale';
-  if (task.execution && !['completed', 'cancelled'].includes(task.execution.phase)) {
-    task.executionHistory ??= [];
-    task.execution.phase = 'cancelled';
-    task.execution.stopReason = 'goal_replacement_waiting';
-    task.execution.updatedAt = now();
-    task.executionHistory.push(structuredClone(task.execution));
-    task.executionHistory = task.executionHistory.slice(-20);
-    task.execution = null;
-  }
+  invalidateExecution(task, 'goal_replacement_waiting');
 }
 
 export function event(task, type, message, detail = {}) {

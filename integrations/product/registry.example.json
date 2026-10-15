@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "projects": [
+    {
+      "projectId": "sample-project",
+      "label": "Example registered workspace",
+      "root": "/path/to/your/registered/git/workspace",
+      "baselinePaths": ["src/example.ts"],
+      "allowedWritePaths": ["src/example.ts"],
+      "checks": [{ "id": "node-syntax-v1" }],
+      "native": {
+        "backend": "codex",
+        "model": "gpt-6-luna",
+        "allowedRoles": ["Developer", "Reviewer"],
+        "maxAgents": 2,
+        "maxModelCalls": 8,
+        "maxDurationMs": 1200000
+      }
+    }
+  ]
+}

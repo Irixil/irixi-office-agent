@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "concepts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "location": {
+            "type": "string",
+            "description": "Follow the supplied responseContract.locationRule exactly. If the article has leading [label] paragraph markers, use the actual unique marker for each content paragraph; do not create locations for unlabelled title or source metadata. Only when the whole article has no leading bracket labels, use deterministic blank-line paragraph locations P1, P2, ... ."
+          },
+          "sourceQuote": { "type": "string" },
+          "authorView": { "type": "string" },
+          "aiAnalysis": { "type": "string" },
+          "plainExplanation": { "type": "string" },
+          "familiarExample": { "type": "string" },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "to": { "type": "string" },
+                "type": { "type": "string" },
+                "explanation": { "type": "string" }
+              },
+              "required": ["to", "type", "explanation"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["id", "title", "location", "sourceQuote", "authorView", "aiAnalysis", "plainExplanation", "familiarExample", "relations"],
+        "additionalProperties": false
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "conceptId": { "type": "string" },
+          "questionTypes": { "type": "array", "items": { "type": "string", "enum": ["cause", "misconception", "application", "transfer"] } },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "enum": ["cause", "misconception", "application", "transfer"] },
+                "question": { "type": "string" }
+              },
+              "required": ["type", "question"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["conceptId", "questionTypes", "questions"],
+        "additionalProperties": false
+      }
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "enum": ["complete"] },
+        "basis": { "type": "string" },
+        "importantConceptIds": { "type": "array", "items": { "type": "string" } },
+        "coveredLocations": {
+          "type": "array",
+          "description": "List exactly the article locations identified by responseContract.locationRule, each once and in document order. Do not add separate title or source locations when leading [label] paragraph markers are used.",
+          "items": { "type": "string" }
+        },
+        "locationCoverage": {
+          "type": "array",
+          "description": "Provide exactly one row for each coveredLocations entry, with no missing, duplicate, or extra locations, in the same order. Use the identical location rule and quote from that location; map content paragraphs to concepts located there.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "location": { "type": "string" },
+              "conceptIds": { "type": "array", "items": { "type": "string" } },
+              "sourceQuote": { "type": "string" },
+              "treatment": { "type": "string" },
+              "nonConceptReason": { "type": ["string", "null"] }
+            },
+            "required": ["location", "conceptIds", "sourceQuote", "treatment", "nonConceptReason"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["status", "basis", "importantConceptIds", "coveredLocations", "locationCoverage"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["concepts", "coverage", "plan"],
+  "additionalProperties": false
+}

@@ -1,0 +1,337 @@
+import { execSync } from "child_process";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { homedir } from "os";
+import path from "path";
+import { fileURLToPath } from "node:url";
+import type { AIBackend, RegisteredLearningSchema } from "@bit-office/orchestrator";
+import { AI_EXECUTION_DISABLED, MAC_TRIAL_CONFIG, MAC_TRIAL_MODE } from "./config.js";
+
+const isRoot = process.getuid?.() === 0;
+const gatewayPackageDir = path.dirname(fileURLToPath(import.meta.url));
+const articleLearningSchemas = {
+  "article-learning-explain": path.resolve(gatewayPackageDir, "../schemas/article-learning-explain.json"),
+  "article-learning-assess": path.resolve(gatewayPackageDir, "../schemas/article-learning-assess.json"),
+} as const;
+
+/**
+ * When running as root, --dangerously-skip-permissions is blocked by Claude Code.
+ * Instead, configure ~/.claude/settings.json to allow all tool permissions.
+ */
+function ensureClaudeSettingsForRoot() {
+  if (!isRoot) return;
+  const claudeDir = path.join(homedir(), ".claude");
+  const settingsPath = path.join(claudeDir, "settings.json");
+  const requiredAllow = [
+    "Bash", "Read", "Write", "Edit", "MultiEdit",
+    "Glob", "Grep", "WebFetch", "TodoRead", "TodoWrite", "Agent",
+  ];
+  try {
+    let settings: Record<string, unknown> = {};
+    if (existsSync(settingsPath)) {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    }
+    // bypassPermissions via settings.json — equivalent to --dangerously-skip-permissions
+    settings.defaultMode = "bypassPermissions";
+    const perms = (settings.permissions ?? {}) as Record<string, unknown>;
+    const existing = Array.isArray(perms.allow) ? perms.allow as string[] : [];
+    const merged = [...new Set([...existing, ...requiredAllow])];
+    perms.allow = merged;
+    settings.permissions = perms;
+    if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+    console.log("[backends] Running as root — configured Claude Code settings.json to allow all permissions");
+  } catch (err) {
+    console.warn("[backends] Failed to configure Claude settings for root:", err);
+  }
+}
+
+if (!AI_EXECUTION_DISABLED && !MAC_TRIAL_MODE) ensureClaudeSettingsForRoot();
+
+const backends: AIBackend[] = [
+  // ── Stable backends ───────────────────────────────────────────
+  {
+    id: "claude",
+    name: "Claude Code",
+    command: "claude",
+    supportsStdin: true,
+    instructionPath: ".claude/CLAUDE.md",
+    stability: "stable",
+    guardType: "hooks",
+    supportsResume: true,
+    supportsAgentType: true,
+    supportsNativeWorktree: true,
+    supportsStructuredOutput: true,
+    buildArgs(prompt, opts) {
+      const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
+      if (!isRoot) args.push("--dangerously-skip-permissions");
+      if (!opts.skipResume) {
+        if (opts.resumeSessionId) {
+          args.push("--resume", opts.resumeSessionId);
+        } else if (opts.continue) {
+          args.push("--continue");
+        }
+      }
+      if (opts.noTools) args.push("--tools", "");
+      if (opts.model) args.push("--model", opts.model);
+      if (opts.agentType) args.push("--agent", opts.agentType);
+      if (opts.worktree) args.push("--worktree");
+      return args;
+    },
+    deleteEnv: ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"],
+  },
+  {
+    id: "codex",
+    name: "Codex CLI",
+    command: MAC_TRIAL_CONFIG?.wrapper ?? (process.env.OPEN_OFFICE_CODEX_WRAPPER?.trim() || "codex"),
+    instructionPath: "AGENTS.md",
+    stability: "stable",
+    guardType: "sandbox",          // OS-level Seatbelt (macOS) / Landlock (Linux)
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    promptViaStdin: true,
+    outputSchemaUtf8Bytes(schema: RegisteredLearningSchema) {
+      return statSync(articleLearningSchemas[schema]).size;
+    },
+    buildArgs(prompt, opts) {
+      if (MAC_TRIAL_CONFIG && opts.model !== MAC_TRIAL_CONFIG.model) {
+        throw new Error(`Mac trial requires explicit model ${MAC_TRIAL_CONFIG.model}`);
+      }
+      const args = [
+        "--ask-for-approval", "on-request",
+      ];
+      if (opts.disableMultiAgent && !opts.noTools) args.push("--disable", "multi_agent");
+      if (opts.noTools) args.push(
+        "--disable", "multi_agent",
+        "--disable", "shell_tool",
+        "--disable", "skill_search",
+        "--disable", "tool_suggest",
+        "--disable", "apps",
+        "--disable", "browser_use",
+        "--disable", "computer_use",
+        "--disable", "image_generation",
+        "--disable", "workspace_dependencies",
+        "-c", "mcp_servers={}",
+        "-c", "plugins={}",
+      );
+      if (opts.model === "gpt-6-luna" && opts.modelReasoningEffort === "medium") {
+        args.push("-c", "model_reasoning_effort=medium");
+      }
+      if (opts.model) args.push("--model", opts.model);
+      args.push(
+        "exec",
+        ...(opts.outputSchema ? ["--output-schema", articleLearningSchemas[opts.outputSchema]] : []),
+        "--sandbox", opts.readOnly ? "read-only" : "workspace-write",
+        "--skip-git-repo-check",
+        "-",
+      );
+      return args;
+    },
+  },
+
+  // ── Beta backends ─────────────────────────────────────────────
+  {
+    id: "gemini",
+    name: "Gemini CLI",
+    command: "gemini",
+    instructionPath: "GEMINI.md",
+    stability: "beta",
+    guardType: "flag",             // --sandbox flag
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt) {
+      return ["-p", prompt, "--yolo"];
+    },
+  },
+
+  // ── Experimental backends ─────────────────────────────────────
+  {
+    id: "copilot",
+    name: "GitHub Copilot",
+    command: "copilot",
+    instructionPath: ".github/copilot-instructions.md",
+    stability: "experimental",
+    guardType: "none",
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt, opts) {
+      const args = ["-p", prompt];
+      if (opts.fullAccess) args.push("--allow-all-tools");
+      if (opts.model) args.push("--model", opts.model);
+      return args;
+    },
+  },
+  {
+    id: "cursor",
+    name: "Cursor CLI",
+    command: "agent",              // Cursor's CLI binary is "agent", not "cursor"
+    instructionPath: ".cursor/rules/instructions.md",
+    stability: "experimental",
+    guardType: "none",
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt, opts) {
+      const args = ["-p", prompt];
+      if (opts.fullAccess) args.push("--yolo");
+      if (opts.model) args.push("--model", opts.model);
+      return args;
+    },
+  },
+  {
+    id: "aider",
+    name: "Aider",
+    command: "aider",
+    instructionPath: ".aider.conf.yml",
+    stability: "experimental",
+    guardType: "none",
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt) {
+      return ["--message", prompt, "--yes", "--no-pretty", "--no-git"];
+    },
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    command: "opencode",
+    instructionPath: "AGENTS.md",  // Same convention as Codex
+    stability: "experimental",
+    guardType: "none",
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: true,
+    buildArgs(prompt) {
+      return ["run", prompt, "--format", "json"];
+    },
+  },
+  {
+    id: "pi",
+    name: "Pi",
+    command: "pi",
+    instructionPath: ".claude/CLAUDE.md",  // Pi reads .claude/CLAUDE.md like Claude Code
+    stability: "experimental",
+    guardType: "none",             // .pi/extensions/ guard system exists but not deployed by us
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt, opts) {
+      const args = ["-p", prompt];
+      if (opts.model) args.push("--model", opts.model);
+      return args;
+    },
+  },
+  {
+    id: "sapling",
+    name: "Sapling",
+    command: "sp",
+    instructionPath: "SAPLING.md",
+    stability: "experimental",
+    guardType: "none",             // .sapling/guards.json exists but not deployed by us
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: true,
+    buildArgs(prompt, opts) {
+      const args = ["run"];
+      if (opts.model) args.push("--model", opts.model);
+      args.push("--json", prompt);
+      return args;
+    },
+  },
+];
+
+const backendMap = new Map<string, AIBackend>(backends.map((b) => [b.id, b]));
+
+export function getBackend(id: string): AIBackend | undefined {
+  if (MAC_TRIAL_MODE && id !== "codex") return undefined;
+  return backendMap.get(id);
+}
+
+export function getAllBackends(): AIBackend[] {
+  return MAC_TRIAL_MODE ? backends.filter((backend) => backend.id === "codex") : backends;
+}
+
+/**
+ * Version-probe commands for backends with ambiguous binary names.
+ * Maps backend id → shell command that succeeds ONLY if the real CLI is installed.
+ * Backends not listed here use plain `which <command>` (their names are distinctive enough).
+ */
+const VERSION_PROBES: Record<string, string> = {
+  // "agent" is too generic — verify it's actually Cursor's CLI
+  cursor: "agent --version 2>&1 | grep -iq cursor",
+  // "copilot" also names AWS Copilot CLI — verify GitHub's agentic CLI
+  copilot: "copilot --version 2>&1 | grep -Eiq 'GitHub Copilot CLI|github copilot'",
+  // "pi" collides with math utilities, coreutils, etc.
+  pi: "pi --version 2>&1 | grep -iq pi",
+  // "sp" collides with Sapling SCM and other tools
+  sapling: "sp --version 2>&1 | grep -iq sapling",
+};
+
+/**
+ * `which`/`execSync` above run through a POSIX shell (Git Bash on Windows), so resolved
+ * paths come back like "/c/Users/example/.local/bin/claude". Node's spawn() on Windows goes
+ * through the native Win32 CreateProcess API, which doesn't understand that syntax and
+ * fails with ENOENT. Convert to a native Windows path so spawn() can actually find the
+ * binary.
+ *
+ * npm/global installs on Windows commonly create BOTH an extensionless POSIX shell shim
+ * and a .cmd/.exe wrapper side by side. Git Bash's `which` may return the extensionless
+ * shim, which exists on disk but is a shell script Win32 spawn() cannot execute directly.
+ * So a real Windows-executable candidate (.exe/.cmd/.bat) must be preferred FIRST, falling
+ * back to the bare converted path only if none of those exist.
+ */
+function toNativeWindowsPath(posixPath: string): string {
+  const match = posixPath.match(/^\/([a-zA-Z])\/(.*)$/);
+  if (!match) return posixPath;
+  const [, drive, rest] = match;
+  const winPath = `${drive.toUpperCase()}:\\${rest.replace(/\//g, "\\")}`;
+  for (const ext of [".exe", ".cmd", ".bat"]) {
+    if (existsSync(winPath + ext)) {
+      return winPath + ext;
+    }
+  }
+  return winPath;
+}
+
+/** Check which AI CLI tools are installed on this machine.
+ *  Also resolves each detected backend's command to its absolute path
+ *  so that spawn() works even if the child process env has a different PATH. */
+export function detectBackends(): string[] {
+  const detected: string[] = [];
+  for (const backend of backends) {
+    try {
+      const probe = VERSION_PROBES[backend.id];
+      if (probe) {
+        // Ambiguous name — run version probe to verify identity
+        execSync(probe, { stdio: "ignore", timeout: 5000 });
+      } else {
+        // Distinctive name — `which` is sufficient
+        execSync(`which ${backend.command}`, { stdio: "ignore", timeout: 3000 });
+      }
+      // Resolve absolute path so spawn() doesn't depend on child env PATH
+      try {
+        let absPath = execSync(`which ${backend.command}`, { encoding: "utf-8", timeout: 3000 }).trim();
+        if (absPath && absPath.startsWith("/")) {
+          if (process.platform === "win32") absPath = toNativeWindowsPath(absPath);
+          backend.command = absPath;
+          console.log(`[backends] ${backend.id}: resolved to ${absPath}`);
+        }
+      } catch { /* keep relative command as fallback */ }
+      detected.push(backend.id);
+    } catch {
+      // not installed or wrong binary
+    }
+  }
+  return detected;
+}

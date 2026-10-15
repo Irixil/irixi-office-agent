@@ -1,0 +1,387 @@
+{
+  "schemaVersion": 1,
+  "preparedAt": "2026-10-15",
+  "nativeRuntimeComplete": false,
+  "upstreams": [
+    {
+      "name": "OpenOffice",
+      "baseRevision": "5b0246c396aed041c5262ab0132623bf2b8b067b",
+      "overlayFiles": [
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/package.json",
+          "sourceSha256": "1d85e124e9e9999b04c2545afe9e194e949fbf07ef430af799d02e094feddd72",
+          "sha256": "1d85e124e9e9999b04c2545afe9e194e949fbf07ef430af799d02e094feddd72",
+          "bytes": 1020
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/schemas/article-learning-assess.json",
+          "sourceSha256": "27b397ee4cc1fb6ebc230ea9ae631c09f7533f681b828f03a458d69ec1fb3888",
+          "sha256": "27b397ee4cc1fb6ebc230ea9ae631c09f7533f681b828f03a458d69ec1fb3888",
+          "bytes": 3381
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/schemas/article-learning-explain.json",
+          "sourceSha256": "73207e52263a0b62e2c41d01aa73b221711ab95f0188b63e7f150ec871a9c9fd",
+          "sha256": "73207e52263a0b62e2c41d01aa73b221711ab95f0188b63e7f150ec871a9c9fd",
+          "bytes": 4172
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/article-project-capacity.ts",
+          "sourceSha256": "495d172ce9f537af7d4acf22f5062844803e9960ccf762f033c9dcc693de7971",
+          "sha256": "495d172ce9f537af7d4acf22f5062844803e9960ccf762f033c9dcc693de7971",
+          "bytes": 200
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/article-project-review.ts",
+          "sourceSha256": "39a1e9be3a2fcdb3c8b9ddf9aef46c77b57fb2f2c825831782852a954060ebbb",
+          "sha256": "39a1e9be3a2fcdb3c8b9ddf9aef46c77b57fb2f2c825831782852a954060ebbb",
+          "bytes": 281
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/backends.ts",
+          "sourceSha256": "22b4506e3ddc85eba65f573226c6fe00827ce08ac78083314e7f1cc3a78da2c3",
+          "sha256": "d4f43e91c2864dd4735e5a234112c718c951320a77df1011059e02b78b73be1c",
+          "bytes": 12707
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/client-state-http.ts",
+          "sourceSha256": "f470be852b47e8f40f08b3caeea028efc25c8b75d09e24736321d35f9916cd21",
+          "sha256": "f470be852b47e8f40f08b3caeea028efc25c8b75d09e24736321d35f9916cd21",
+          "bytes": 337
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/config.ts",
+          "sourceSha256": "2ff7a4efc6c256882cf780de06cb0f2b4e7b7462d58eb3673f6c1ed7bfc0898b",
+          "sha256": "2ff7a4efc6c256882cf780de06cb0f2b4e7b7462d58eb3673f6c1ed7bfc0898b",
+          "bytes": 8326
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/index.ts",
+          "sourceSha256": "1bf362cfc0d173ec1f64b94e3a6855fd577da9dd811f1c17c314a480365aa144",
+          "sha256": "684956aeeb269dc3af8a82b646aade10aa0543254775dc857f497ea55fc429d2",
+          "bytes": 104351
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/irixi-integration.ts",
+          "sourceSha256": "a274f56545ca2a63c9b75297d7c478e0faa434ac2ea597c826cae7305dafdafe",
+          "sha256": "9fa375a84ca07a912af287f123653247c444fb650790313aeb326555eae35551",
+          "bytes": 86161
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/json-body.ts",
+          "sourceSha256": "88cb80576b94f1a5f2f166f2d1dd1649093de724c0e5d079474dddc49c9317f5",
+          "sha256": "88cb80576b94f1a5f2f166f2d1dd1649093de724c0e5d079474dddc49c9317f5",
+          "bytes": 642
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/mac-trial-guard.ts",
+          "sourceSha256": "17bdede7db5835ba78227a1b360bd071807fded2b23af96859a59fe5019d1332",
+          "sha256": "17bdede7db5835ba78227a1b360bd071807fded2b23af96859a59fe5019d1332",
+          "bytes": 10748
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/product-project-registry.ts",
+          "sourceSha256": "20f2ba8fe029b250bf5040e75b09be44a161b40f2a16004e4cbedcaf150acb68",
+          "sha256": "20f2ba8fe029b250bf5040e75b09be44a161b40f2a16004e4cbedcaf150acb68",
+          "bytes": 14997
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/setup.ts",
+          "sourceSha256": "63e7bbbe1b50f4f9f720e23579d9f31668b76e7f2e00bba9951a312f3cf8ded1",
+          "sha256": "63e7bbbe1b50f4f9f720e23579d9f31668b76e7f2e00bba9951a312f3cf8ded1",
+          "bytes": 4099
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/gateway/src/ws-server.ts",
+          "sourceSha256": "eab0c05fb8d7a7eb62b9d952f36158fe6e6cf5431e531427c0d5210f517180d9",
+          "sha256": "cd25bc4f319f029445c0cfe82976c2faefabf68d8b5da85a0830211908f194bd",
+          "bytes": 68213
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/web/src/app/office/page.tsx",
+          "sourceSha256": "5ecc52f69627c8a7fb6a70341eb4598948e38f7db36fd6b9ca264af2dec4e020",
+          "sha256": "5ecc52f69627c8a7fb6a70341eb4598948e38f7db36fd6b9ca264af2dec4e020",
+          "bytes": 132990
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/web/src/components/office/sprites/assetLoader.ts",
+          "sourceSha256": "8bafc687789479492a9879287191e5cdf28acdf1d21377f3276de41f93a57708",
+          "sha256": "8bafc687789479492a9879287191e5cdf28acdf1d21377f3276de41f93a57708",
+          "bytes": 23118
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/web/src/components/office/ui/AgentPane.tsx",
+          "sourceSha256": "eecda2c01e3e7b330cb3102d21c1891abb8480b43e2e6c80a30c169e832f849e",
+          "sha256": "5202daf28f355d27c50bb3f3cc0293a5798f0c308c6fc98742c337620ec815bb",
+          "bytes": 80610
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/web/src/components/office/ui/ProjectHistory.tsx",
+          "sourceSha256": "62b7f6c5f845018e56c3e4d0fd8a9682e976d7baecc9222f6ac91dfe204758de",
+          "sha256": "62b7f6c5f845018e56c3e4d0fd8a9682e976d7baecc9222f6ac91dfe204758de",
+          "bytes": 12581
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/apps/web/src/store/office-store.ts",
+          "sourceSha256": "f273b82a9ba6747488dc4775013aa4e3de03b57a83a28febdc996a0373bed9b8",
+          "sha256": "f273b82a9ba6747488dc4775013aa4e3de03b57a83a28febdc996a0373bed9b8",
+          "bytes": 47315
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/agent-session.ts",
+          "sourceSha256": "bd31a848cef7e965db575616845ec5d0ac4eee0e0107e5ec003b17dde6ef5a15",
+          "sha256": "bd31a848cef7e965db575616845ec5d0ac4eee0e0107e5ec003b17dde6ef5a15",
+          "bytes": 70109
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/ai-backend.ts",
+          "sourceSha256": "6c37d782c35ab440a02d1e3b26941bb246458d68bba145dda9e9f7ccd01e621c",
+          "sha256": "6c37d782c35ab440a02d1e3b26941bb246458d68bba145dda9e9f7ccd01e621c",
+          "bytes": 3524
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/delegation.ts",
+          "sourceSha256": "16977aa5755decf4d5a41daad2003c06cc8ade597b197666db2a0c3135f74716",
+          "sha256": "16977aa5755decf4d5a41daad2003c06cc8ade597b197666db2a0c3135f74716",
+          "bytes": 31753
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/index.ts",
+          "sourceSha256": "208a3a34355ca9b32327da886dfe6c27f035b30a12fca10968381904f1a95429",
+          "sha256": "208a3a34355ca9b32327da886dfe6c27f035b30a12fca10968381904f1a95429",
+          "bytes": 2816
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/native-prompt-budget.ts",
+          "sourceSha256": "7c98fb33649367b6b1f6d01d06f67212cc8bc0b7929548d001a73d445fc111e9",
+          "sha256": "7c98fb33649367b6b1f6d01d06f67212cc8bc0b7929548d001a73d445fc111e9",
+          "bytes": 7896
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/orchestrator.ts",
+          "sourceSha256": "34ad459aa623672a24e569e24188178b257556815078c911c3fd48cd2cb6e57a",
+          "sha256": "34ad459aa623672a24e569e24188178b257556815078c911c3fd48cd2cb6e57a",
+          "bytes": 47567
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/output-parser.ts",
+          "sourceSha256": "eb3ff05d0a9851f4e89cc6ccc6a852241bc049641f82659d31e3175cd3ffa6b6",
+          "sha256": "eb3ff05d0a9851f4e89cc6ccc6a852241bc049641f82659d31e3175cd3ffa6b6",
+          "bytes": 8047
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/preview-server.ts",
+          "sourceSha256": "9a458d064d5c23e74e248c03d8c7f1fb72a7fc04a580cbd6132c5cef993852d3",
+          "sha256": "9a458d064d5c23e74e248c03d8c7f1fb72a7fc04a580cbd6132c5cef993852d3",
+          "bytes": 9319
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/prompt-templates.ts",
+          "sourceSha256": "d045ac96d49a3cdfa18447e26fa1d266ae173029df5fa63c803e6b3873dd40bb",
+          "sha256": "d045ac96d49a3cdfa18447e26fa1d266ae173029df5fa63c803e6b3873dd40bb",
+          "bytes": 18717
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/types.ts",
+          "sourceSha256": "e25a11b323709afb4aa7ea2fe1554307eec54bda288a7fb7c409f80aa6bef986",
+          "sha256": "e25a11b323709afb4aa7ea2fe1554307eec54bda288a7fb7c409f80aa6bef986",
+          "bytes": 10029
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/orchestrator/src/worktree.ts",
+          "sourceSha256": "34dec2bd23cdacb1bb5eae0b795204273a0db40c6c6ebb6b002ec395ef72a47d",
+          "sha256": "34dec2bd23cdacb1bb5eae0b795204273a0db40c6c6ebb6b002ec395ef72a47d",
+          "bytes": 37181
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/shared/src/commands.ts",
+          "sourceSha256": "7bff1af770f4b760f3abdc62eceaa5cd0b1bcd2fd8c609083a9b191bf9c37db9",
+          "sha256": "7bff1af770f4b760f3abdc62eceaa5cd0b1bcd2fd8c609083a9b191bf9c37db9",
+          "bytes": 9737
+        },
+        {
+          "path": "integrations/overlays/OpenOffice/packages/shared/src/events.ts",
+          "sourceSha256": "87addff82ea4e86a2c1657aca621ff3b372bc00f114abab15fcd97f38bb07ace",
+          "sha256": "87addff82ea4e86a2c1657aca621ff3b372bc00f114abab15fcd97f38bb07ace",
+          "bytes": 12265
+        }
+      ],
+      "redactions": [
+        "private project identifier replaced with sample-article-project",
+        "user-specific path example replaced with a generic example path"
+      ]
+    },
+    {
+      "name": "agent-office",
+      "baseRevision": "b00de4e8615c02605be7b90694dccda55d5d8168",
+      "overlayFiles": [
+        {
+          "path": "integrations/overlays/agent-office/packages/server/src/index.ts",
+          "sourceSha256": "557756054aefb39cffb02e37554a5faf3a1c878eec0c07a4e7f951a35e325e96",
+          "sha256": "557756054aefb39cffb02e37554a5faf3a1c878eec0c07a4e7f951a35e325e96",
+          "bytes": 1407
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/server/src/irixi-authority.ts",
+          "sourceSha256": "4a7f4f9884e7bf0edb933d8d54fed00bff1b0bef8e03964cebfef13e459c3416",
+          "sha256": "4a7f4f9884e7bf0edb933d8d54fed00bff1b0bef8e03964cebfef13e459c3416",
+          "bytes": 4603
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/server/src/memory/MemoryStore.ts",
+          "sourceSha256": "aa72d916a2a967e001bd02c70412bdee2aa1238d94380d429a27a02891a394ca",
+          "sha256": "aa72d916a2a967e001bd02c70412bdee2aa1238d94380d429a27a02891a394ca",
+          "bytes": 8180
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/server/src/rooms/OfficeRoom.ts",
+          "sourceSha256": "9e7fe485344336f41345cd459f39c025c4cd4320047fbc5a0f2a934bfa39a349",
+          "sha256": "9e7fe485344336f41345cd459f39c025c4cd4320047fbc5a0f2a934bfa39a349",
+          "bytes": 41978
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/ui/src/App.tsx",
+          "sourceSha256": "af9271a4243a9927fed44f7e46d997b7d9a7a29c58c1b42ffec46eb0d697302b",
+          "sha256": "af9271a4243a9927fed44f7e46d997b7d9a7a29c58c1b42ffec46eb0d697302b",
+          "bytes": 1917
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/ui/src/components/TaskBoard.tsx",
+          "sourceSha256": "74e3fe276f692e793e682c3cd033d3026872386cf46b45753b66a4665db35da9",
+          "sha256": "74e3fe276f692e793e682c3cd033d3026872386cf46b45753b66a4665db35da9",
+          "bytes": 9907
+        },
+        {
+          "path": "integrations/overlays/agent-office/packages/ui/vite.config.ts",
+          "sourceSha256": "d25d97ba5264c2d6bb5fdb28c53562d2fba2f23e2e7731859155ad7c6ce4002f",
+          "sha256": "d25d97ba5264c2d6bb5fdb28c53562d2fba2f23e2e7731859155ad7c6ce4002f",
+          "bytes": 617
+        }
+      ],
+      "replacements": []
+    }
+  ],
+  "desktopAdapter": {
+    "snapshotDate": "2026-10-15",
+    "files": [
+      {
+        "path": "integrations/product/desktop-product-server.mjs",
+        "sourceSha256": "2b414a7b1672d755e6d0300e71c35976a15bf0ca92ae55c9c9dc8fbf5ca8c211",
+        "sha256": "2b414a7b1672d755e6d0300e71c35976a15bf0ca92ae55c9c9dc8fbf5ca8c211",
+        "bytes": 34729
+      },
+      {
+        "path": "integrations/product/product-bootstrap-controller.mjs",
+        "sourceSha256": "6d34a31445d8d25dccfb5083b8a65e00bfe7264839fbe1dfe7346ddcba373dbd",
+        "sha256": "6d34a31445d8d25dccfb5083b8a65e00bfe7264839fbe1dfe7346ddcba373dbd",
+        "bytes": 83570
+      },
+      {
+        "path": "integrations/product/registry.example.json",
+        "sourceSha256": "4e01963b96fb02bc52f482b9b7f8adbf1e8e95358ef130062efac932dea3521c",
+        "sha256": "58c5b7dc3e0ef39f332455207b178b929d934d5e166d1f511cd98d1100ff541e",
+        "bytes": 555
+      },
+      {
+        "path": "integrations/product/start-product-entry.mjs",
+        "sourceSha256": "45c433e0d7b5391d2ebb04d48303451bcbbfec3eae38dc21fbeaab880298d990",
+        "sha256": "45c433e0d7b5391d2ebb04d48303451bcbbfec3eae38dc21fbeaab880298d990",
+        "bytes": 5238
+      },
+      {
+        "path": "integrations/product/start-product.mjs",
+        "sourceSha256": "6a4c1c08a9a79b138dc58488872a5c8c4f6b5fb2644362e55136226fefa7da6d",
+        "sha256": "6a4c1c08a9a79b138dc58488872a5c8c4f6b5fb2644362e55136226fefa7da6d",
+        "bytes": 29051
+      },
+      {
+        "path": "integrations/product/trusted-product-projects.mjs",
+        "sourceSha256": "499f0488d78eebdb3cf8be3ef1cc217975502dd724da2c3e67e89196b1016738",
+        "sha256": "499f0488d78eebdb3cf8be3ef1cc217975502dd724da2c3e67e89196b1016738",
+        "bytes": 11445
+      }
+    ]
+  },
+  "excluded": [
+    "private Authority runtime state and historical task records",
+    "node_modules and generated build output",
+    "local project registry and runtime/task state",
+    "logs, model outputs, and development evidence",
+    "upstream tests and private project fixtures"
+  ],
+  "authoritySources": {
+    "snapshotDate": "2026-10-15",
+    "files": [
+      {
+        "path": "integrations/authority/server.mjs",
+        "sourceSha256": "d9a218d950b8b7d4cca71a69e15e43484b8ce99bc8249bf38855b242cf3d808f",
+        "sha256": "703c222cb415208dc8d11b0ddbf7e52633f80f80176879a4df744e72742f05ff",
+        "bytes": 58868
+      },
+      {
+        "path": "integrations/authority/authority-core.mjs",
+        "sourceSha256": "4a2d97bba2e0b480d46fd543c4d12a3867f603f10c9d4f9dd4ff7618f2ac4451",
+        "sha256": "b990027f25b70cdae6962b3befbeb964f32aad9d7c0a2d2d63ad77fa628b4b74",
+        "bytes": 158706
+      },
+      {
+        "path": "integrations/authority/intake-controller.mjs",
+        "sourceSha256": "2467131e26ff44c60b0a8031616cad4eb5834d6ee319fb0c7c422570f9137998",
+        "sha256": "08d02ebef985b43b38f4368db9231cc4283d4b3d4d0f42e88f825488b817e283",
+        "bytes": 74407
+      },
+      {
+        "path": "integrations/authority/model-availability.mjs",
+        "sourceSha256": "de310d0474f31a3e68b2016c5dc8f5d3442084a3b9341ee29f9c51607d9dcd94",
+        "sha256": "de310d0474f31a3e68b2016c5dc8f5d3442084a3b9341ee29f9c51607d9dcd94",
+        "bytes": 2090
+      },
+      {
+        "path": "integrations/authority/task-controller.mjs",
+        "sourceSha256": "edade2894e7af836cbe5c56671313f39f7321a97c02a6eb5049b31689af32aa3",
+        "sha256": "edade2894e7af836cbe5c56671313f39f7321a97c02a6eb5049b31689af32aa3",
+        "bytes": 34304
+      },
+      {
+        "path": "integrations/authority/article-project-controller.mjs",
+        "sourceSha256": "909d4eb690768e5c7e8c537728a56836168b2e702b7b3059839832a422c1899b",
+        "sha256": "bf400d5894d10ea2b4ff3eaac6440232580d0126b274af70b22d65be3e57b69b",
+        "bytes": 213872
+      },
+      {
+        "path": "integrations/authority/article-project-capacity.mjs",
+        "sourceSha256": "a14c6f7e4bcee6aa17dddae5f00f9b4aa1635b5dadb5d570ba09e27c524e476c",
+        "sha256": "a14c6f7e4bcee6aa17dddae5f00f9b4aa1635b5dadb5d570ba09e27c524e476c",
+        "bytes": 560
+      },
+      {
+        "path": "integrations/authority/article-clean-repair-input.mjs",
+        "sourceSha256": "df51512cf03f3fdc78d423b516a32422b946f5179948602a07249eea28b304be",
+        "sha256": "287fe3ffbc1ffd3b80ff7260bd5db3da554a5f6de6455daadf6194eefb7e5b13",
+        "bytes": 16016
+      },
+      {
+        "path": "integrations/authority/article-storage-repair-48.mjs",
+        "sourceSha256": "579a53a057ef316620265c5fbef6b0f49eaa8f1373afa7679496f0a86d13c8bd",
+        "sha256": "7f225591db1c2c4042505c7b54dd9e774ac44ae60a22834ce841f51985689437",
+        "bytes": 4518
+      },
+      {
+        "path": "integrations/authority/article-storage-repair-49.mjs",
+        "sourceSha256": "48c7d2238d226109e6cbdd25a2eff3d10c98fb918c96988ad823e179f72e1eb4",
+        "sha256": "63b0e566cb940992e21a56a07e12ebf9537f843b796321c5aaf5537f15292c7f",
+        "bytes": 4295
+      }
+    ],
+    "redactions": {
+      "uuidBindings": "consistent neutral UUIDs",
+      "historicalHashBindings": "unique non-source-derived placeholder hashes preserving repeated-value equality",
+      "projectAndTaskSlugs": "generic sample project identifiers",
+      "historicalBatchAndDateLabels": "sample labels and dates",
+      "absolutePaths": "generic path placeholders",
+      "uniqueUuidValues": 29,
+      "uniqueHashValues": 131,
+      "absolutePathRoots": 2
+    }
+  }
+}

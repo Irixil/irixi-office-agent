@@ -256,6 +256,10 @@ button.role-cell:hover, button.role-cell:focus-visible { background: rgba(198,15
 .artifact-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--ink-soft); font: 600 10px/1.4 var(--sans); }
 .artifact-content { width: 100%; min-height: 480px; margin-top: 22px; padding: 0; resize: vertical; border: 0; color: var(--ink); background: transparent; font: 16px/1.72 var(--serif); }
 .artifact-content:focus-visible { box-shadow: 0 0 0 3px rgba(126,89,35,.28); }
+.native-candidate-detail { margin-top: 28px; padding-top: 22px; border-top: 1px solid rgba(67,49,28,.22); }
+.native-candidate-detail h3 { margin: 18px 0 8px; font: 700 15px/1.35 var(--sans); letter-spacing: .02em; }
+.native-patch-view { max-width: 100%; max-height: 520px; margin: 10px 0 0; padding: 16px; overflow: auto; border: 1px solid rgba(67,49,28,.2); border-radius: 8px; background: #211c18; color: #f6ead5; white-space: pre; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.native-plan-view { max-width: 100%; max-height: 320px; margin: 10px 0 0; padding: 14px; overflow: auto; border: 1px solid rgba(67,49,28,.18); border-radius: 8px; background: rgba(255,250,240,.72); color: var(--ink); white-space: pre-wrap; font: 13px/1.6 var(--sans); }
 .review-sidebar { display: grid; gap: 18px; }
 .review-panel { padding: 18px; background: rgba(248,240,219,.76); border: 1px solid var(--line); }
 .review-panel h3 { margin: 0 0 14px; font-size: 19px; }

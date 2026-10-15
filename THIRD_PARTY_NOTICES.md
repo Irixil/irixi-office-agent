@@ -1,5 +1,15 @@
 # Third-party notices
 
+## Native runtime integration candidate (2026-10-11)
+
+The current Desktop native entry uses the existing, locally adapted OpenOffice runtime at fixed revision `5b0246c396aed041c5262ab0132623bf2b8b067b` and agent-office at fixed revision `b00de4e8615c02605be7b90694dccda55d5d8168`. These are reviewed local revisions, not a claim about the latest upstream release or popularity.
+
+OpenOffice native call sites include Gateway, Orchestrator, AgentManager, AgentSession, DelegationRouter, managed Git worktrees and PreviewServer. The Irixi authority supplies goal/input/scope version guards, canonical model-call reservations, bounded context admission, candidate checks and exact-version review/confirmation/export around that native chain. No new replacement executor is introduced. Source and license: <https://github.com/longyangxi/OpenOffice>, MIT text in `third_party/OpenOffice-MIT.txt`.
+
+The Desktop scene retains the existing agent-office scene/grid adaptation and existing art. Its native state and actions use the same-origin product adapter; the original agent-office server also projects the real native roster without its own inference. Source and license: <https://github.com/harishkotra/agent-office>, MIT text in `third_party/agent-office-MIT.txt`.
+
+The integration reuses the existing external local source workspace and installed dependencies. It does not vendor or redistribute a newly downloaded runtime in this change. The earlier adaptation-only exclusions below describe their respective historical implementations and do not describe the current native route. Development zero-model checks and historical toy evidence are separate from the later formal project acceptance test.
+
 ## OpenOffice orchestration adaptation
 
 - Upstream: <https://github.com/longyangxi/OpenOffice>
@@ -54,3 +64,33 @@ The upstream hard-ceiling behavior that force-completes work was deliberately no
 - SHA-256: `a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da`
 - Local use: embedded in generated DOCX candidates and exposed through an isolated Fontconfig file while rendering previews. It is not installed globally.
 - License: SIL Open Font License 1.1; official text retained in `third_party/fonts/OFL.txt` (SHA-256 `1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9`).
+
+## Native Desktop integration snapshot
+
+This repository also retains the current native Desktop adapter and sanitized full-file overlays under `integrations/`. The exact file list, pinned base revisions, and source/public-copy hashes are in `integrations/source-manifest.json`.
+
+### OpenOffice native execution integration
+
+- Upstream: <https://github.com/longyangxi/OpenOffice>
+- Base revision: `5b0246c396aed041c5262ab0132623bf2b8b067b`
+- Overlay files: `integrations/overlays/OpenOffice/`
+- Main Gateway call sites: `apps/gateway/src/irixi-integration.ts`, `index.ts`, `ws-server.ts`, `client-state-http.ts`, `json-body.ts`, `mac-trial-guard.ts` and `product-project-registry.ts`. These connect current product actions to the Authority, bind native reservations to the active task/goal/execution/registry, and retain request-size, source, and lifecycle checks.
+- Orchestrator call sites: `packages/orchestrator/src/agent-session.ts`, `orchestrator.ts`, `delegation.ts`, `prompt-templates.ts`, `native-prompt-budget.ts`, `worktree.ts`, and related shared command/event types. These preserve phase, roster, worktree, prompt-admission, and terminal-observation integration with the native calls.
+- UI call sites: `apps/web/src/app/office/page.tsx`, `apps/web/src/components/office/ui/AgentPane.tsx`, `ProjectHistory.tsx`, `apps/web/src/store/office-store.ts`, and the asset loader. The same-origin product page and real roster are projected without adding a second task ledger.
+- License: MIT; full text retained in `third_party/OpenOffice-MIT.txt`.
+
+### Agent Office native scene/server integration
+
+- Upstream: <https://github.com/harishkotra/agent-office>
+- Base revision: `b00de4e8615c02605be7b90694dccda55d5d8168`
+- Overlay files: `integrations/overlays/agent-office/`
+- Main call sites: `packages/server/src/irixi-authority.ts`, `packages/server/src/index.ts`, `packages/server/src/rooms/OfficeRoom.ts`, `packages/server/src/memory/MemoryStore.ts`, `packages/ui/src/App.tsx`, `packages/ui/src/components/TaskBoard.tsx`, and `packages/ui/vite.config.ts`. Agent Office projects the native roster and task state; inference and task authority remain with the OpenOffice/Authority path.
+- License: MIT; full text retained in `third_party/agent-office-MIT.txt`.
+
+### Irixi adapter and portability boundary
+
+`integrations/product/` contains the native entry, launcher, same-origin product server, bootstrap controller, trusted-project registration adapter, and a placeholder registry example. `integrations/authority/` contains the Authority server plus all ten local production modules it directly or transitively imports, including `authority-core.mjs`, `intake-controller.mjs`, `task-controller.mjs`, `article-project-controller.mjs`, capacity and repair-boundary modules, and model availability.
+
+Private local paths and historical task/run/event/goal identifiers, hashes, project slugs, and dated batch labels were replaced in the public copies with generic placeholders. Repeated values map consistently, so equality guards remain; private task records, local registry, logs, model output, and development evidence are not included. The original local sources were not changed. The substitutions mean old private historical continuation bindings cannot be resumed from this snapshot.
+
+The upstream repositories themselves, their dependency trees and generated builds, and a machine-specific registered-project file are not vendored. Restore each upstream at the pinned revision, apply the full-file overlays at the same relative paths, install/build with each upstream's documented toolchain, create the ignored local registry from `integrations/product/registry.example.json`, and run the relevant acceptance flow. This source bundle has not been cold-started or model-validated from a clean clone.

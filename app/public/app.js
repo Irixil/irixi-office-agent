@@ -1,9 +1,11 @@
 import { synchronizedUrl } from './navigation-state.js';
 import { materialDecisionExpectation, planInputsChanged, projectWorkspaceAttachExpectation, shouldPollTask } from './task-input-state.js';
+import { createBoundTextareaDraft, nativeActionPayload, nativeCoworkerPresence, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, renderNativeMarkup } from './native-product-state.js';
 
 const initialQuery = new URLSearchParams(window.location.search);
 let requestedTaskId = initialQuery.get('task');
 const requestedView = initialQuery.get('view');
+const requestedBackend = initialQuery.get('backend') || (initialQuery.has('irixiTask') ? 'openoffice' : null) || document.querySelector('meta[name="irixi-backend"]')?.content || 'legacy';
 const state = {
   tasks: [],
   task: null,
@@ -11,6 +13,8 @@ const state = {
   selectedArtifactId: null,
   connections: [],
   pollTimer: null,
+  nativeRefreshGeneration: 0,
+  nativeRefreshesInFlight: 0,
   sceneReady: false,
   coworker: null,
   conversationMessages: [],
@@ -22,7 +26,14 @@ const state = {
   projectCapabilities: null,
   projectFixtureSelections: {},
   projectScopeContexts: {},
+  backendMode: requestedBackend === 'openoffice' ? 'openoffice-loading' : 'legacy',
+  nativeProduct: null,
+  nativeError: null,
+  nativeCandidate: null,
+  nativeCandidateLoading: false,
+  nativeCandidateError: null,
 };
+const nativeReviseDraft = createBoundTextareaDraft('form[data-native-revise] textarea[name="reason"]');
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -49,7 +60,7 @@ async function api(url, options = {}) {
   const contentType = response.headers.get('content-type') || '';
   const body = contentType.includes('json') ? await response.json() : await response.text();
   if (!response.ok) {
-    const error = new Error(body?.error?.message || body || `请求失败 (${response.status})`);
+    const error = new Error(body?.error?.message || body?.error || (typeof body === 'string' && body) || `请求失败 (${response.status})`);
     error.body = body;
     throw error;
   }
@@ -64,6 +75,209 @@ function announce(message, tone = 'normal') {
   $('#live-region').textContent = message;
   clearTimeout(announce.timer);
   announce.timer = setTimeout(() => toast.classList.remove('is-visible'), 3400);
+}
+
+function nativeMode() {
+  return state.backendMode === 'openoffice';
+}
+
+function nativeBlocked() {
+  return state.backendMode === 'openoffice-blocked';
+}
+
+function setBackendUi() {
+  document.body.dataset.backend = state.backendMode;
+  const canCreateNativeTask = nativeMode() && state.nativeProduct?.setupOnly && state.nativeProduct.setupStatus === 'waiting_task';
+  const unavailableDialogs = nativeBlocked()
+    ? new Set(['task-dialog', 'material-dialog', 'suggestion-dialog'])
+    : nativeMode() && !canCreateNativeTask ? new Set(['task-dialog']) : new Set();
+  $$('[data-open-dialog]').forEach((button) => {
+    button.hidden = unavailableDialogs.has(button.dataset.openDialog);
+  });
+  const materialForm = $('#material-form');
+  materialForm.querySelectorAll('[name="materialMode"]').forEach((input) => {
+    const unsupported = nativeMode() && input.value !== 'text';
+    input.disabled = unsupported;
+    input.closest('label').style.display = unsupported ? 'none' : '';
+  });
+  const materialMode = materialForm.querySelector('[name="materialMode"][value="text"]');
+  if (nativeMode()) materialMode.checked = true;
+  $$('[data-material-panel]').forEach((panel) => { panel.hidden = panel.dataset.materialPanel !== 'text'; });
+  const classification = $('#suggestion-form [name="classification"]');
+  classification.disabled = nativeMode();
+  classification.closest('label').style.display = nativeMode() ? 'none' : '';
+  $('#suggestion-dialog h2').textContent = nativeMode() ? '补充工作要求' : '加入一条建议';
+  $('#suggestion-form [name="text"]').placeholder = nativeMode() ? '写下支持当前目标的工作交代或修改要求' : '这条想法是支持当前目标，还是可能替代目标？';
+  const taskForm = $('#task-form');
+  taskForm.querySelector('.two-fields').style.display = nativeMode() ? 'none' : '';
+  if (nativeMode()) taskForm.querySelector('.checkbox-line').style.setProperty('display', 'none', 'important');
+  else taskForm.querySelector('.checkbox-line').style.removeProperty('display');
+  taskForm.querySelector('.form-disclosure').textContent = nativeMode()
+    ? '这里只建立目标记录，不会立即启动模型、修改文件、确认成果或发布。'
+    : '选择 Codex 后，运行时会把当前任务目标和你加入的材料发送给 Codex 服务；演示提供者不调用模型。';
+  $('#task-dialog h2').textContent = nativeMode() ? '建立原生任务' : '建立新任务';
+}
+
+function checkLabel(check) {
+  if (typeof check === 'string') return check;
+  return check?.id || check?.name || JSON.stringify(check);
+}
+
+function capabilityLines(capabilities) {
+  if (!capabilities) return [];
+  const yesNo = (value) => value === true ? '支持' : value === false ? '不支持' : '未提供';
+  return [
+    `team：${yesNo(capabilities.team)}`,
+    `worktree：${yesNo(capabilities.worktree)}`,
+    `静态预览：${capabilities.staticPreviewEntries.length ? capabilities.staticPreviewEntries.join('、') : '无登记入口'}`,
+    `自动合并：${yesNo(capabilities.autoMerge)}`,
+    `手动合并：${yesNo(capabilities.manualMerge)}`,
+    `命令预览：${yesNo(capabilities.commandPreview)}`,
+  ];
+}
+
+function nativePatchHref(product = state.nativeProduct) {
+  const artifact = product?.artifact;
+  const approvalId = artifact?.confirmation?.approvalId;
+  if (!product?.links.patch || !artifact?.id || !approvalId) return null;
+  const separator = product.links.patch.includes('?') ? '&' : '?';
+  return `${product.links.patch}${separator}artifactId=${encodeURIComponent(artifact.id)}&approvalId=${encodeURIComponent(approvalId)}`;
+}
+
+function nativeActionBound(product = state.nativeProduct) {
+  return Boolean(product?.current && product.links.actions && product.execution?.id && product.product?.registrySha256);
+}
+
+function nativeSetupBound(product = state.nativeProduct) {
+  return Boolean(product?.authorityCurrent && product.links.actions && product.goalVersionId);
+}
+
+function nativeChatContext(product = state.nativeProduct) {
+  if (!product || !state.task || !state.coworker?.role) return { member: null, canSend: false };
+  const presence = nativeCoworkerPresence(product, state.task, state.coworker.role);
+  const member = presence.member || null;
+  return {
+    member,
+    canSend: Boolean(member?.id && product.native?.aiEnabled === true && product.native?.actions.canChat && nativeActionBound(product)),
+  };
+}
+
+async function postNativeAction(action, input = {}) {
+  const product = state.nativeProduct;
+  if (!product?.links.actions) throw new Error('当前原生任务动作接口不可用。');
+  const result = await api(product.links.actions, { method: 'POST', body: JSON.stringify(nativeActionPayload(product, action, input)) });
+  await refreshNativeProduct({ silent: false });
+  return result;
+}
+
+function nativeCandidateMatches(product = state.nativeProduct, candidate = state.nativeCandidate) {
+  const artifact = product?.artifact;
+  return Boolean(candidate && artifact && candidate.taskId === product.taskId && candidate.goalVersionId === product.goalVersionId
+    && candidate.artifactId === artifact.id && candidate.artifactVersion === artifact.version
+    && candidate.candidateSha256 === artifact.candidateSha256);
+}
+
+async function loadNativeCandidate() {
+  const product = state.nativeProduct;
+  if (!product?.current || !product.artifact || !product.native?.actions.canInspectDiff || !product.links.candidate) {
+    throw new Error('后台没有开放当前候选的真实差异查看入口。');
+  }
+  state.nativeCandidateLoading = true;
+  state.nativeCandidateError = null;
+  renderReview();
+  try {
+    const raw = await api(product.links.candidate);
+    state.nativeCandidate = normalizeNativeCandidate(raw, product);
+  } catch (error) {
+    state.nativeCandidate = null;
+    state.nativeCandidateError = error.message;
+    throw error;
+  } finally {
+    state.nativeCandidateLoading = false;
+    renderReview();
+  }
+}
+
+async function requestNativeRun() {
+  const product = state.nativeProduct;
+  const runAgentId = product?.native?.runAgentId;
+  const lead = product?.native?.agents?.find((agent) => agent.id === runAgentId);
+  if (!product?.native?.actions.canRun || !nativeActionBound(product) || !runAgentId || !lead?.isTeamLead) {
+    throw new Error('后台没有提供当前可用的原生 Lead 与运行资格。');
+  }
+  if (!window.confirm(`由 OpenOffice 原生 Lead「${lead.name || lead.role || runAgentId}」按当前目标开始执行吗？\n\n这会启动真实模型工作；后台仍会再次核对目标、执行、产品登记与预算。`)) return false;
+  await postNativeAction('run');
+  announce('已把当前任务交给 OpenOffice 原生 Lead；办公室会按真实执行状态更新。');
+  return true;
+}
+
+async function requestNativePrepareRun() {
+  const product = state.nativeProduct;
+  const scope = product?.setup?.selectedScope;
+  const reconnecting = product?.setupStatus === 'runtime_unavailable';
+  if (!['ready_to_run', 'runtime_unavailable'].includes(product?.setupStatus) || !product.canPrepareRun || !scope?.current || !scope.scopeFingerprint || !nativeSetupBound(product)) {
+    throw new Error('当前项目范围还不能准备原生后台。');
+  }
+  await postNativeAction('prepare_run', { expectedScopeFingerprint: scope.scopeFingerprint });
+  announce(reconnecting ? '已按同一执行账恢复原生后台；没有启动模型工作。' : '原生后台已按当前目标与授权范围准备完成；这一步没有启动模型执行。');
+  return true;
+}
+
+async function requestNativeCancel() {
+  throw new Error('后台尚未提供可核对的取消目标，办公室不会从工作项 ID 猜测原生任务。');
+}
+
+async function requestNativeContinue() {
+  if (!state.nativeProduct?.native?.actions.canContinue || !state.nativeProduct?.current) throw new Error('后台没有确认当前任务可以继续。');
+  if (!window.confirm('按当前目标继续这项原生任务吗？\n\n后台仍会核对目标版本、产品绑定和预算。')) return false;
+  await postNativeAction('continue');
+  announce('继续请求已写入当前任务；可执行步骤会按真实状态出现。');
+  return true;
+}
+
+async function readNativeProduct() {
+  const response = await fetch('/api/product-state', { headers: { Accept: 'application/json' } });
+  if (response.status === 404) return null;
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('json') ? await response.json() : await response.text();
+  if (!response.ok) throw new Error(body?.error?.message || body?.error || (typeof body === 'string' && body) || `OpenOffice 状态读取失败 (${response.status})`);
+  return normalizeNativeProductState(body);
+}
+
+function applyNativeProduct(product) {
+  const previousCandidate = state.nativeCandidate;
+  state.backendMode = 'openoffice';
+  state.nativeProduct = product;
+  state.nativeError = null;
+  state.task = product.setupOnly ? null : nativeProductAsOfficeTask(product);
+  state.tasks = state.task ? [state.task] : [];
+  state.selectedArtifactId = product.artifact?.id || null;
+  if (!nativeCandidateMatches(product, previousCandidate)) {
+    state.nativeCandidate = null;
+    state.nativeCandidateError = null;
+  }
+  setBackendUi();
+}
+
+function renderNativeBlocked() {
+  const message = state.nativeError || 'OpenOffice 状态当前无法核对。';
+  $('#task-list').innerHTML = `<p class="empty-ledger">${esc(message)}</p>`;
+  $('#global-status').textContent = 'OpenOffice 状态不可核对';
+  $('#global-status-dot').dataset.tone = 'attention';
+  $('#room-state-kicker').textContent = 'NATIVE STATE UNAVAILABLE';
+  $('#room-state-title').textContent = '办公室没有冒充旧任务继续工作';
+  $('#room-state-detail').textContent = message;
+  $('#goal-version').textContent = '—';
+  $('#active-goal').textContent = '等待原生状态恢复后再显示。';
+  $('#success-criteria').textContent = '—';
+  $('#goal-boundaries').textContent = '不会静默回退到旧任务接口。';
+  $('#next-action').textContent = '恢复 OpenOffice 统一入口后刷新。';
+  $('#role-strip').innerHTML = Object.entries(ROLE_LABEL).map(([role, label]) => role === 'coordinator' ? `<div class="role-cell" data-state="idle"><b>${esc(label)}</b><span>状态未知</span></div>` : `<button class="role-cell" type="button" data-talk-role="${esc(role)}" data-state="idle"><b>${esc(label)}</b><span>状态未知</span></button>`).join('');
+  $('#office-actions').innerHTML = '<button class="secondary-button wide-button" type="button" data-action="retry-native">重新读取原生状态</button>';
+  $('#desk-subtitle').textContent = 'OpenOffice 原生状态未通过校验。';
+  renderNativeMarkup($('#desk-content'), `<div class="empty-desk"><span class="eyebrow">SOURCE CHECK FAILED</span><h2>没有显示未经核对的旧数据</h2><p>${esc(message)}</p><button class="secondary-button" type="button" data-action="retry-native">重新读取</button></div>`, null);
+  renderNativeMarkup($('#review-content'), '<div class="empty-desk"><span class="eyebrow">NO VERIFIED PROOF</span><h2>当前没有可核对的原生候选</h2><p>状态恢复前不会提供确认或下载入口。</p></div>', null);
+  syncSceneFrame();
 }
 
 function activeGoal(task = state.task) {
@@ -124,6 +338,21 @@ function nextAction(task) {
 }
 
 function officeState(task) {
+  if (nativeMode() && state.nativeProduct) {
+    const native = state.nativeProduct;
+    if (native.setupOnly) return { kicker: 'READY FOR A REAL GOAL', title: '办公室正在等候第一项原生任务', detail: native.nextStep, tone: 'normal' };
+    if (native.setupPending) return { kicker: 'SETTING UP THE NATIVE TASK', title: native.statusLabel, detail: native.nextStep, tone: 'normal' };
+    if (!native.current) return { kicker: 'NATIVE BINDING STALE', title: '原生任务或产品绑定已经失效', detail: native.nextStep, tone: 'attention' };
+    if (!native.artifact && native.execution?.phase === 'planned') return native.native?.actions.canRun && native.native?.runAgentId
+      ? { kicker: 'NATIVE LEAD READY', title: '原生后台已经准备好，等待你开始执行', detail: native.nextStep, tone: 'normal' }
+      : { kicker: 'NATIVE RUNTIME READY', title: '原生后台已经准备好，当前不开放模型执行', detail: native.native?.aiEnabled === false ? '当前是零模型开发模式；没有发起模型调用。' : '后台尚未明确开放当前任务的模型启动资格。', tone: 'normal' };
+    if (task.status === 'running') return { kicker: 'OPENOFFICE EXECUTION', title: task.activeRole ? `${ROLE_LABEL[task.activeRole] || task.activeRole}正在执行原生任务` : 'OpenOffice 正在执行，角色尚未提供', detail: native.statusLabel || native.nextStep, tone: 'working' };
+    if (task.status === 'waiting_user') return { kicker: 'NATIVE REVIEW COMPLETE', title: '原生候选等待你的核对', detail: native.nextStep, tone: 'normal' };
+    if (task.status === 'ready_to_export') return { kicker: 'NATIVE VERSION CONFIRMED', title: '指定版本已经确认', detail: native.nextStep, tone: 'normal' };
+    if (task.status === 'failed') return { kicker: 'NATIVE EXECUTION STOPPED', title: 'OpenOffice 原生执行失败', detail: native.nextStep, tone: 'attention' };
+    if (task.status === 'partial') return { kicker: 'NATIVE WORK PAUSED', title: '原生任务当前不能继续', detail: native.nextStep, tone: 'attention' };
+    return { kicker: 'OPENOFFICE NATIVE STATE', title: native.statusLabel || `原生任务状态：${native.status}`, detail: native.nextStep, tone: 'normal' };
+  }
   if (!task) return { kicker: 'OFFICE AT REST', title: '办公室正在等候第一项工作', detail: '建立任务后，角色状态会投影到这里。', tone: 'normal' };
   if (planningBusy(task)) return { kicker: 'PLANNING THE COMMISSION', title: 'Irixi 正在形成工作计划', detail: '当前目标与材料正在编排；可以取消，不会改动已有记录。', tone: 'working' };
   const runningRole = {
@@ -160,11 +389,12 @@ function roleState(role, task) {
     if (task.status === 'failed') return { state: 'failed', label: '已停下' };
     return { state: 'done', label: '守住目标' };
   }
+  if (nativeMode() && task.status === 'running' && task.activeRole === role) return { state: 'active', label: '进行中' };
   const dynamicAgent = task.team?.agents?.find((agent) => agent.stationRole === role && task.workItems.some((work) => work.agentId === agent.id && work.status === 'running'))
     || task.team?.agents?.find((agent) => agent.stationRole === role);
   const matchingWork = task.workItems.filter((work) => dynamicAgent ? work.agentId === dynamicAgent.id : work.role === role);
   const item = matchingWork.find((work) => work.status === 'running') || matchingWork.at(-1);
-  if (!item) return { state: 'idle', label: '本次不需要' };
+  if (!item) return nativeMode() && dynamicAgent ? { state: 'idle', label: '待命' } : { state: 'idle', label: '本次不需要' };
   if (item.status === 'running') return { state: 'active', label: WORK_STATUS[item.status] };
   if (['completed', 'waiting_user'].includes(item.status)) return { state: 'done', label: WORK_STATUS[item.status] };
   if (['failed', 'blocked'].includes(item.status)) return { state: 'failed', label: WORK_STATUS[item.status] };
@@ -207,11 +437,19 @@ function renderOffice() {
   $('.office-state-plaque').dataset.tone = display.tone;
   $('#global-status').textContent = task ? `${task.title} · ${TASK_STATUS[task.status] || task.status}` : '本地待命';
   $('#global-status-dot').dataset.tone = display.tone;
-  $('#goal-version').textContent = goal ? `v${goal.version}` : '—';
+  $('#goal-version').textContent = nativeMode() ? state.nativeProduct.goalVersionId || '尚未建立' : goal ? `v${goal.version}` : '—';
   $('#active-goal').textContent = goal?.statement || '尚未选择任务。';
   $('#success-criteria').textContent = lines(goal?.successCriteria, '尚未填写。');
   $('#goal-boundaries').textContent = lines(goal?.boundaries, '默认不发送、不发布、不覆盖来源。');
-  $('#next-action').textContent = nextAction(task);
+  if (nativeMode()) {
+    $('#success-criteria').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : '原生产品状态尚未提供已接受的成功条件。';
+    $('#goal-boundaries').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : '原生产品状态尚未提供已接受的目标边界；此处不自行补写。';
+    if (state.nativeProduct.setupPending) {
+      $('#success-criteria').textContent = lines(state.nativeProduct.successCriteria, '用户尚未填写成功条件。');
+      $('#goal-boundaries').textContent = lines(state.nativeProduct.boundaries, '用户尚未填写工作边界。');
+    }
+  }
+  $('#next-action').textContent = nativeMode() ? state.nativeProduct.nextStep : nextAction(task);
 
   const roles = ['coordinator', 'archivist', 'researcher', 'writer', 'reviewer', 'steward'];
   $('#role-strip').innerHTML = roles.map((role) => {
@@ -221,7 +459,28 @@ function renderOffice() {
   }).join('');
 
   const actions = $('#office-actions');
-  if (!task) actions.innerHTML = '<button class="secondary-button wide-button" type="button" data-open-dialog="task-dialog">建立第一项工作</button>';
+  if (nativeMode()) {
+    if (state.nativeProduct.setupOnly) {
+      actions.innerHTML = '<button class="primary-button wide-button" type="button" data-open-dialog="task-dialog">建立第一项原生任务</button><button class="secondary-button wide-button" type="button" data-view-target="desk">查看设置状态</button>';
+      syncSceneFrame();
+      return;
+    }
+    if (state.nativeProduct.setupPending) {
+      const canPrepare = state.nativeProduct.setupStatus === 'ready_to_run' && state.nativeProduct.canPrepareRun
+        && state.nativeProduct.setup?.selectedScope?.current && nativeSetupBound();
+      actions.innerHTML = `${canPrepare ? '<button class="primary-button wide-button" type="button" data-action="native-prepare-run">准备原生后台</button>' : ''}<button class="secondary-button wide-button" type="button" data-view-target="desk">查看设置状态与边界</button>`;
+      syncSceneFrame();
+      return;
+    }
+    const nativeTask = state.nativeProduct.links.nativeTask;
+    const nativeActions = state.nativeProduct.native?.actions;
+    const primary = nativeActions?.canRun && state.nativeProduct.native?.runAgentId && nativeActionBound()
+          ? '<button class="primary-button wide-button" type="button" data-action="native-run">由原生 Lead 开始执行</button>'
+          : nativeActions?.canContinue && nativeActionBound()
+            ? '<button class="primary-button wide-button" type="button" data-action="native-resume">按当前目标继续</button>'
+          : nativeTask ? `<a class="primary-button wide-button" href="${esc(nativeTask)}">打开 OpenOffice 原生任务</a>` : '<button class="secondary-button wide-button" type="button" disabled>原生任务链接未提供</button>';
+    actions.innerHTML = `${primary}<button class="secondary-button wide-button" type="button" data-view-target="desk">查看真实状态与边界</button>${state.nativeProduct.artifact ? '<button class="secondary-button wide-button" type="button" data-view-target="review">查看候选与审阅</button>' : ''}`;
+  } else if (!task) actions.innerHTML = '<button class="secondary-button wide-button" type="button" data-open-dialog="task-dialog">建立第一项工作</button>';
   else if (task.status === 'running') actions.innerHTML = '<button class="danger-button wide-button" type="button" data-action="cancel">取消本次运行</button><button class="secondary-button wide-button" type="button" data-view-target="desk">查看任务书桌</button>';
   else if (task.status === 'cancellation_unknown') actions.innerHTML = '<button class="secondary-button wide-button" type="button" disabled>正在确认取消结果</button><button class="secondary-button wide-button" type="button" data-view-target="desk">查看任务书桌</button>';
   else if (['waiting_user', 'ready_to_export'].includes(task.status)) actions.innerHTML = '<button class="secondary-button wide-button" type="button" data-view-target="review">前往成果审阅</button><button class="secondary-button wide-button" type="button" data-view-target="desk">查看决定与续接状态</button>';
@@ -233,9 +492,65 @@ function renderCoworkerConversation() {
   const root = $('#coworker-history');
   const actions = $('#coworker-actions');
   const task = state.task;
+  if (nativeBlocked()) {
+    root.innerHTML = `<div class="conversation-line is-system"><b>OpenOffice 状态不可核对</b><p>${esc(state.nativeError || '等待原生状态恢复。')}</p></div>`;
+    actions.innerHTML = '<button class="secondary-button" type="button" data-action="retry-native">重新读取原生状态</button>';
+    $('#coworker-form').querySelector('[type="submit"]').disabled = true;
+    $('#coworker-message').disabled = true;
+    $('#coworker-intent').disabled = true;
+    $('#cancel-conversation-button').hidden = true;
+    return;
+  }
   if (!task) {
     root.innerHTML = '<div class="conversation-line is-system"><b>办公室回执</b><p>目前没有选中的任务。先建立目标后，这位同事才能接手材料与工作。</p></div>';
     actions.innerHTML = '<button class="primary-button" type="button" data-coworker-action="new-task">在这里建立第一项工作</button>';
+    return;
+  }
+  if (nativeMode()) {
+    const product = state.nativeProduct;
+    const role = state.coworker?.role;
+    const presence = nativeCoworkerPresence(product, task, role);
+    const memberName = presence.member?.name || product.actor || ROLE_LABEL[role] || role;
+    const memberStatus = presence.member?.status === 'idle' ? '待命' : presence.member?.status || '状态未提供';
+    const statusText = presence.active
+      ? `${memberName} 正在处理 ${presence.workItem?.title || product.execution?.phase || product.status}。`
+      : presence.member
+        ? `${memberName} 已由 OpenOffice 登记，当前${memberStatus}。任务状态为 ${product.statusLabel || product.status}。`
+        : `这个工位未在本次已核对的原生团队中登记。任务状态为 ${product.statusLabel || product.status}。`;
+    const chat = nativeChatContext(product);
+    const conversationStatus = {
+      saved: '已保存', pending: '等待回复', running: '回复中', completed: '已完成', failed: '失败',
+      cancelled: '已取消', saved_no_native_runtime: '只保存记录，未启动模型',
+    };
+    const history = (product.conversations || []).filter((item) => chat.member?.id && item.agentId === chat.member.id).slice(-8).map((item) => {
+      const isUser = item.actor === 'user';
+      const failed = item.status === 'failed';
+      const by = isUser ? '你' : failed ? `${memberName} · 回复失败` : memberName;
+      const text = item.text || (failed ? '本次原生讨论调用失败，未形成模型回复。' : '本条讨论没有返回正文。');
+      return `<div class="conversation-line ${isUser ? 'is-user' : 'is-system'}"><b>${esc(by)}</b><p>${esc(text)}</p><small>${esc(conversationStatus[item.status] || item.status)}${item.at ? ` · ${esc(item.at)}` : ''}</small></div>`;
+    }).join('');
+    const boundary = chat.canSend
+      ? '这里发送的是当前任务、当前目标下的只读讨论，不会自动变成已接受交代、修改要求或成果退回。工作要求请到任务书桌补充；成果退回请到审阅台操作。'
+      : product.native?.aiEnabled === false
+        ? '当前为零模型开发模式：真实历史可读，但不会启动模型回复。工作要求请到任务书桌补充；成果退回请到审阅台操作。'
+        : '后台尚未同时开放当前成员、模型能力和讨论资格，因此只显示真实历史，不会伪造回复。';
+    root.innerHTML = `<div class="conversation-line is-system"><b>OpenOffice 真实状态</b><p>${esc(statusText)}</p></div>${history}<div class="conversation-line is-system"><b>当前接线边界</b><p>${esc(boundary)}</p></div>`;
+    root.scrollTop = root.scrollHeight;
+    const canRunHere = false;
+    const canCancelHere = false;
+    actions.innerHTML = `${canRunHere ? '<button class="primary-button" type="button" data-coworker-action="native-run">启动当前原生执行</button>' : ''}${canCancelHere ? '<button class="danger-button" type="button" data-coworker-action="native-cancel">取消当前原生执行</button>' : ''}${product.links.nativeTask ? `<a class="secondary-button" href="${esc(product.links.nativeTask)}">打开原生任务</a>` : ''}${product.artifact ? '<button class="secondary-button" type="button" data-coworker-action="review">查看当前候选</button>' : ''}`;
+    const form = $('#coworker-form');
+    const intent = $('#coworker-intent');
+    intent.value = 'progress';
+    intent.querySelectorAll('option').forEach((option) => { option.disabled = option.value !== 'progress'; });
+    form.querySelector('[type="submit"]').disabled = !chat.canSend;
+    $('#coworker-message').disabled = !chat.canSend;
+    intent.disabled = !chat.canSend;
+    $('#coworker-message').placeholder = chat.canSend ? '询问进度，或就当前任务进行只读讨论' : '当前只显示真实讨论历史';
+    $('#coworker-status').textContent = chat.canSend
+      ? `当前状态：${memberStatus}。Irixi 正在自动走近；可就当前任务进行只读讨论。`
+      : `当前状态：${memberStatus}。Irixi 正在自动走近；本轮不会启动模型讨论。`;
+    $('#cancel-conversation-button').hidden = true;
     return;
   }
   const role = state.coworker?.role;
@@ -453,10 +768,78 @@ function renderProjectWorkspace(task) {
   </div></section>`;
 }
 
+function renderNativeDesk(root) {
+  const native = state.nativeProduct;
+  const binding = JSON.stringify([
+    native.taskId || null,
+    native.goalVersionId || null,
+    native.setup?.projects?.filter((project) => project.current).map((project) => [project.projectId, project.scopeFingerprint]) || [],
+    native.setup?.selectedScope?.current ? [native.setup.selectedScope.projectId, native.setup.selectedScope.scopeFingerprint] : null,
+    native.execution?.id || null,
+    native.registry?.registrySha256 || native.product?.registrySha256 || null,
+    native.artifact ? [native.artifact.id, native.artifact.version, native.artifact.candidateSha256] : null,
+  ]);
+  const render = (markup) => renderNativeMarkup(root, markup, binding, document.activeElement);
+  if (native.setupOnly) {
+    render(`<div class="desk-columns"><div class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>建立第一项原生任务</h2><span class="record-status">正常设置态</span></div><div class="sheet-body"><p>${esc(native.nextStep)}</p><button class="primary-button" type="button" data-open-dialog="task-dialog">写下目标</button></div></section></div><aside class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>已登记项目</h2></div><div class="sheet-body"><p class="field-note">${native.setup.projects.length ? esc(native.setup.projects.map((item) => item.label || item.projectId).join('、')) : '当前状态尚未提供可选登记项目；不会由前端虚构项目或工作区。'}</p></div></section><section class="desk-sheet"><div class="sheet-heading"><h2>尚未发生</h2></div><div class="sheet-body"><p class="field-note">还没有执行记录、产品登记、模型调用、候选成果、审阅或确认。这是新任务开始前的正常状态，不是失败。</p></div></section></aside></div>`);
+    return;
+  }
+  if (native.setupPending) {
+    const projects = native.setup.projects.filter((project) => project.current);
+    const projectFacts = projects.map((project) => `<div class="project-scope-card"><p><strong>${esc(project.label)}</strong></p><p class="field-note">project ${esc(project.projectId)}<br>scope ${esc(project.scopeFingerprint)}<br>可写：${esc(project.allowedWritePaths.join('、') || '无')}<br>检查：${esc(project.checkIds.join('、') || '无')}</p></div>`).join('');
+    const selected = native.setup.selectedProject;
+    let scopeStep;
+    if (native.setupStatus === 'waiting_scope') {
+      scopeStep = projects.length ? `<form data-native-scope><label>选择后台登记项目<select name="projectId" data-native-focus-key="scope-project" required>${projects.map((project) => `<option value="${esc(project.projectId)}" data-scope-fingerprint="${esc(project.scopeFingerprint)}" data-scope-current="true">${esc(project.label)}</option>`).join('')}</select></label><button class="primary-button" type="submit" data-native-focus-key="scope-select" ${native.native.actions.canScope ? '' : 'disabled'}>选择这个项目范围</button>${native.native.actions.canScope ? '' : '<p class="field-note">HTTP 入口尚未明确开放 scope 动作；当前只能核对列表。</p>'}</form>${projectFacts}`
+        : '<p class="demo-warning">后台当前没有返回可选且有效的登记项目。不能手工填写路径，也不会使用证据夹具冒充真实项目。</p>';
+    } else {
+      const selectedScope = `<div class="project-scope-card"><p><strong>${esc(selected?.label || '已选择项目')}</strong></p><p class="field-note">project ${esc(selected?.projectId || '—')}<br>scope ${esc(native.setup.selectedScope?.scopeFingerprint || selected?.scopeFingerprint || '—')}<br>可写：${esc(selected?.allowedWritePaths?.join('、') || '无')}<br>检查：${esc(selected?.checkIds?.join('、') || '无')}</p></div>`;
+      scopeStep = native.setupStatus === 'waiting_scope_authorization'
+        ? `${selectedScope}<form data-native-authorize-scope><button class="primary-button" type="submit" data-native-focus-key="scope-authorize" ${native.native.actions.canAuthorizeScope ? '' : 'disabled'}>授权这个有限范围</button><p class="field-note">${native.native.actions.canAuthorizeScope ? '授权后后台仍需创建当前 registry 与执行绑定；不会立即确认、合并或发布。' : 'authorize_scope 尚未由在线入口明确开放；当前不把“已选择”写成“已授权”。'}</p></form>`
+        : native.setupStatus === 'ready_to_run'
+          ? `${selectedScope}<p class="field-note">范围授权已经保存。原生执行、registry 与模型调用仍未开始。</p>${native.canPrepareRun && nativeSetupBound(native) ? '<button class="primary-button" type="button" data-action="native-prepare-run">准备原生后台</button><p class="field-note">这一步只初始化受控组件、登记当前执行与产品绑定；不会启动模型工作。</p>' : '<button class="secondary-button" type="button" disabled>等待后台开放运行准备</button>'}`
+          : native.setupStatus === 'runtime_starting'
+            ? `${selectedScope}<p class="field-note">当前执行与 registry 已经登记；正在等待原生后台就绪，模型调用仍为 0。</p><button class="secondary-button" type="button" disabled>原生后台正在启动</button>`
+            : `${selectedScope}<p class="demo-warning">当前执行与 registry 已经保留，但原生后台不可用。页面不会回退到旧执行器，也不会把未连接状态写成完成。</p>${native.canPrepareRun && nativeSetupBound(native) ? '<button class="primary-button" type="button" data-action="native-prepare-run">恢复原生后台</button><p class="field-note">恢复沿用同一执行账与当前授权，不会启动模型工作。</p>' : '<button class="secondary-button" type="button" disabled>等待原生后台恢复</button>'}`;
+    }
+    const setupHeading = native.setupStatus === 'waiting_scope' ? '选择项目范围'
+      : native.setupStatus === 'waiting_scope_authorization' ? '核对并授权范围'
+        : native.setupStatus === 'runtime_unavailable' ? '已保留的原生运行绑定' : '已授权的项目范围';
+    const inputActions = `${native.native.actions.canInstructions ? '<button class="secondary-button wide-button" type="button" data-open-dialog="suggestion-dialog">补充工作要求</button>' : ''}${native.native.actions.canMaterials ? '<button class="secondary-button wide-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}`;
+    render(`<div class="desk-columns"><div class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前目标</h2><span class="record-status" data-tone="good">设置中</span></div><div class="sheet-body"><p><strong>${esc(native.title)}</strong></p><p>${esc(native.goalStatement)}</p><p class="field-note">成功条件：${esc(native.successCriteria.join('；') || '未填写')}<br>工作边界：${esc(native.boundaries.join('；') || '未填写')}<br>goal ${esc(native.goalVersionId)}</p>${inputActions ? `<div class="button-stack">${inputActions}</div><p class="field-note">这两类输入会进入当前任务并使旧设置绑定失效；不会静默替换目标，也不会启动模型。</p>` : ''}</div></section><section class="desk-sheet"><div class="sheet-heading"><h2>${setupHeading}</h2><span class="record-status">${esc(native.statusLabel)}</span></div><div class="sheet-body">${scopeStep}</div></section></div><aside class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前阶段</h2></div><div class="sheet-body"><p>${esc(native.nextStep)}</p><p class="field-note">execution：${esc(native.execution?.id || '尚未创建')}<br>registry：${esc(native.registry?.status || '尚未创建')}<br>模型调用：0（本设置态）</p></div></section></aside></div>`);
+    return;
+  }
+  const product = native.product;
+  const execution = native.execution;
+  const actions = native.native?.actions;
+  const runLead = native.native?.agents?.find((agent) => agent.id === native.native?.runAgentId);
+  const actualRole = !native.current ? '任务或产品绑定已经失效，所有同事保持待命'
+    : native.actor ? `${native.actor}${native.stationRole ? ` → ${ROLE_LABEL[native.stationRole] || native.stationRole}` : '（没有对应办公室工位）'}`
+      : runLead ? native.native?.plan ? `${runLead.name || runLead.role || runLead.id} 已提交真实计划，等待明确批准` : `${runLead.name || runLead.role || runLead.id} 已登记为启动 Lead，当前尚未开始执行` : '原生状态未提供活动角色，所有同事保持待命';
+  const nativeRoster = native.team.length ? native.team.map((agent) => `${agent.name} · ${ROLE_LABEL[agent.stationRole] || agent.stationRole} · ${agent.status === 'idle' ? '待命' : agent.status}`) : [];
+  const nativeTaskLink = native.links.nativeTask ? `<a class="primary-button" href="${esc(native.links.nativeTask)}">打开 OpenOffice 原生任务</a>` : '<button class="secondary-button" type="button" disabled>原生任务链接未提供</button>';
+  const actionButtons = `${actions?.canApprovePlan && native.native?.bindingCurrent && native.native?.plan?.sha256 && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-approve-plan" data-native-focus-key="approve-plan">批准当前 Lead 计划</button>' : ''}${actions?.canRun && native.native?.runAgentId && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-run" data-native-focus-key="run">由原生 Lead 开始执行</button>' : ''}${actions?.canContinue && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-resume" data-native-focus-key="resume">按当前目标继续</button>' : ''}`;
+  render(`<div class="desk-columns"><div class="desk-stack">
+    <section class="desk-sheet"><div class="sheet-heading"><h2>当前目标</h2><span class="record-status" data-tone="${native.current ? 'good' : 'bad'}">${native.current ? '当前有效' : '已经失效'}</span></div><div class="sheet-body provider-line"><p><strong>${esc(native.title)}</strong></p><p>${esc(native.goalStatement)}</p><p class="field-note">task ${esc(native.taskId)}<br>goal ${esc(native.goalVersionId)}<br>authority ${native.authorityCurrent ? 'current' : 'stale'} · product binding ${product?.bindingCurrent ? 'current' : 'stale'}</p>${product?.bindingError ? `<p class="demo-warning">${esc(product.bindingError)}</p>` : ''}</div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>OpenOffice 原生执行</h2><span class="record-status" data-tone="${native.officeStatus === 'running' ? 'active' : native.officeStatus === 'failed' ? 'bad' : ''}">${esc(native.statusLabel || native.status)}</span></div><div class="sheet-body provider-line"><p><strong>实际执行角色</strong><br>${esc(actualRole)}</p><p><strong>执行记录</strong><br>${execution ? `ID ${esc(execution.id || '未提供')} · 阶段 ${esc(execution.phase || native.status)}${execution.stopReason ? `<br>停止原因 ${esc(execution.stopReason)}` : ''}` : '尚未提供活动执行记录'}</p><p><strong>已登记执行</strong><br>${native.registeredExecution ? `目标 ${esc(native.registeredExecution.goalVersionId || '—')} · prompt ${esc(native.registeredExecution.promptSha256 || '—')}` : '未登记'}</p>${native.native?.plan ? `<div class="review-panel"><span class="record-status" data-tone="active">等待批准</span><h3>Lead 提交的真实计划</h3><p class="field-note">SHA-256 ${esc(native.native.plan.sha256)}</p><pre class="native-plan-view">${esc(native.native.plan.text)}</pre></div>` : ''}<p><strong>下一步</strong><br>${esc(native.nextStep)}</p>${nativeTaskLink}</div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>原生任务操作</h2></div><div class="sheet-body provider-line"><div class="inline-actions">${actionButtons || '<button class="secondary-button" type="button" disabled>当前没有可执行动作</button>'}${actions?.canInstructions ? '<button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">补充工作要求</button>' : ''}${actions?.canMaterials ? '<button class="secondary-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}</div><p class="field-note">每个动作都提交到同一 OpenOffice 产品动作入口；后台会再次核对当前任务、目标、执行与产品绑定。</p></div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>接受完整新版目标</h2></div><div class="sheet-body"><form data-native-goal><p class="field-note">这是目标替换，不是普通补充。请完整填写新版目标、成功条件和工作边界；不会从旧版静默继承。</p><label>新版目标<textarea name="statement" data-native-focus-key="goal-statement" rows="4" maxlength="4000" required>${esc(native.goalStatement)}</textarea></label><label>新版成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" data-native-focus-key="goal-success" rows="3" required></textarea></label><label>新版工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" data-native-focus-key="goal-boundaries" rows="3" required></textarea></label><button class="danger-button" type="submit" ${actions?.canGoal && nativeSetupBound(native) ? '' : 'disabled'}>接受完整新版目标</button></form></div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>当前接线边界</h2></div><div class="sheet-body"><p class="field-note">真实状态、范围准备与 Lead 启动只按后台明确资格开放；缺字段时按钮保持不可用。</p><ul class="boundary-list"><li>首个任务、登记项目、范围选择与授权已按实际设置合同接入</li><li>原生后台准备是零模型步骤；只有 canRun 与真实 runAgentId 同时存在才显示模型启动</li><li>同事双向讨论已接源码；只有模型能力、当前绑定、动作资格和真实成员同时有效时才允许发送</li><li>目标、工作要求、材料、继续、暂停、取消、计划批准、候选读取、审阅、预览和退回均按当前在线动作合同开放</li></ul></div></section>
+  </div><aside class="desk-stack">
+    <section class="desk-sheet"><div class="sheet-heading"><h2>产品登记</h2><span class="record-status">${product ? '已读取' : '未提供'}</span></div><div class="sheet-body provider-line">${product ? `<p><strong>项目</strong><br>${esc(product.projectId || '—')}</p><p><strong>登记指纹</strong><br>${esc(product.registrySha256 || '—')}</p><p><strong>工作区范围</strong><br>${esc(product.workspaceScopeFingerprint || '—')}</p><p><strong>允许写入</strong><br>${esc(lines(product.allowedWritePaths))}</p><p><strong>固定检查</strong><br>${esc(lines(product.checks.map(checkLabel)))}</p><p><strong>已登记能力</strong><br>${esc(lines(capabilityLines(product.capabilities)))}</p>` : '<p class="demo-warning">原生状态未提供产品登记信息。</p>'}</div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>原生运行边界</h2></div><div class="sheet-body provider-line"><p><strong>实际登记团队</strong><br>${esc(lines(nativeRoster, '未提供'))}</p><p><strong>允许角色</strong><br>${esc(lines(product?.allowedRoles, '未提供'))}</p><p class="field-note">团队成员当前均可处于待命；只有真实运行或工作项会点亮工位。</p><p><strong>运行预算</strong><br>${product?.maxModelCalls ?? '—'} 次模型调用 · ${product?.maxDurationMs ? `${Math.round(product.maxDurationMs / 60000)} 分钟` : '时限未提供'}</p></div></section>
+  </aside></div>`);
+}
+
 function renderDesk() {
   const root = $('#desk-content');
   const task = state.task;
   $('#desk-subtitle').textContent = task ? `当前任务：${task.title}` : '材料、建议与工作步骤都围绕当前目标排列。';
+  if (nativeMode()) {
+    $('#desk-subtitle').textContent = '来自同一 OpenOffice 原生任务的只读状态与能力边界。';
+    renderNativeDesk(root);
+    return;
+  }
   if (!task) {
     root.innerHTML = '<div class="empty-desk"><span class="eyebrow">NO COMMISSION SELECTED</span><h2>先从一个明确目标开始</h2><p>建立任务后，这张书桌会呈现它的材料、建议分类、工作角色和可恢复状态。</p><button class="primary-button" type="button" data-open-dialog="task-dialog">建立第一项工作</button></div>';
     return;
@@ -504,9 +887,51 @@ function exportLinks(task, artifact) {
   return `<div class="review-panel"><h3>正式交付</h3><p class="field-note">${task.type === 'project' ? '下载的是经指定版本确认的候选 patch；不会自动应用、写回原项目、运行 Git 或发布。' : '每次点击只下载一份新文件，不发送、不发布、不覆盖来源。'}</p><div class="export-list">${links.join('')}</div></div>`;
 }
 
+function renderNativeReview(root) {
+  const native = state.nativeProduct;
+  const binding = nativeReviewBinding(native);
+  nativeReviseDraft.capture(root, binding, document.activeElement);
+  const render = (html) => {
+    if (renderNativeMarkup(root, html, binding, document.activeElement)) nativeReviseDraft.restore(root, binding);
+  };
+  if (native.setupOnly) {
+    render('<div class="empty-desk"><span class="eyebrow">NO TASK YET</span><h2>还没有可审阅的原生任务</h2><p>先建立一个真实目标；建立任务不会自动运行模型或产生候选。</p><button class="primary-button" type="button" data-open-dialog="task-dialog">建立第一项原生任务</button></div>');
+    return;
+  }
+  const artifact = native.artifact;
+  if (!artifact) {
+    render(`<div class="empty-desk"><span class="eyebrow">NO NATIVE CANDIDATE</span><h2>OpenOffice 还没有提供候选成果</h2><p>${esc(native.nextStep)}</p>${native.links.nativeTask ? `<a class="secondary-button" href="${esc(native.links.nativeTask)}">打开原生任务</a>` : ''}</div>`);
+    return;
+  }
+  const review = artifact.review;
+  const confirmed = artifact.confirmation;
+  const patchHref = nativePatchHref(native);
+  const candidate = nativeCandidateMatches(native) ? state.nativeCandidate : null;
+  const canConfirm = native.current && native.native?.actions.canConfirm && artifact.id && review?.passed && !confirmed && native.links.confirm && candidate;
+  const previewEntries = native.product?.capabilities?.staticPreviewEntries || [];
+  const previewReady = native.current && native.preview?.status === 'ready'
+    && native.preview.taskId === native.taskId && native.preview.goalVersionId === native.goalVersionId
+    && native.preview.executionId === native.execution?.id && native.preview.registrySha256 === native.product?.registrySha256
+    && native.preview.artifactId === artifact.id && native.preview.artifactVersion === artifact.version
+    && native.preview.candidateSha256 === artifact.candidateSha256
+    && previewEntries.includes(native.preview.entry) && (native.product?.capabilities?.staticPreviewFiles || []).includes(native.preview.entry)
+    && native.links.preview;
+  const previewPanel = previewEntries.length ? `<div class="review-panel"><h3>当前候选预览</h3><p class="field-note">预览按当前目标、执行、登记、候选版本与文件摘要绑定。异步请求被接受不代表预览已就绪。</p>${native.preview?.status === 'pending' ? '<p class="record-status" data-tone="active">预览正在准备</p>' : native.preview?.status === 'failed' ? `<p class="field-note">${esc(native.preview.error || '预览准备失败，请重新请求。')}</p>` : ''}${previewReady ? `<a class="export-link" href="${esc(native.links.preview)}" target="_blank" rel="noopener">打开当前候选预览（${esc(native.preview.entry || '入口')}）</a>` : `<label class="field-label" for="native-preview-entry">登记入口</label><select class="text-input" id="native-preview-entry" data-native-focus-key="preview-entry" ${native.native?.actions.canPreview && native.current && artifact.candidateSha256 ? '' : 'disabled'}>${previewEntries.map((entry) => `<option value="${esc(entry)}" ${native.preview?.entry === entry ? 'selected' : ''}>${esc(entry)}</option>`).join('')}</select><button class="secondary-button" type="button" data-action="native-preview" ${native.native?.actions.canPreview && native.current && artifact.candidateSha256 ? '' : 'disabled'}>${native.preview?.status === 'pending' ? '重新请求当前候选预览' : '生成当前候选预览'}</button>`}</div>` : '';
+  const candidateDetail = candidate ? `<section class="native-candidate-detail"><h3>真实候选文件</h3><p class="field-note">diff ${esc(candidate.diffSha256)} · patch ${esc(candidate.patchSha256)}</p><ul class="boundary-list">${candidate.files.map((file) => `<li>${esc(file.path)}${file.sha256 ? ` · ${esc(file.sha256)}` : ''}${file.bytes !== null ? ` · ${esc(file.bytes)} bytes` : ''}</li>`).join('') || '<li>没有变更文件</li>'}</ul><h3>固定检查</h3><ul class="boundary-list">${candidate.checks.map((check) => `<li>${esc(check.id)} · ${check.passed ? 'PASS' : 'FAIL'}${check.detail ? ` · ${esc(check.detail)}` : ''}</li>`).join('') || '<li>没有检查记录</li>'}</ul><h3>完整差异</h3><pre class="native-patch-view">${esc(candidate.patch || '（空差异）')}</pre></section>` : `<section class="native-candidate-detail"><h3>确认前先核对真实差异</h3><p class="field-note">${esc(state.nativeCandidateError || '文件清单、固定检查和完整 patch 尚未读取；在读取并核对当前版本前，确认按钮保持不可用。')}</p>${native.native?.actions.canInspectDiff && native.links.candidate ? `<button class="secondary-button" type="button" data-action="native-inspect-candidate" ${state.nativeCandidateLoading ? 'disabled' : ''}>${state.nativeCandidateLoading ? '正在读取真实候选…' : '查看真实差异与文件'}</button>` : '<button class="secondary-button" type="button" disabled>后台尚未开放当前候选查看</button>'}</section>`;
+  render(`<div class="proof-grid"><article class="artifact-paper"><header class="artifact-header"><span class="eyebrow">OPENOFFICE NATIVE CANDIDATE</span><h2>${esc(native.title)}</h2><div class="artifact-meta"><span>版本 ${esc(artifact.version ?? '—')}</span><span>目标 ${esc(native.goalVersionId)}</span><span>${confirmed ? '指定版本已确认' : '尚未确认'}</span></div></header><div class="artifact-content native-artifact-facts"><p><strong>候选 ID</strong><br>${esc(artifact.id || '未提供')}</p><p><strong>候选 SHA-256</strong><br>${esc(artifact.candidateSha256 || '未提供')}</p><p><strong>宿主固定检查</strong><br>${artifact.hostCheck ? artifact.hostCheck.passed ? '通过' : '未通过' : '未提供'}</p>${candidateDetail}</div></article><aside class="review-sidebar">
+    <div class="review-panel"><span class="record-status" data-tone="${review?.passed ? 'good' : review ? 'bad' : ''}">${review ? review.passed ? '审阅通过' : '审阅未通过' : '尚无审阅'}</span><h3>OpenOffice 原生审阅</h3><p class="field-note">review ${esc(review?.id || '—')}<br>verdict ${esc(review?.nativeVerdict || '—')}<br>scope ${esc(review?.scopeOutcome || '—')}</p></div>
+    <div class="review-panel"><h3>指定版本操作</h3><p class="field-note">确认只针对当前任务、当前目标与这个候选版本；办公室不会自动应用、提交或合并。</p><div class="button-stack">${canConfirm ? '<button class="primary-button" type="button" data-action="native-confirm">确认这个指定版本</button>' : !confirmed ? '<button class="secondary-button" type="button" disabled>审阅通过且确认接口可用后才能确认</button>' : ''}${patchHref ? `<a class="export-link" href="${esc(patchHref)}">下载已确认 patch</a>` : ''}${native.links.nativeTask ? `<a class="secondary-button" href="${esc(native.links.nativeTask)}">打开原生任务</a>` : ''}</div>${confirmed ? `<p class="field-note">approval ${esc(confirmed.approvalId || '—')}<br>artifact version ${esc(confirmed.artifactVersion ?? '—')}<br>goal ${esc(confirmed.goalVersionId || '—')}</p>` : ''}</div>${previewPanel}
+    <div class="review-panel"><h3>继续修改</h3><p class="field-note">普通补充与正式退回分开保存。正式退回会绑定当前候选 ID/版本，并使旧执行绑定失效；不会用聊天输入冒充。</p>${native.native?.actions.canRevise && candidate ? `<form data-native-revise data-revise-binding="${esc(binding || '')}"><label>退回修改原因<textarea name="reason" rows="5" maxlength="2000" required placeholder="准确写出这个版本需要修改什么"></textarea></label><button class="danger-button" type="submit">退回这个指定版本</button></form>` : native.native?.actions.canRevise ? '<p class="field-note">先读取并核对当前版本的真实差异，才能正式退回。</p>' : ''}<div class="button-stack">${native.native?.actions.canInstructions ? '<button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">补充普通工作要求</button>' : ''}${native.native?.actions.canMaterials ? '<button class="secondary-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}<button class="secondary-button" type="button" data-view-target="desk">查看任务状态</button></div></div>
+  </aside></div>`);
+}
+
 function renderReview() {
   const root = $('#review-content');
   const task = state.task;
+  if (nativeMode()) {
+    renderNativeReview(root);
+    return;
+  }
   const currentArtifacts = task?.artifacts?.filter((item) => item.goalVersionId === activeGoal(task)?.id
     && ['candidate', 'confirmed'].includes(item.status) && artifactInputIsCurrent(task, item)) || [];
   if (!task || !currentArtifacts.length) {
@@ -555,6 +980,25 @@ function renderReview() {
 
 function renderConnections() {
   const root = $('#connection-list');
+  if (nativeBlocked()) {
+    root.innerHTML = `<p class="empty-ledger">${esc(state.nativeError || 'OpenOffice 状态无法核对。')}</p>`;
+    return;
+  }
+  if (nativeMode()) {
+    if (state.nativeProduct.setupOnly) {
+      const projects = state.nativeProduct.setup?.projects || [];
+      const projectSummary = projects.length
+        ? projects.map((project) => `${esc(project.label)} · ${esc(project.projectId)}`).join('<br>')
+        : '当前没有可选项';
+      root.innerHTML = `<section class="connection-row"><span class="connection-number">01</span><h2>OpenOffice 统一入口</h2><p>初始化状态已读取；当前尚未建立任务，因此没有执行、产品登记或候选成果。</p><div class="connection-state"><b>等待建立任务</b><small>waiting_task</small></div></section><section class="connection-row"><span class="connection-number">02</span><h2>已登记项目</h2><p>项目范围必须来自后台登记，不允许前端自行填写路径。</p><div class="connection-state"><b>${projectSummary}</b><small>${projects.length ? `后台返回 ${projects.length} 项` : '不会虚构项目'}</small></div></section>`;
+      return;
+    }
+    const product = state.nativeProduct.product;
+    const labels = { canRun: '启动', canApprovePlan: '批准计划', canReview: '审阅', canInspectDiff: '查看差异', canRevise: '退回修订', canConfirm: '确认', canPreview: '预览', canGoal: '替换目标', canScope: '选择项目范围', canAuthorizeScope: '授权项目范围', canPause: '暂停', canCancel: '取消', canContinue: '继续', canChat: '同事对话', canInstructions: '工作要求', canMaterials: '文本材料' };
+    const enabled = Object.entries(state.nativeProduct.native?.actions || {}).filter(([, value]) => value === true).map(([key]) => labels[key]).filter(Boolean);
+    root.innerHTML = `<section class="connection-row"><span class="connection-number">01</span><h2>OpenOffice 原生执行</h2><p>办公室正在读取同一任务的原生状态、真实团队、工作项、候选、审阅和确认信息。</p><div class="connection-state"><b>状态投影已接通</b><small>${esc(product?.projectId || state.nativeProduct.taskId)}</small></div></section><section class="connection-row"><span class="connection-number">02</span><h2>当前可用动作</h2><p>动作资格由后台按当前目标、执行、产品登记与预算逐项给出；缺字段时保持不可用。</p><div class="connection-state"><b>${enabled.length ? esc(enabled.join('、')) : '当前没有开放动作'}</b><small>不会回退到旧接口</small></div></section>`;
+    return;
+  }
   if (!state.connections.length) { root.innerHTML = '<p class="empty-ledger">正在检查本机能力…</p>'; return; }
   root.innerHTML = state.connections.map((item, index) => {
     const status = !item.available ? '未连接'
@@ -565,6 +1009,13 @@ function renderConnections() {
 }
 
 function renderAll() {
+  setBackendUi();
+  if (nativeBlocked()) {
+    renderNativeBlocked();
+    if (state.view === 'connections') $('#connection-list').innerHTML = `<p class="empty-ledger">${esc(state.nativeError || 'OpenOffice 状态无法核对。')}</p>`;
+    managePolling();
+    return;
+  }
   renderTaskList();
   renderOffice();
   renderDesk();
@@ -575,6 +1026,30 @@ function renderAll() {
 }
 
 async function loadTasks({ preserve = true } = {}) {
+  if (state.backendMode === 'openoffice-loading') {
+    try {
+      const native = await readNativeProduct();
+      if (!native) throw new Error('统一入口没有提供 OpenOffice 产品状态；不会回退到旧任务接口。');
+      applyNativeProduct(native);
+      renderAll();
+      setView(state.view);
+      return;
+    } catch (error) {
+      state.backendMode = 'openoffice-blocked';
+      state.nativeError = error.message;
+      state.task = null;
+      state.tasks = [];
+      setBackendUi();
+      renderAll();
+      setView(state.view);
+      return;
+    }
+  }
+  if (nativeMode()) {
+    await refreshNativeProduct({ silent: false });
+    setView(state.view);
+    return;
+  }
   if (!state.projectCapabilities) {
     try { state.projectCapabilities = (await api('/api/project-capabilities')).project; }
     catch { state.projectCapabilities = { available: false, reason: '无法核对本机固定代码隔离能力。', fixtures: [] }; }
@@ -591,6 +1066,31 @@ async function loadTasks({ preserve = true } = {}) {
   }
   renderAll();
   setView(state.view);
+}
+
+async function refreshNativeProduct({ silent = true, poll = false } = {}) {
+  if (poll && state.nativeRefreshesInFlight > 0) return;
+  const generation = ++state.nativeRefreshGeneration;
+  state.nativeRefreshesInFlight += 1;
+  try {
+    const native = await readNativeProduct();
+    if (generation !== state.nativeRefreshGeneration) return;
+    if (!native) throw new Error('统一入口不再提供 OpenOffice 产品状态。');
+    applyNativeProduct(native);
+    renderAll();
+  } catch (error) {
+    if (generation !== state.nativeRefreshGeneration) return;
+    state.backendMode = 'openoffice-blocked';
+    state.nativeError = error.message;
+    state.nativeProduct = null;
+    state.task = null;
+    state.tasks = [];
+    setBackendUi();
+    renderAll();
+    if (!silent) announce(error.message, 'error');
+  } finally {
+    state.nativeRefreshesInFlight -= 1;
+  }
 }
 
 async function refreshTask(id = state.task?.id, { silent = false } = {}) {
@@ -615,6 +1115,14 @@ async function refreshTask(id = state.task?.id, { silent = false } = {}) {
 }
 
 function managePolling() {
+  if (nativeMode()) {
+    if (!state.pollTimer) state.pollTimer = setInterval(() => refreshNativeProduct({ silent: true, poll: true }), 1700);
+    return;
+  }
+  if (nativeBlocked()) {
+    if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+    return;
+  }
   const shouldPoll = shouldPollTask(state.task, {
     pendingAction: state.pendingAction,
     pendingActionTaskId: state.pendingActionTaskId,
@@ -626,11 +1134,19 @@ function managePolling() {
 }
 
 async function loadConnections() {
+  if (nativeMode() || nativeBlocked()) { renderConnections(); return; }
   try { state.connections = (await api('/api/connections')).connections; renderConnections(); }
   catch (error) { announce(error.message, 'error'); }
 }
 
 function openDialog(id) {
+  const canCreateNativeTask = nativeMode() && state.nativeProduct?.setupOnly && state.nativeProduct.setupStatus === 'waiting_task';
+  const unavailable = nativeBlocked() && ['task-dialog', 'material-dialog', 'suggestion-dialog'].includes(id)
+    || nativeMode() && id === 'task-dialog' && !canCreateNativeTask;
+  if (unavailable) {
+    announce('这个动作尚未接到 OpenOffice 统一入口；没有调用旧任务接口。', 'error');
+    return;
+  }
   const dialog = document.getElementById(id);
   if (dialog && !dialog.open) dialog.showModal();
 }
@@ -640,6 +1156,7 @@ function closeDialog(button) {
 }
 
 async function postTaskAction(action, body = {}) {
+  if (nativeMode() || nativeBlocked()) throw new Error('这个动作尚未接到 OpenOffice 统一入口；没有调用旧任务接口。');
   if (!state.task) throw new Error('请先选择任务。');
   const taskId = state.task.id;
   const result = await api(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, { method: 'POST', body: JSON.stringify(body) });
@@ -683,6 +1200,7 @@ document.addEventListener('click', async (event) => {
   if (closeButton) { closeDialog(closeButton); return; }
   const taskButton = event.target.closest('[data-task-id]');
   if (taskButton) {
+    if (nativeMode()) return;
     const id = taskButton.dataset.taskId;
     state.task = state.tasks.find((task) => task.id === id);
     state.selectedArtifactId = null;
@@ -706,6 +1224,59 @@ document.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
   try {
+    if (action === 'retry-native') {
+      state.backendMode = 'openoffice';
+      await refreshNativeProduct({ silent: false });
+      return;
+    }
+    if (action === 'native-confirm') {
+      const native = state.nativeProduct;
+      const artifact = native?.artifact;
+      if (!native?.current || !native.native?.actions.canConfirm || !artifact?.id || !artifact.review?.passed || artifact.confirmation || !native.links.confirm || !nativeCandidateMatches(native)) throw new Error('请先读取并核对当前版本的真实差异与文件，再确认候选。');
+      if (!window.confirm(`只确认 OpenOffice 候选版本 ${artifact.version ?? '—'} 吗？\n\n这不会自动应用、提交、合并或发布。`)) return;
+      await api(native.links.confirm, { method: 'POST', body: JSON.stringify({ artifactId: artifact.id, version: artifact.version }) });
+      await refreshNativeProduct({ silent: false });
+      announce('OpenOffice 指定版本已确认；现在可以下载同一份已确认 patch。');
+      return;
+    }
+    if (action === 'native-inspect-candidate') {
+      await loadNativeCandidate();
+      announce('已读取当前版本的真实文件清单、固定检查和完整差异。');
+      return;
+    }
+    if (action === 'native-preview') {
+      const native = state.nativeProduct;
+      const entry = document.querySelector('#native-preview-entry')?.value;
+      if (!entry || !native?.native?.actions.canPreview || !native.current || !native.artifact?.candidateSha256) throw new Error('当前目标或候选不允许生成预览。');
+      await postNativeAction('preview', { entry });
+      announce('预览请求已接受；就绪后才会显示可打开的链接。');
+      return;
+    }
+    if (action === 'native-approve-plan') {
+      const native = state.nativeProduct;
+      const expectedPlanSha256 = native?.native?.bindingCurrent === true ? native.native?.plan?.sha256 : null;
+      if (!native?.native?.actions.canApprovePlan || !expectedPlanSha256 || !nativeActionBound(native)) throw new Error('当前没有等待明确批准且绑定有效的 Lead 计划。');
+      if (!window.confirm('批准当前 OpenOffice Lead 的计划并进入下一阶段吗？\n\n后台会再次核对当前目标、执行与登记绑定。')) return;
+      await postNativeAction('approve_plan', { expectedPlanSha256 });
+      announce('已批准当前 Lead 计划；办公室会按真实执行状态继续更新。');
+      return;
+    }
+    if (action === 'native-run') {
+      await requestNativeRun();
+      return;
+    }
+    if (action === 'native-prepare-run') {
+      await requestNativePrepareRun();
+      return;
+    }
+    if (action === 'native-cancel') {
+      await requestNativeCancel();
+      return;
+    }
+    if (action === 'native-resume') {
+      await requestNativeContinue();
+      return;
+    }
     if (action === 'plan') { await requestPlan(); announce('工作步骤已经按当前目标排定。'); }
     if (action === 'continue') {
       const result = await postTaskAction('continue');
@@ -822,6 +1393,69 @@ document.addEventListener('change', async (event) => {
 });
 
 document.addEventListener('submit', async (event) => {
+  const nativeReviseForm = event.target.closest('[data-native-revise]');
+  if (nativeReviseForm) {
+    event.preventDefault();
+    const native = state.nativeProduct;
+    const artifact = native?.artifact;
+    const reason = String(new FormData(nativeReviseForm).get('reason') || '').trim();
+    if (!native?.current || !native.native?.actions.canRevise || !artifact?.id || artifact.confirmation || !nativeActionBound(native) || !nativeCandidateMatches(native)) {
+      announce('当前候选没有可核对的正式退回资格。', 'error'); return;
+    }
+    if (!reason || reason.length > 2000) { announce('请填写 1–2000 字的准确退回原因。', 'error'); return; }
+    if (!window.confirm(`退回 OpenOffice 候选版本 ${artifact.version ?? '—'} 并要求按这条原因修改吗？\n\n旧候选和审阅会保留为历史，当前执行绑定需要重新准备。`)) return;
+    try {
+      await postNativeAction('revise', { expectedArtifactId: artifact.id, expectedArtifactVersion: artifact.version, reason });
+      state.nativeCandidate = null;
+      state.nativeCandidateError = null;
+      announce('已正式退回当前指定版本；原因已保存，下一轮必须按更新后的输入重新准备。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
+  const nativeScopeForm = event.target.closest('[data-native-scope]');
+  if (nativeScopeForm) {
+    event.preventDefault();
+    const projectId = String(new FormData(nativeScopeForm).get('projectId') || '');
+    const project = state.nativeProduct?.setup?.projects.find((item) => item.projectId === projectId && item.current);
+    if (!state.nativeProduct?.native?.actions.canScope || !project) { announce('当前没有可选择的有效登记范围。', 'error'); return; }
+    try {
+      await postNativeAction('scope', { projectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint });
+      announce('项目范围已选择；这还不是授权，也没有启动执行。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
+  const nativeAuthorizeForm = event.target.closest('[data-native-authorize-scope]');
+  if (nativeAuthorizeForm) {
+    event.preventDefault();
+    const native = state.nativeProduct;
+    const project = native?.setup?.selectedProject;
+    const scope = native?.setup?.selectedScope;
+    if (!native?.native?.actions.canAuthorizeScope || !project?.projectId || !scope?.scopeFingerprint || !scope.current) { announce('后台尚未开放当前范围的授权动作。', 'error'); return; }
+    if (!window.confirm('授权这个后台登记的有限项目范围吗？\n\n授权不会自动确认、合并或发布成果。')) return;
+    try {
+      await postNativeAction('authorize_scope', { projectId: project.projectId, expectedScopeFingerprint: scope.scopeFingerprint });
+      announce('有限项目范围已提交授权；办公室会读取后台返回的实际 registry 与执行绑定。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
+  const nativeGoalForm = event.target.closest('[data-native-goal]');
+  if (nativeGoalForm) {
+    event.preventDefault();
+    const data = new FormData(nativeGoalForm);
+    const body = {
+      statement: String(data.get('statement') || '').trim(),
+      successCriteria: String(data.get('successCriteria') || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      boundaries: String(data.get('boundaries') || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+    };
+    if (!body.statement || !body.successCriteria.length || !body.boundaries.length) { announce('请完整填写新版目标、成功条件和工作边界。', 'error'); return; }
+    if (!window.confirm('接受这份完整新版目标吗？\n\n当前执行、候选与确认资格会按新版重新核对，旧记录仍保留为历史。')) return;
+    try {
+      if (!state.nativeProduct?.native?.actions.canGoal) throw new Error('后台没有确认当前任务可以替换目标。');
+      await postNativeAction('goal', body);
+      announce('完整新版目标已交给当前任务；旧执行与旧候选不会冒充新版结果。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   const scopeProposeForm = event.target.closest('[data-project-scope-propose]');
   if (scopeProposeForm) {
     event.preventDefault();
@@ -901,6 +1535,21 @@ $('#task-form').addEventListener('submit', async (event) => {
   const element = event.currentTarget;
   const form = new FormData(element);
   const body = Object.fromEntries(form);
+  if (nativeBlocked()) { announce('OpenOffice 初始化状态不可核对，不能建立任务。', 'error'); return; }
+  if (nativeMode()) {
+    if (!state.nativeProduct?.setupOnly || state.nativeProduct.setupStatus !== 'waiting_task') { announce('当前不是可建立首个任务的初始化状态。', 'error'); return; }
+    const input = normalizeNativeTaskDraft({ ...body, statement: body.goal });
+    if (!input.statement) { announce('请先写下最终目标。', 'error'); return; }
+    try {
+      await api(state.nativeProduct.links.createTask, { method: 'POST', body: JSON.stringify(input) });
+      element.reset();
+      element.closest('dialog').close();
+      await refreshNativeProduct({ silent: false });
+      setView('desk');
+      announce('原生任务已建立；尚未填写的成功条件和边界保持为空。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   if (body.type === 'project') body.provider = 'codex-cli';
   body.successCriteria = String(body.successCriteria || '').split(/\r?\n/).filter(Boolean);
   body.boundaries = String(body.boundaries || '').split(/\r?\n/).filter(Boolean);
@@ -921,6 +1570,17 @@ $('#suggestion-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const element = event.currentTarget;
   const body = Object.fromEntries(new FormData(element));
+  if (nativeBlocked()) { announce('OpenOffice 状态不可核对，不能提交工作要求。', 'error'); return; }
+  if (nativeMode()) {
+    if (!state.nativeProduct?.native?.actions.canInstructions) { announce('后台没有确认当前任务可以补充工作要求。', 'error'); return; }
+    try {
+      await postNativeAction('instructions', { text: String(body.text || '').trim() });
+      element.reset();
+      element.closest('dialog').close();
+      announce('工作要求已写入当前原生任务；它不会静默替换目标。');
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   if (!body.classification) delete body.classification;
   try {
     const result = await postTaskAction('suggestions', body);
@@ -932,9 +1592,31 @@ $('#suggestion-form').addEventListener('submit', async (event) => {
 
 $('#coworker-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (nativeBlocked()) { announce('OpenOffice 状态不可核对，不能发送讨论。', 'error'); return; }
   if (!state.task) { $('#coworker-dialog').close(); openDialog('task-dialog'); announce('先建立目标，再把工作交给同事。'); return; }
   const element = event.currentTarget;
   const data = Object.fromEntries(new FormData(element));
+  if (nativeMode()) {
+    if (data.intent !== 'progress') {
+      announce('原生同事对话只用于只读讨论；工作要求请到任务书桌补充，成果退回请到审阅台操作。', 'error');
+      return;
+    }
+    const chat = nativeChatContext();
+    const text = String(data.text || '').trim();
+    if (!chat.canSend || !chat.member?.id) { announce('后台尚未开放当前真实成员的模型讨论资格。', 'error'); return; }
+    if (!text) { announce('请先填写讨论内容。', 'error'); return; }
+    try {
+      element.querySelector('[type="submit"]').disabled = true;
+      $('#coworker-message').disabled = true;
+      $('#coworker-intent').disabled = true;
+      await postNativeAction('chat', { text, agentId: chat.member.id });
+      $('#coworker-message').value = '';
+      renderCoworkerConversation();
+      announce('讨论已绑定当前任务、目标与真实同事；它不会自动变成工作交代。');
+    } catch (error) { announce(error.message, 'error'); }
+    finally { renderCoworkerConversation(); }
+    return;
+  }
   const role = ROLE_LABEL[data.role] || data.role;
   try {
     if (state.task.status === 'running' || state.task.status === 'cancellation_unknown') {
@@ -996,6 +1678,7 @@ $('#coworker-form').addEventListener('submit', async (event) => {
 });
 
 $('#cancel-conversation-button').addEventListener('click', async () => {
+  if (nativeMode() || nativeBlocked()) { announce('原生对话与取消接口尚未接通。', 'error'); return; }
   if (!conversationRuntime()) return;
   try {
     await postTaskAction('conversation/cancel');
@@ -1008,6 +1691,20 @@ $('#material-form').addEventListener('submit', async (event) => {
   const element = event.currentTarget;
   const form = new FormData(element);
   const mode = form.get('materialMode');
+  if (nativeBlocked()) { announce('OpenOffice 状态不可核对，不能补充材料。', 'error'); return; }
+  if (nativeMode()) {
+    if (!state.nativeProduct?.native?.actions.canMaterials) { announce('后台没有确认当前任务可以补充材料。', 'error'); return; }
+    const name = String(form.get('name') || '').trim();
+    const text = String(form.get('text') || '').trim();
+    if (!name || !text) { announce('请填写材料名称和正文。', 'error'); return; }
+    try {
+      await postNativeAction('materials', { name, kind: 'text', text });
+      element.reset();
+      element.closest('dialog').close();
+      announce(`${name} 已进入当前原生任务的材料记录。`);
+    } catch (error) { announce(error.message, 'error'); }
+    return;
+  }
   try {
     let result;
     if (mode === 'text') result = await postTaskAction('materials/text', { name: form.get('name'), text: form.get('text') });
@@ -1080,14 +1777,23 @@ function openCoworkerConversation(detail) {
 }
 
 window.addEventListener('irixi:coworker', (event) => openCoworkerConversation(event.detail));
-window.addEventListener('irixi:arrival', () => { $('#coworker-status').textContent = 'Irixi 已经走到同事身边。输入期间移动键保持锁定。'; });
-window.addEventListener('irixi:unreachable', (event) => { $('#coworker-status').textContent = `${event.detail.name}附近没有可到达的位置。对话仍可记录，或按 Esc 取消。`; announce('目标位置暂时无法到达，对话仍然可用。', 'error'); });
+window.addEventListener('irixi:arrival', () => {
+  const canTalk = !nativeMode() || nativeChatContext().canSend;
+  $('#coworker-status').textContent = canTalk ? 'Irixi 已经走到同事身边。输入期间移动键保持锁定。' : 'Irixi 已经走到同事身边；当前只显示真实历史，不会启动模型回复。';
+});
+window.addEventListener('irixi:unreachable', (event) => {
+  const canTalk = !nativeMode() || nativeChatContext().canSend;
+  $('#coworker-status').textContent = canTalk ? `${event.detail.name}附近没有可到达的位置。对话仍可记录，或按 Esc 取消。` : `${event.detail.name}附近没有可到达的位置。真实历史仍可查看，或按 Esc 取消。`;
+  announce(canTalk ? '目标位置暂时无法到达，对话仍然可用。' : '目标位置暂时无法到达，但真实历史仍可查看。', 'error');
+});
 window.addEventListener('irixi:walk-cancelled', (event) => announce(event.detail.message));
 
 document.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-coworker-action]')?.dataset.coworkerAction;
   if (!action) return;
   try {
+    if (action === 'native-run') { await requestNativeRun(); renderCoworkerConversation(); return; }
+    if (action === 'native-cancel') { await requestNativeCancel(); renderCoworkerConversation(); return; }
     if (action === 'new-task') { $('#coworker-dialog').close(); openDialog('task-dialog'); return; }
     if (action === 'material') { $('#coworker-dialog').close(); openDialog('material-dialog'); return; }
     if (action === 'review') { $('#coworker-dialog').close(); setView('review'); return; }
@@ -1100,4 +1806,4 @@ document.addEventListener('click', async (event) => {
 
 loadTasks()
   .then(() => loadScene())
-  .catch((error) => announce(`Irixi 无法读取本地任务：${error.message}`, 'error'));
+  .catch((error) => announce(`Irixi 无法读取当前产品状态：${error.message}`, 'error'));

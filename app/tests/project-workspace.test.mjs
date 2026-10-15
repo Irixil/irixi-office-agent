@@ -272,6 +272,41 @@ test('目标变化让 grant 与旧项目 artifact 失效但保留历史', async 
   assert.equal(projectArtifactIsCurrent(task, artifact), false);
 });
 
+test('输入失效保留已终止执行且仅记录归档原因', () => {
+  for (const [name, invalidate, archiveReason] of [
+    ['current work', (task) => invalidateCurrentWork(task, 'material_changed', 'material changed'), 'material_changed'],
+    ['goal decision', (task) => addSuggestion(task, { text: '最终目标改成新方向' }), 'goal_replacement_waiting'],
+  ]) {
+    for (const [phase, stopReason] of [['failed', 'native_process_failed'], ['executing', 'native_process_timeout']]) {
+      const task = createTask({ title: name, goal: '保留失败执行证据' });
+      task.execution = {
+        id: `run-${name}-${phase}`, phase, stopReason,
+        updatedAt: '2026-10-12T04:08:37.000Z', modelCalls: [{ id: 'call-1', status: 'failed', error: stopReason }],
+      };
+      const terminal = structuredClone(task.execution);
+      invalidate(task);
+      assert.equal(task.execution, null);
+      assert.deepEqual(task.executionHistory, [{ ...terminal, archiveReason }]);
+    }
+  }
+});
+
+test('输入失效仍取消并归档真正在途的执行', () => {
+  for (const [name, invalidate, stopReason] of [
+    ['current work', (task) => invalidateCurrentWork(task, 'material_changed', 'material changed'), 'material_changed'],
+    ['goal decision', (task) => addSuggestion(task, { text: '最终目标改成新方向' }), 'goal_replacement_waiting'],
+  ]) {
+    const task = createTask({ title: name, goal: '取消在途执行' });
+    task.execution = { id: `run-${name}`, phase: 'executing', stopReason: null, updatedAt: 'old', modelCalls: [{ id: 'call-1', status: 'running' }] };
+    invalidate(task);
+    assert.equal(task.execution, null);
+    assert.equal(task.executionHistory.length, 1);
+    assert.equal(task.executionHistory[0].phase, 'cancelled');
+    assert.equal(task.executionHistory[0].stopReason, stopReason);
+    assert.deepEqual(task.executionHistory[0].modelCalls, [{ id: 'call-1', status: 'running' }]);
+  }
+});
+
 test('旧 grant 不能靠新 candidate binding 隐式升级后继续使用工具', async (t) => {
   const { taskDir, task, host, store } = await setupWithOverride();
   t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
