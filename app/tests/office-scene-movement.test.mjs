@@ -48,9 +48,28 @@ const MOLE_MANIFEST = JSON.parse(readFileSync(new URL(V6_INTEGRATION.stewardMole
 const MOLE_ROUTE = JSON.parse(readFileSync(new URL(V6_INTEGRATION.stewardMole.routeContract, V6_ROOT), 'utf8'));
 const MOLE_ACTIONS = Object.fromEntries(MOLE_MANIFEST.actions.map(({ action, manifest }) => [action, JSON.parse(readFileSync(new URL(`steward-mole/${manifest}`, V6_ROOT), 'utf8'))]));
 const OFFICE_SOURCE = readFileSync(new URL('../public/office-game.js', import.meta.url), 'utf8');
+const APP_SOURCE = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const INDEX_SOURCE = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
 test('下载触发 beforeunload 时不会销毁仍在显示的办公室场景', () => {
   assert.equal(windowListeners.some(({ type }) => type === 'beforeunload'), false);
+});
+
+test('办公室保留五个角色身份并显示指定的职能名称', () => {
+  assert.deepEqual(PEOPLE.map(({ role }) => role), ['researcher', 'writer', 'reviewer', 'steward', 'archivist']);
+  assert.deepEqual(PEOPLE.slice(1).map(({ name }) => name), ['小鼠工具开发同事', '龙猫小游戏开发同事', '鼹鼠Agent开发同事', '花枝鼠档案记忆同事']);
+  assert.match(APP_SOURCE, /utility:\s*\{ title: '小工具', action: '交代小工具需求'/);
+  assert.match(APP_SOURCE, /game:\s*\{ title: '小游戏', action: '交代小游戏需求'/);
+  assert.match(APP_SOURCE, /agent:\s*\{ title: 'Agent', action: '交代 Agent 需求'/);
+});
+
+test('职能分类只在提交原生表单时发送，取消会清空临时分类且目标内容经HTML转义', () => {
+  assert.match(INDEX_SOURCE, /<input type="hidden" name="functionId" value="">/);
+  assert.match(INDEX_SOURCE, /<button class="secondary-button" type="button" data-close-dialog>取消<\/button>/);
+  assert.match(APP_SOURCE, /\$\('#task-dialog'\)\.addEventListener\('close', \(\) => \{\s*\$\('#task-form'\)\.reset\(\);\s*setTaskFunction\(''\);\s*\}\)/);
+  assert.match(APP_SOURCE, /api\(state\.nativeProduct\.links\.createTask, \{ method: 'POST', body: JSON\.stringify\(input\) \}\)/);
+  assert.match(APP_SOURCE, /delete body\.functionId/);
+  assert.match(APP_SOURCE, /\$\{esc\(statusText\)\}/);
 });
 
 function movementScene() {

@@ -236,6 +236,18 @@ function checkedPort(value, name) {
   return port;
 }
 
+export function resolveProductPorts(argv = []) {
+  const ports = {
+    desktop: checkedPort(valueArg(argv, 'desktop-port') || 3847, '--desktop-port'),
+    authority: checkedPort(valueArg(argv, 'authority-port') || 3869, '--authority-port'),
+    openoffice: checkedPort(valueArg(argv, 'openoffice-port') || 9109, '--openoffice-port'),
+    agentOffice: checkedPort(valueArg(argv, 'agent-office-port') || 3029, '--agent-office-port'),
+    scene: checkedPort(valueArg(argv, 'scene-port') || 5189, '--scene-port'),
+  };
+  assert.equal(new Set(Object.values(ports)).size, Object.values(ports).length, 'Started service ports must be distinct');
+  return ports;
+}
+
 export function resolveAgentOfficeUiRoot(agentOfficeRoot) {
   const root = fs.realpathSync(agentOfficeRoot);
   const ui = fs.realpathSync(path.join(root, 'packages', 'ui'));
@@ -315,11 +327,12 @@ export async function runProductLauncher(argv = process.argv.slice(2)) {
   const explicitZeroModel = hasFlag(argv, 'zero-model');
   assert.equal(enableAi && explicitZeroModel, false, '--enable-ai and --zero-model are mutually exclusive');
   const zeroModel = !enableAi;
+  const ports = resolveProductPorts(argv);
 
   const policy = JSON.parse(await fsp.readFile(policyFile, 'utf8'));
   assert.equal(policy.schemaVersion, 1);
   assert.equal(policy.taskId === undefined || policy.taskId === taskId, true, 'Policy taskId changed');
-  assert.equal(policy.authorityUrl, 'http://127.0.0.1:3869/');
+  assert.equal(policy.authorityUrl, `http://127.0.0.1:${ports.authority}/`, 'Policy Authority URL must match the configured loopback listener');
   assert.equal(await fsp.realpath(policy.workspace.path), policy.workspace.path);
   assert.equal(policy.native.backend, 'codex');
   assert.equal(policy.capabilities.worktree, true);
@@ -377,17 +390,9 @@ export async function runProductLauncher(argv = process.argv.slice(2)) {
     path.join(here, 'desktop-product-server.mjs'),
   ]) assert.equal(fs.existsSync(file), true, `Existing dependency/build is missing: ${file}`);
 
-  const ports = {
-    desktop: checkedPort(valueArg(argv, 'desktop-port') || 3847, '--desktop-port'),
-    authority: 3869,
-    openoffice: checkedPort(valueArg(argv, 'openoffice-port') || 9109, '--openoffice-port'),
-    agentOffice: checkedPort(valueArg(argv, 'agent-office-port') || 3029, '--agent-office-port'),
-    scene: checkedPort(valueArg(argv, 'scene-port') || 5189, '--scene-port'),
-  };
   const activePorts = nativeOnly
     ? [ports.authority, ports.openoffice, ports.agentOffice, ports.scene]
     : Object.values(ports);
-  assert.equal(new Set(activePorts).size, activePorts.length, 'Started service ports must be distinct');
   for (const port of activePorts) await assertPortAvailable(port);
 
   const supervisor = createOwnedChildSupervisor();

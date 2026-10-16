@@ -9,6 +9,9 @@ import { pathToFileURL } from 'node:url';
 const execFile = promisify(execFileCallback);
 
 const SHA256 = /^[a-f0-9]{64}$/;
+const OFFICE_FUNCTION_IDS = new Set(['utility', 'game', 'agent']);
+
+export function isOfficeFunctionId(value) { return OFFICE_FUNCTION_IDS.has(value); }
 const SAFE_ID = /^[a-z0-9-]{1,160}$/;
 const SAFE_PRODUCT_PATH = /^(?!\.)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 // Project tasks retain every rejected/confirmed candidate and its audit chain.
@@ -24,7 +27,10 @@ const IRIXI_SOURCE_MANIFEST = Object.freeze({
   'project-scope.mjs': '34315fdcfe5386fd38815796ab69932c66a8af09fa9d46bab15196e84e46e2ab',
   'project-workspace.mjs': '62c905952f60a0d5229859d8524017f7698f649d0f1ed6254e6c88a94ca70c56',
 });
-const PRODUCT_IRIXI_SOURCE_MANIFEST = IRIXI_SOURCE_MANIFEST;
+const PRODUCT_IRIXI_SOURCE_MANIFEST = Object.freeze({
+  ...IRIXI_SOURCE_MANIFEST,
+  'core.mjs': '3b3266caf25726741f8961cd65657afafb80f154890cac50d849d3a525fa53d8',
+});
 
 export const canonical = (value) => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -36,6 +42,20 @@ export const canonical = (value) => {
 
 export const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 export const fingerprint = (value) => sha256(canonical(value));
+
+export function isValidLeadPlanText(text) {
+  if (typeof text !== 'string' || !text.trim() || text.includes('\u0000') || Buffer.byteLength(text) > 40_000) return false;
+  const markers = [...text.matchAll(/\[\/?PLAN\]/g)];
+  if (markers.length !== 2 || markers[0][0] !== '[PLAN]' || markers[1][0] !== '[/PLAN]') return false;
+  const opening = markers[0].index;
+  const closing = markers[1].index;
+  const lineStart = (index) => index === 0 || text[index - 1] === '\n';
+  const lineEnd = (index, length) => index + length === text.length || text[index + length] === '\n'
+    || (text[index + length] === '\r' && text[index + length + 1] === '\n');
+  if (!lineStart(opening) || !lineEnd(opening, 6) || !lineStart(closing) || !lineEnd(closing, 7)) return false;
+  const body = text.slice(opening + 6, closing).replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+  return Boolean(body.trim());
+}
 
 function requireText(value, name, limit = 500) {
   if (typeof value !== 'string' || !value || Buffer.byteLength(value) > limit) throw new Error(`${name} is invalid`);
@@ -477,6 +497,7 @@ export function buildAuthorityProjection(task, helpers) {
     current: workspaceCurrent && (!artifact || (artifact.nativeProjectCandidate
       ? nativeArtifactCurrent(task, artifact, helpers) : helpers.artifactInputIsCurrent(task, artifact))),
   };
+  if (isOfficeFunctionId(task.functionId)) base.functionId = task.functionId;
   const productRegistryEvent = (task.events || []).findLast((entry) => entry.type === 'integration.product_registry_registered');
   if (productRegistryEvent?.detail?.registry && SHA256.test(productRegistryEvent.detail.registrySha256 || '')
     && fingerprint(productRegistryEvent.detail.registry) === productRegistryEvent.detail.registrySha256) {
@@ -760,12 +781,37 @@ export function projectTaskBoard(projection, observations, task = null) {
   };
 }
 
-export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot }) {
+export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot, memoryIndex = null, authorityPort = 3869 }) {
   if (!SAFE_ID.test(taskId || '')) throw new Error('Authority task ID is invalid');
+  if (!Number.isInteger(authorityPort) || authorityPort < 1024 || authorityPort > 65535) throw new Error('Authority listener port is invalid');
+  const authorityUrl = `http://127.0.0.1:${authorityPort}/`;
   const root = await assertDirectoryChainNoLinks(path.resolve(tasksRoot));
   const helpers = await loadIrixiAuthorityHelpers(irixiAppRoot);
   const store = helpers.createStore(root);
   await store.init();
+  let memoryModule = null;
+  try { memoryModule = await import(pathToFileURL(path.join(irixiAppRoot, 'memory.mjs')).href); }
+  catch (error) { if (error?.code !== 'ERR_MODULE_NOT_FOUND') throw error; }
+  const currentProjectMemoryScope = (task) => {
+    const authorized = task.productBootstrap?.authorizedProject;
+    return authorized && helpers.projectWorkspaceIsCurrent(task)
+      ? { projectId: authorized.projectId, scopeFingerprint: authorized.scopeFingerprint } : null;
+  };
+  const currentMemorySnapshot = async (task) => {
+    const scope = currentProjectMemoryScope(task);
+    return (await store.list()).flatMap((owner) => (owner.memoryEntries || []).map((entry) => ({ ownerTaskId: owner.id, entry })))
+      .filter(({ entry }) => entry.status === 'active' && (entry.scopeType === 'global'
+        || scope && entry.scopeType === 'project' && entry.scopeId === scope.projectId && entry.scopeFingerprint === scope.scopeFingerprint))
+      .map(({ ownerTaskId, entry }) => ({ id: entry.id, revision: entry.revision, scopeType: entry.scopeType,
+        scopeId: entry.scopeId, scopeFingerprint: entry.scopeFingerprint || null, ownerTaskId }))
+      .sort((a, b) => `${a.ownerTaskId}:${a.id}`.localeCompare(`${b.ownerTaskId}:${b.id}`));
+  };
+  const memoryService = memoryModule?.createMemoryService({ store, index: memoryIndex, emit: helpers.event,
+    validateScope: (task, scope) => {
+      const current = currentProjectMemoryScope(task);
+      return Boolean(current && current.projectId === scope?.projectId && current.scopeFingerprint === scope?.scopeFingerprint);
+    } }) || { save: async () => { throw new Error('Memory service is unavailable.'); },
+      change: async () => { throw new Error('Memory service is unavailable.'); } };
   const taskFile = path.join(root, taskId, 'task.json');
 
   async function captureNativeCandidate(task, reservation) {
@@ -1194,8 +1240,7 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
               const executionResult = recordBody.leadResultText;
               const conversationResult = recordBody.conversationText;
               if (phase === 'create') {
-                if (reservation.detail.readOnly !== true || typeof plan !== 'string' || executionResult !== null || conversationResult !== null
-                  || !plan.startsWith('[PLAN]\n') || !plan.trimEnd().endsWith('[/PLAN]')
+                if (reservation.detail.readOnly !== true || !isValidLeadPlanText(plan) || executionResult !== null || conversationResult !== null
                   || sha256(plan) !== recordBody.resultSha256) throw new Error('Lead plan does not match its trusted create-phase reservation');
               } else if (phase === 'execute') {
                 if (typeof executionResult !== 'string' || plan !== null || conversationResult !== null || !executionResult.trim()
@@ -1324,7 +1369,7 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
         const limits = task.execution?.limits;
         const normalizedRoles = Array.isArray(registry?.native?.allowedRoles)
           ? registry.native.allowedRoles.map((value) => String(value).trim().toLowerCase()) : [];
-        if (!registry || registry.schemaVersion !== 1 || registry.authorityUrl !== 'http://127.0.0.1:3869/'
+        if (!registry || registry.schemaVersion !== 1 || registry.authorityUrl !== authorityUrl
           || registry.taskId !== expected.taskId || registry.goalVersionId !== expected.goalVersionId
           || registry.taskInputBindingSha256 !== expected.taskInputBindingSha256 || registry.pipelineBindingSha256 !== expected.pipelineBindingSha256
           || registry.workspace?.scopeFingerprint !== expected.scopeFingerprint || registry.workspace?.sourceSnapshotSha256 !== expected.sourceSnapshotSha256
@@ -1424,6 +1469,20 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
           ? '已记录当前候选指定版本的退回原因；旧执行绑定已失效，请按更新后的任务状态重新准备。'
           : '已记录为当前目标的补充交代；旧执行绑定已失效，请按更新后的任务状态重新准备。' };
       })).result;
+    },
+    async saveProductMemory(input) {
+      const task = await store.get(taskId);
+      const goal = helpers.activeGoal(task);
+      if (!goal?.id || input?.expectedGoalVersionId !== goal.id) throw Object.assign(new Error('Memory action is bound to an older task goal.'), { status: 409 });
+      const { expectedGoalVersionId, ...payload } = input;
+      return memoryService.save(taskId, payload, currentProjectMemoryScope(task), goal.id);
+    },
+    async changeProductMemory(input) {
+      const task = await store.get(taskId);
+      const goal = helpers.activeGoal(task);
+      if (!goal?.id || input?.expectedGoalVersionId !== goal.id) throw Object.assign(new Error('Memory action is bound to an older task goal.'), { status: 409 });
+      const { expectedGoalVersionId, memoryId, ...payload } = input;
+      return memoryService.change(taskId, memoryId, payload, currentProjectMemoryScope(task), goal.id);
     },
     async authorizeProductWorktreeRebind(input) {
       return (await store.mutate(taskId, async (task) => {
@@ -1710,7 +1769,7 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
         || reservation.detail.phase !== 'create' || reservation.detail.agentId !== projection.native?.runAgentId
         || reservation.detail.productRegistrySha256 !== projection.productRegistry.registrySha256
         || reservation.detail.sourceTaskId !== `${detail.sourceTaskId}-${detail.nativeAttemptId}`
-        || typeof planText !== 'string' || !planText.startsWith('[PLAN]\n') || !planText.trimEnd().endsWith('[/PLAN]')
+        || !isValidLeadPlanText(planText)
         || sha256(planText) !== detail.resultSha256) {
         throw new Error('Current saved Lead plan is incomplete or not bound to the registered Lead execution');
       }
@@ -1763,7 +1822,7 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
           throw new Error('Saved Lead plan text or binding does not match the original persisted Lead observation');
         }
         const planText = requireText(input.planText, 'planText', 40_000);
-        if (planText.includes('\u0000') || !planText.startsWith('[PLAN]\n') || !planText.trimEnd().endsWith('[/PLAN]')) {
+        if (!isValidLeadPlanText(planText)) {
           throw new Error('Saved Lead plan text or digest is invalid');
         }
         const priorStopReason = task.execution.stopReason;
@@ -1970,7 +2029,7 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
       return { bytes, sha256: sha256(bytes), filename: `${task.id}-v${artifact.version}.patch` };
     },
     async reserveRun({ actor, sourceTaskId, binding, promptSha256 = null, productRegistrySha256 = null }) {
-      return (await store.mutate(taskId, (task) => {
+      return (await store.mutate(taskId, async (task) => {
         const projection = assertAuthorityProjection(buildAuthorityProjection(task, helpers));
         assertObservationBinding(projection, { binding });
         if (projection.productRegistry && (!projection.productRegistry.current || productRegistrySha256 !== projection.productRegistry.registrySha256)) {
@@ -1993,6 +2052,13 @@ export async function createAuthorityReader({ tasksRoot, taskId, irixiAppRoot })
         if (alreadyStarted) throw new Error(`Current ${actor} run already started`);
         if (actor === 'developer' && (!projection.registeredExecution
           || promptSha256 !== projection.registeredExecution.promptSha256)) throw new Error('Developer prompt is not the registered current execution request');
+        if (actor === 'developer' && projection.productRegistry?.current && task.execution?.phase === 'planned'
+          && !task.execution.startedAt && (task.execution.modelCalls || []).length === 0) {
+          const preparedMemorySnapshot = task.integrationExecutionRequest?.memorySnapshot || [];
+          if (canonical(await currentMemorySnapshot(task)) !== canonical(preparedMemorySnapshot)) {
+            throw new Error('Prepared memory snapshot changed before the first Lead reservation; prepare the same run again before starting the Lead');
+          }
+        }
         const preservedLearningRepairArtifact = actor === 'developer'
           && ['learning_contract', 'learning_resume'].includes(task.execution?.repair?.repairKind)
           && projection.artifact?.confirmation

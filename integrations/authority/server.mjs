@@ -3,7 +3,8 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createAuthorityReader, fingerprint, projectTaskBoard, sha256 } from './authority-core.mjs';
+import { pathToFileURL } from 'node:url';
+import { createAuthorityReader, fingerprint, isValidLeadPlanText, projectTaskBoard, sha256 } from './authority-core.mjs';
 import { createIntakeController } from './intake-controller.mjs';
 import { articleDiscussionBlock, describeArticleDiscussion } from './model-availability.mjs';
 import { createIntegrationController } from './task-controller.mjs';
@@ -59,7 +60,14 @@ if (ARTICLE_INTAKE_MODE || REAL_ARTICLE_MODE) {
     || !STATE_ROOT.startsWith(`${ARTICLE_PROJECT_ROOT}${path.sep}`)) throw new Error('Article discussion state must stay inside its isolated project root');
 }
 
-const reader = await createAuthorityReader({ tasksRoot: TASKS_ROOT, taskId: TASK_ID, irixiAppRoot: IRIXI_APP_ROOT });
+const memoryModule = PRODUCT_MODE ? await import(pathToFileURL(path.join(IRIXI_APP_ROOT, 'memory.mjs')).href) : null;
+const configuredXerjUrl = new URL(process.env.IRIXI_XERJ_URL || 'http://127.0.0.1:19200');
+if (configuredXerjUrl.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(configuredXerjUrl.hostname)
+  || configuredXerjUrl.username || configuredXerjUrl.password || configuredXerjUrl.pathname !== '/' || configuredXerjUrl.search || configuredXerjUrl.hash) {
+  throw new Error('IRIXI_XERJ_URL must be a plain loopback HTTP origin.');
+}
+const memoryIndex = memoryModule ? memoryModule.createXerjMemoryIndex({ projectRoot: path.resolve(IRIXI_APP_ROOT, '..'), baseUrl: configuredXerjUrl.href }) : null;
+const reader = await createAuthorityReader({ tasksRoot: TASKS_ROOT, taskId: TASK_ID, irixiAppRoot: IRIXI_APP_ROOT, memoryIndex, authorityPort: PORT });
 const articleController = REAL_ARTICLE_MODE ? await createArticleProjectController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, projectFile: ARTICLE_PROJECT_FILE, capabilityFile: ARTICLE_CAPABILITY_FILE }) : null;
 const controller = PRODUCT_MODE ? null : ARTICLE_INTAKE_MODE || REAL_ARTICLE_MODE ? articleController : await createIntegrationController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, toyRoot: TOY_ROOT });
 const intake = !PRODUCT_MODE && INTAKE_TASK_ID ? await createIntakeController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, taskId: INTAKE_TASK_ID, articleProjectFile: ARTICLE_PROJECT_FILE, articleCapabilityFile: ARTICLE_CAPABILITY_FILE }) : null;
@@ -357,7 +365,7 @@ async function appendObservation(input) {
     if ([hasPlan, hasExecutionResult, hasConversation].filter(Boolean).length !== 1) throw Object.assign(new Error('Lead terminal must contain exactly one phase-bound result'), { status: 400 });
     const text = hasPlan ? input.leadPlanText : hasExecutionResult ? input.leadResultText : input.conversationText;
     if (!text.trim() || Buffer.byteLength(text) > 40_000) throw Object.assign(new Error('Lead result text is missing or too large'), { status: 400 });
-    if (hasPlan && (!text.startsWith('[PLAN]\n') || !text.trimEnd().endsWith('[/PLAN]'))) {
+    if (hasPlan && !isValidLeadPlanText(text)) {
       throw Object.assign(new Error('Lead plan text is missing or invalid'), { status: 400 });
     }
     if (input.resultSha256 !== sha256(text)) throw Object.assign(new Error('Lead result text does not match its digest'), { status: 400 });
@@ -495,6 +503,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/v1/product-instructions') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
       return send(res, 201, await reader.addProductInstruction(await body(req)));
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/product-memory/save') {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
+      return send(res, 201, await reader.saveProductMemory(await body(req)));
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/product-memory/change') {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
+      return send(res, 200, await reader.changeProductMemory(await body(req)));
     }
     if (req.method === 'POST' && url.pathname === '/v1/product-worktree-rebind') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
@@ -695,6 +711,9 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     const status = Number(error?.status) || 409;
     const message = error instanceof Error ? error.message : 'Request failed';
+    if (req.method === 'GET' && requestPathname === '/v1/authority') {
+      return send(res, status, { taskId: TASK_ID, error: message });
+    }
     if (req.method === 'POST' && ['/v1/product-goal', '/v1/product-instructions', '/v1/product-materials', '/v1/product-conversation'].includes(requestPathname)) {
       const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? error.code : null;
       return send(res, status, { ...(code ? { code } : {}), error: boundedProductInputError(message) });

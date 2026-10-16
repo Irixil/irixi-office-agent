@@ -103,6 +103,8 @@
       </div>
       <label>成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" rows="3" placeholder="包含明确结论&#10;能追溯到给定材料"></textarea></label>
       <label>工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" rows="3" placeholder="不自动发送或发布&#10;材料不足时标记待确认"></textarea></label>
+      <input type="hidden" name="functionId" value="">
+      <p id="task-function-note" class="field-note" hidden></p>
       <label class="checkbox-line"><input type="checkbox" name="memoryPolicy" value="workspace-confirmed"> 允许本任务搜索其他任务中已经由我确认的成果</label>
       <p class="form-disclosure">选择 Codex 后，运行时会把当前任务目标和你加入的材料发送给 Codex 服务；演示提供者不调用模型。</p>
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">建立任务</button></div>

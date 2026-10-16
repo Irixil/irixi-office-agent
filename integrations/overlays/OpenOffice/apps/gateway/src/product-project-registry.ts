@@ -12,7 +12,7 @@ export type ProductProjectRegistry = {
   goalVersionId: string;
   taskInputBindingSha256: string;
   pipelineBindingSha256: string;
-  authorityUrl: "http://127.0.0.1:3869/";
+  authorityUrl: string;
   workspace: {
     path: string;
     scopeFingerprint: string;
@@ -126,6 +126,20 @@ function exactKeys(value: Record<string, unknown>, expected: string[], label: st
   if (JSON.stringify(actual) !== JSON.stringify(wanted)) fail(`${label} fields changed`);
 }
 
+export function isAllowedAuthorityUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const endpoint = new URL(value);
+    const port = Number(endpoint.port);
+    return endpoint.protocol === "http:" && endpoint.hostname === "127.0.0.1"
+      && Number.isInteger(port) && port >= 1024 && port <= 65535
+      && !endpoint.username && !endpoint.password && endpoint.pathname === "/"
+      && !endpoint.search && !endpoint.hash && endpoint.href === value;
+  } catch {
+    return false;
+  }
+}
+
 export function productProjectRegistryEnabled(): boolean {
   return Boolean(process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE?.trim());
 }
@@ -144,7 +158,7 @@ export function loadProductProjectRegistry(): ProductProjectRegistry | null {
   exactKeys(value, ["schemaVersion", "projectId", "taskId", "goalVersionId", "taskInputBindingSha256", "pipelineBindingSha256", "authorityUrl", "workspace", "native", "capabilities"], "root");
   if (value.schemaVersion !== 1 || !SAFE_ID.test(value.projectId) || !SAFE_ID.test(value.taskId) || !SAFE_ID.test(value.goalVersionId)) fail("identity is invalid");
   if (!HEX64.test(value.taskInputBindingSha256) || !HEX64.test(value.pipelineBindingSha256)) fail("binding digest is invalid");
-  if (value.authorityUrl !== "http://127.0.0.1:3869/") fail("authority URL must use the fixed loopback endpoint");
+  if (!isAllowedAuthorityUrl(value.authorityUrl)) fail("authority URL must be an explicit HTTP loopback origin on a non-privileged port");
 
   if (!value.workspace || typeof value.workspace !== "object" || Array.isArray(value.workspace)) fail("workspace is invalid");
   exactKeys(value.workspace, ["path", "scopeFingerprint", "sourceSnapshotSha256", "sourceHead", "sourceManifest", "allowedWritePaths", "checks"], "workspace");

@@ -49,7 +49,23 @@ export function pointToSegmentDistance(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + ratio * dx), py - (ay + ratio * dy));
 }
 
-export function coworkerRuntimeState(task, role, { activeConversationRole = null, engagedRole = null } = {}) {
+export function coworkerRuntimeState(task, role, { activeConversationRole = null, engagedRole = null, learningAvailable = false } = {}) {
+  if (task?.nativeProduct) {
+    const functionOwner = { utility: 'writer', game: 'reviewer', agent: 'steward' }[task.functionId] || null;
+    const replying = activeConversationRole === role;
+    const learningReady = role === 'researcher' && learningAvailable;
+    const owned = functionOwner === role;
+    const overall = task.status;
+    const status = replying ? 'replying' : learningReady ? 'learning_available' : owned
+      ? ['running', 'in_progress', 'executing'].includes(overall) ? 'active'
+        : ['ready_to_export', 'completed'].includes(overall) ? 'done'
+          : ['failed', 'partial', 'blocked', 'runtime_unavailable'].includes(overall) ? 'failed'
+            : ['waiting_user', 'ready', 'planned', 'pending', 'waiting_scope', 'waiting_scope_authorization', 'ready_to_run', 'runtime_starting', 'paused'].includes(overall) ? 'waiting_user' : overall === 'cancelled' ? 'cancelled' : 'idle'
+      : 'idle';
+    const active = replying || status === 'active';
+    const localEligible = !active && engagedRole !== role && !['failed', 'waiting_user', 'cancelled'].includes(status);
+    return { active, status, localEligible, activitySource: replying ? 'conversation' : active ? 'task' : localEligible ? 'local' : 'status' };
+  }
   const stationAgents = task?.team?.agents?.filter((agent) => agent.stationRole === role) || [];
   const matchingWork = (task?.workItems || []).filter((item) => stationAgents.length
     ? stationAgents.some((agent) => agent.id === item.agentId)

@@ -20,11 +20,11 @@ const CONTINUITY_INTEGRATION_KEY = 'office-rest-continuity-v3-integration';
 const MOLE_ROUTE_SPEED = 140;
 
 export const PEOPLE = [
-  { role: 'researcher', name: '仓鼠研究员', species: 'hamster' },
-  { role: 'writer', name: '小鼠写作员', species: 'mouse' },
-  { role: 'reviewer', name: '龙猫审阅员', species: 'chinchilla' },
-  { role: 'steward', name: '鼹鼠事务员', species: 'mole' },
-  { role: 'archivist', name: '花枝鼠档案员', species: 'fancy-rat' },
+  { role: 'researcher', name: '仓鼠学习同事', species: 'hamster' },
+  { role: 'writer', name: '小鼠工具开发同事', species: 'mouse' },
+  { role: 'reviewer', name: '龙猫小游戏开发同事', species: 'chinchilla' },
+  { role: 'steward', name: '鼹鼠Agent开发同事', species: 'mole' },
+  { role: 'archivist', name: '花枝鼠档案记忆同事', species: 'fancy-rat' },
 ];
 const FALLBACK_SPECIES = { researcher: 'hamster', writer: 'mole', reviewer: 'hamster', steward: 'mole', archivist: 'hamster' };
 
@@ -294,6 +294,7 @@ export function isEditableTarget(target) {
 const stateLabel = {
   idle: '待命', reading: '整理档案', researching: '核对材料', drafting: '起草成果', reviewing: '独立核对',
   waiting_user: '等待主人确认', completed: '交付完成', failed: '工作受阻', active: '正在工作', replying: '正在回复', done: '已完成',
+  learning_available: '可继续学习', cancelled: '本次已取消',
 };
 
 export function createOfficeBridge(scene) {

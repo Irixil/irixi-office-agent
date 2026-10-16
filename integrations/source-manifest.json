@@ -63,9 +63,9 @@
         },
         {
           "path": "integrations/overlays/OpenOffice/apps/gateway/src/irixi-integration.ts",
-          "sourceSha256": "a274f56545ca2a63c9b75297d7c478e0faa434ac2ea597c826cae7305dafdafe",
-          "sha256": "9fa375a84ca07a912af287f123653247c444fb650790313aeb326555eae35551",
-          "bytes": 86161
+          "sourceSha256": "bf3e8ffb7d5d3d5b248607bb303ab60df733c39d3f7f500186ec84f4770f0a2f",
+          "sha256": "c1bfda85944aace6a4731d9907ba73a08dcca40337467fee1b5f9cc2c4125df3",
+          "bytes": 86923
         },
         {
           "path": "integrations/overlays/OpenOffice/apps/gateway/src/json-body.ts",
@@ -81,9 +81,9 @@
         },
         {
           "path": "integrations/overlays/OpenOffice/apps/gateway/src/product-project-registry.ts",
-          "sourceSha256": "20f2ba8fe029b250bf5040e75b09be44a161b40f2a16004e4cbedcaf150acb68",
-          "sha256": "20f2ba8fe029b250bf5040e75b09be44a161b40f2a16004e4cbedcaf150acb68",
-          "bytes": 14997
+          "sourceSha256": "d454ebbfdc011bb90f398af1bf4aa6dcb7dbc5a293e0518ae724a674b11b017b",
+          "sha256": "d454ebbfdc011bb90f398af1bf4aa6dcb7dbc5a293e0518ae724a674b11b017b",
+          "bytes": 15539
         },
         {
           "path": "integrations/overlays/OpenOffice/apps/gateway/src/setup.ts",
@@ -223,9 +223,9 @@
         },
         {
           "path": "integrations/overlays/agent-office/packages/server/src/irixi-authority.ts",
-          "sourceSha256": "4a7f4f9884e7bf0edb933d8d54fed00bff1b0bef8e03964cebfef13e459c3416",
-          "sha256": "4a7f4f9884e7bf0edb933d8d54fed00bff1b0bef8e03964cebfef13e459c3416",
-          "bytes": 4603
+          "sourceSha256": "6b7879fe5f4d9754515ee033a0b3f17ed7cb1408762d4a0f3bb659c7aff34f65",
+          "sha256": "6b7879fe5f4d9754515ee033a0b3f17ed7cb1408762d4a0f3bb659c7aff34f65",
+          "bytes": 4987
         },
         {
           "path": "integrations/overlays/agent-office/packages/server/src/memory/MemoryStore.ts",
@@ -266,15 +266,15 @@
     "files": [
       {
         "path": "integrations/product/desktop-product-server.mjs",
-        "sourceSha256": "2b414a7b1672d755e6d0300e71c35976a15bf0ca92ae55c9c9dc8fbf5ca8c211",
-        "sha256": "2b414a7b1672d755e6d0300e71c35976a15bf0ca92ae55c9c9dc8fbf5ca8c211",
-        "bytes": 34729
+        "sourceSha256": "5ef0064474822a2257f196c28c2b5291614933bf462720bce8282ff2550f6cda",
+        "sha256": "a6f25ac6ce493ee67e0e0f63ac5122bf61d951324cf41e47691465c807a4545e",
+        "bytes": 52153
       },
       {
         "path": "integrations/product/product-bootstrap-controller.mjs",
-        "sourceSha256": "6d34a31445d8d25dccfb5083b8a65e00bfe7264839fbe1dfe7346ddcba373dbd",
-        "sha256": "6d34a31445d8d25dccfb5083b8a65e00bfe7264839fbe1dfe7346ddcba373dbd",
-        "bytes": 83570
+        "sourceSha256": "6d473aae7a072e393392176f5632f0c34df0d1143754f6200b933f104feeeefd",
+        "sha256": "6d473aae7a072e393392176f5632f0c34df0d1143754f6200b933f104feeeefd",
+        "bytes": 94415
       },
       {
         "path": "integrations/product/registry.example.json",
@@ -290,15 +290,15 @@
       },
       {
         "path": "integrations/product/start-product.mjs",
-        "sourceSha256": "6a4c1c08a9a79b138dc58488872a5c8c4f6b5fb2644362e55136226fefa7da6d",
-        "sha256": "6a4c1c08a9a79b138dc58488872a5c8c4f6b5fb2644362e55136226fefa7da6d",
-        "bytes": 29051
+        "sourceSha256": "c12c5b82b3ee7f0d2db30b84227fc4cbde00a25e75567ce143e87894324c4613",
+        "sha256": "c12c5b82b3ee7f0d2db30b84227fc4cbde00a25e75567ce143e87894324c4613",
+        "bytes": 29331
       },
       {
         "path": "integrations/product/trusted-product-projects.mjs",
-        "sourceSha256": "499f0488d78eebdb3cf8be3ef1cc217975502dd724da2c3e67e89196b1016738",
-        "sha256": "499f0488d78eebdb3cf8be3ef1cc217975502dd724da2c3e67e89196b1016738",
-        "bytes": 11445
+        "sourceSha256": "199830e75bfca5c20c40efc46aeca704c61ab5f4db375e9d9ba0fc3c27da3c81",
+        "sha256": "199830e75bfca5c20c40efc46aeca704c61ab5f4db375e9d9ba0fc3c27da3c81",
+        "bytes": 12228
       }
     ]
   },
@@ -310,19 +310,19 @@
     "upstream tests and private project fixtures"
   ],
   "authoritySources": {
-    "snapshotDate": "2026-10-15",
+    "snapshotDate": "2026-10-16",
     "files": [
       {
         "path": "integrations/authority/server.mjs",
-        "sourceSha256": "d9a218d950b8b7d4cca71a69e15e43484b8ce99bc8249bf38855b242cf3d808f",
-        "sha256": "703c222cb415208dc8d11b0ddbf7e52633f80f80176879a4df744e72742f05ff",
-        "bytes": 58868
+        "sourceSha256": "a3e5fb17dc55fda49c481c652b8b8c2213c9226ef1f7f82f63009b18dfe39513",
+        "sha256": "fc32e0bec2d5beb42cf68909c18c6f5fb85aefbeb2e216cce27b0c1fd737d7d6",
+        "bytes": 60315
       },
       {
         "path": "integrations/authority/authority-core.mjs",
-        "sourceSha256": "4a2d97bba2e0b480d46fd543c4d12a3867f603f10c9d4f9dd4ff7618f2ac4451",
-        "sha256": "b990027f25b70cdae6962b3befbeb964f32aad9d7c0a2d2d63ad77fa628b4b74",
-        "bytes": 158706
+        "sourceSha256": "3b2f89ffb33d45c261cede44c0acfda903f8afe725a21a5078f8a2f0ccb9a6a9",
+        "sha256": "b758d7c37e599d98d5414e036afea21e377a28db9ad4f39a13734f338e276d57",
+        "bytes": 163179
       },
       {
         "path": "integrations/authority/intake-controller.mjs",
@@ -383,5 +383,6 @@
       "uniqueHashValues": 131,
       "absolutePathRoots": 2
     }
-  }
+  },
+  "snapshotDate": "2026-10-16"
 }

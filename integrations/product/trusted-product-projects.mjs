@@ -9,6 +9,7 @@ const SAFE_ID = /^[a-z0-9][a-z0-9-]{2,79}$/;
 const SAFE_PATH = /^(?!\.)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const DEFAULT_AUTHORITY_URL = 'http://127.0.0.1:3869/';
 
 const canonical = (value) => Array.isArray(value)
   ? `[${value.map(canonical).join(',')}]`
@@ -94,8 +95,20 @@ function validateDefinition(value) {
   }
 }
 
-export async function createTrustedProductProjects({ file }) {
+function checkedAuthorityUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Trusted Authority URL is invalid'); }
+  const port = Number(url.port);
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !Number.isInteger(port) || port < 1024 || port > 65535
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Trusted Authority URL must be a plain HTTP 127.0.0.1 origin on a non-privileged port');
+  }
+  return `http://127.0.0.1:${port}/`;
+}
+
+export async function createTrustedProductProjects({ file, authorityUrl = DEFAULT_AUTHORITY_URL }) {
   if (!file || !path.isAbsolute(file)) throw new Error('A trusted product project catalogue file is required');
+  const runtimeAuthorityUrl = checkedAuthorityUrl(authorityUrl);
   const realFile = await fs.realpath(file);
   if (realFile !== file) throw new Error('Trusted project catalogue path must be canonical');
   const stat = await fs.lstat(realFile);
@@ -157,7 +170,7 @@ export async function createTrustedProductProjects({ file }) {
     return {
       schemaVersion: 1,
       projectId: value.projectId,
-      authorityUrl: 'http://127.0.0.1:3869/',
+      authorityUrl: runtimeAuthorityUrl,
       workspace: {
         path: value.root,
         scopeFingerprint: value.scopeFingerprint,
@@ -175,7 +188,8 @@ export async function createTrustedProductProjects({ file }) {
         maxDurationMs: value.native.maxDurationMs,
       },
       capabilities: {
-        team: value.native.allowedRoles.length > 1,
+        team: value.native.allowedRoles.length > 1
+          || value.native.allowedRoles.some((role) => /lead|coordinator/i.test(role)),
         worktree: true,
         staticPreviewEntries: value.staticPreviewEntries,
         staticPreviewFiles: value.staticPreviewFiles,

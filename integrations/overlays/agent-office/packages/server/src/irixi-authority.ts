@@ -56,9 +56,15 @@ export function createIrixiAuthorityProjection() {
     if (!rawUrl || !taskId || process.env.AGENT_OFFICE_ZERO_MODEL !== '1') {
         throw new Error('Agent Office Irixi projection requires zero-model mode, URL, and task ID');
     }
-    const endpoint = new URL(rawUrl);
-    if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1' || endpoint.port !== '3869' || endpoint.pathname !== '/') {
-        throw new Error('Agent Office authority must use http://127.0.0.1:3869/');
+    let endpoint: URL;
+    try { endpoint = new URL(rawUrl); }
+    catch { throw new Error('Agent Office authority must use an explicit HTTP loopback origin on a non-privileged port'); }
+    const port = Number(endpoint.port);
+    if (endpoint.protocol !== 'http:' || endpoint.hostname !== '127.0.0.1'
+        || !Number.isInteger(port) || port < 1024 || port > 65535
+        || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash
+        || endpoint.href !== rawUrl) {
+        throw new Error('Agent Office authority must use an explicit HTTP loopback origin on a non-privileged port');
     }
     const rawOpenOfficeUrl = process.env.AGENT_OFFICE_OPENOFFICE_URL?.trim();
     const openOfficeEndpoint = rawOpenOfficeUrl ? new URL(rawOpenOfficeUrl) : null;

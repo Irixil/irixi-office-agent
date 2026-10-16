@@ -5,32 +5,40 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { createProductBootstrapController } from './product-bootstrap-controller.mjs';
+import { pathToFileURL } from 'node:url';
+import { createProductBootstrapController, confirmedLearningPreviewSourceMatches } from './product-bootstrap-controller.mjs';
 import { createTrustedProductProjects } from './trusted-product-projects.mjs';
 
 const root = process.env.IRIXI_DESKTOP_ROOT;
 const port = Number(process.env.IRIXI_DESKTOP_PORT || 3847);
-const native = new URL(process.env.IRIXI_NATIVE_URL || 'http://127.0.0.1:9109/');
-const authority = new URL(process.env.IRIXI_PRODUCT_AUTHORITY_URL || 'http://127.0.0.1:3869/');
+function configuredLoopbackOrigin(value, name) {
+  const url = new URL(value);
+  const configuredPort = Number(url.port);
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.pathname !== '/' || url.search || url.hash
+      || !Number.isInteger(configuredPort) || configuredPort < 1024 || configuredPort > 65535) {
+    throw new Error(`${name} must be a plain HTTP 127.0.0.1 origin on a non-privileged port.`);
+  }
+  return new URL(`http://127.0.0.1:${configuredPort}/`);
+}
+const native = configuredLoopbackOrigin(process.env.IRIXI_NATIVE_URL || 'http://127.0.0.1:9109/', 'IRIXI_NATIVE_URL');
+const authority = configuredLoopbackOrigin(process.env.IRIXI_PRODUCT_AUTHORITY_URL || 'http://127.0.0.1:3869/', 'IRIXI_PRODUCT_AUTHORITY_URL');
+const agentOfficePort = Number(process.env.IRIXI_AGENT_OFFICE_PORT || 3029);
+const scenePort = Number(process.env.IRIXI_SCENE_PORT || 5189);
 const tasksRoot = process.env.IRIXI_AUTHORITY_TASKS_ROOT;
 const aiEnabled = process.env.IRIXI_PRODUCT_ENABLE_AI === '1';
 assert.ok(root && path.isAbsolute(root));
 assert.equal(await fsp.realpath(root), root);
 assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535);
-assert.equal(native.protocol, 'http:');
-assert.equal(native.hostname, '127.0.0.1');
-assert.equal(native.pathname, '/');
-assert.ok(Number.isInteger(Number(native.port)) && Number(native.port) >= 1024 && Number(native.port) <= 65535);
-assert.equal(authority.protocol, 'http:');
-assert.equal(authority.hostname, '127.0.0.1');
-assert.equal(authority.pathname, '/');
-assert.ok(Number.isInteger(Number(authority.port)) && Number(authority.port) >= 1024 && Number(authority.port) <= 65535);
+assert.ok(Number.isInteger(agentOfficePort) && agentOfficePort >= 1024 && agentOfficePort <= 65535);
+assert.ok(Number.isInteger(scenePort) && scenePort >= 1024 && scenePort <= 65535);
+const configuredPorts = [port, Number(authority.port), Number(native.port), agentOfficePort, scenePort];
+assert.equal(new Set(configuredPorts).size, configuredPorts.length, 'Desktop and managed service ports must be distinct');
 assert.ok(tasksRoot && path.isAbsolute(tasksRoot));
 const canonicalTasksRoot = await fsp.realpath(tasksRoot);
 const irixiAppRoot = await fsp.realpath(path.join(root, 'app'));
 const projectCatalogueFile = path.resolve(process.env.IRIXI_PRODUCT_PROJECT_CATALOG_FILE
   || path.join(import.meta.dirname, 'registered-projects.local.json'));
-const trustedProjects = await createTrustedProductProjects({ file: projectCatalogueFile });
+const trustedProjects = await createTrustedProductProjects({ file: projectCatalogueFile, authorityUrl: authority.href });
 const tasksRootKey = crypto.createHash('sha256').update(canonicalTasksRoot).digest('hex').slice(0, 16);
 const bindingFile = path.resolve(process.env.IRIXI_PRODUCT_BINDING_FILE || path.join(import.meta.dirname, 'runtime', `active-product-task-${tasksRootKey}.json`));
 if (!bindingFile.startsWith(`${path.resolve(import.meta.dirname)}${path.sep}`)) throw new Error('Product binding file must stay inside the product directory');
@@ -46,6 +54,21 @@ async function saveActiveTask(taskId) {
   await fsp.rename(temporary, bindingFile);
 }
 let nativeRuntime = null;
+let memoryAuthority = null;
+async function stopMemoryAuthority() {
+  const runtime = memoryAuthority;
+  if (!runtime) return;
+  if (runtime.child.exitCode === null && runtime.child.signalCode === null) {
+    runtime.child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => { runtime.child.removeListener('exit', onExit); resolve(); }, 5_000);
+      const onExit = () => { clearTimeout(timer); resolve(); };
+      runtime.child.once('exit', onExit);
+    });
+  }
+  if (runtime.child.exitCode === null && runtime.child.signalCode === null) runtime.child.kill('SIGKILL');
+  if (memoryAuthority?.child === runtime.child) memoryAuthority = null;
+}
 async function stopNativeRuntime() {
   const runtime = nativeRuntime;
   if (!runtime) return;
@@ -67,6 +90,38 @@ async function stopNativeRuntime() {
   if (running()) throw Object.assign(new Error('Managed native runtime did not stop before the task mutation'), { status: 503 });
   if (nativeRuntime?.child === runtime.child) nativeRuntime = null;
 }
+async function startMemoryAuthority(taskId) {
+  if (memoryAuthority?.taskId === taskId && memoryAuthority.child.exitCode === null && memoryAuthority.child.signalCode === null) return;
+  await stopMemoryAuthority();
+  const child = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'authority', 'server.mjs')], {
+    cwd: path.join(import.meta.dirname, '..'),
+    env: { ...process.env, IRIXI_PRODUCT_AUTHORITY: '1', IRIXI_AUTHORITY_PORT: authority.port || '3869',
+      IRIXI_AUTHORITY_TASKS_ROOT: canonicalTasksRoot, IRIXI_AUTHORITY_TASK_ID: taskId, IRIXI_APP_ROOT: irixiAppRoot,
+      IRIXI_INTEGRATION_STATE_ROOT: path.join(import.meta.dirname, 'runtime', 'memory-authority', tasksRootKey) },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  memoryAuthority = { taskId, child };
+  child.once('exit', () => { if (memoryAuthority?.child === child) memoryAuthority = null; });
+  let stderr = '';
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-2_000); });
+  try {
+    const deadline = Date.now() + 15_000;
+    let ready = false;
+    while (!ready && Date.now() < deadline) {
+      if (child.exitCode !== null || child.signalCode !== null) throw new Error('Authority writer exited before readiness.');
+      try {
+        const response = await fetch(new URL('health', authority), { signal: AbortSignal.timeout(500) });
+        const value = response.ok ? await response.json() : null;
+        ready = value?.ok === true && value?.mode === 'irixi-native-product-authority-v1';
+      } catch {}
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!ready) throw new Error('Authority writer did not become ready.');
+  } catch (error) {
+    await stopMemoryAuthority();
+    throw publicError('PRODUCT_AUTHORITY_UNAVAILABLE', `The current Authority writer could not start${stderr ? `: ${stderr.trim()}` : '.'}`, 503);
+  }
+}
 async function writeRuntimePolicy(taskId, projectId) {
   const directory = path.join(import.meta.dirname, 'runtime', taskId);
   await fsp.mkdir(directory, { recursive: true });
@@ -81,7 +136,9 @@ async function startNativeRuntime(taskId, policyFile) {
   if (nativeRuntime && nativeRuntime.taskId !== taskId) throw Object.assign(new Error('Another native product task owns this setup process'), { status: 409 });
   if (nativeRuntime?.child.exitCode === null && nativeRuntime.child.signalCode === null) return nativeRuntime;
   const args = [path.join(import.meta.dirname, 'start-product.mjs'), '--registry', policyFile, '--tasks-root', canonicalTasksRoot,
-    '--task', taskId, '--desktop-root', root, '--native-only', '--managed-registry', '--openoffice-port', native.port || '9109'];
+    '--task', taskId, '--desktop-root', root, '--native-only', '--managed-registry',
+    '--authority-port', authority.port, '--openoffice-port', native.port,
+    '--agent-office-port', String(agentOfficePort), '--scene-port', String(scenePort)];
   args.push(process.env.IRIXI_PRODUCT_ENABLE_AI === '1' ? '--enable-ai' : '--zero-model');
   const child = spawn(process.execPath, args, { cwd: import.meta.dirname, env: process.env, stdio: ['inherit', 'pipe', 'pipe'] });
   nativeRuntime = { taskId, child };
@@ -114,8 +171,15 @@ async function startNativeRuntime(taskId, policyFile) {
     throw Object.assign(error, { status: 503 });
   } finally { if (timer) clearTimeout(timer); }
 }
+const memoryModule = await import(pathToFileURL(path.join(root, 'app/memory.mjs')).href);
+const configuredXerjUrl = new URL(process.env.IRIXI_XERJ_URL || 'http://127.0.0.1:19200');
+if (configuredXerjUrl.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(configuredXerjUrl.hostname)
+  || configuredXerjUrl.username || configuredXerjUrl.password || configuredXerjUrl.pathname !== '/' || configuredXerjUrl.search || configuredXerjUrl.hash) {
+  throw new Error('IRIXI_XERJ_URL must be a plain loopback HTTP origin.');
+}
+const memoryIndex = memoryModule.createXerjMemoryIndex({ projectRoot: root, baseUrl: configuredXerjUrl.href });
 const bootstrap = await createProductBootstrapController({ tasksRoot: canonicalTasksRoot, irixiAppRoot,
-  projectCatalog: trustedProjects.listPublic, projectAuthorization: trustedProjects.current });
+  projectCatalog: trustedProjects.listPublic, projectAuthorization: trustedProjects.current, memoryIndex });
 const publicRoot = await fsp.realpath(path.join(root, 'app/public'));
 const artRoot = await fsp.realpath(path.join(root, 'art'));
 const vendor = {
@@ -213,7 +277,7 @@ const readJsonBody = (req) => {
   }
   return pending;
 };
-async function proxy(req, res) {
+async function proxy(req, res, { transform = null } = {}) {
   if (!['GET', 'HEAD'].includes(req.method || '') && req.headers.origin) {
     const origin = new URL(req.headers.origin);
     if (origin.host !== req.headers.host) throw new Error('Cross-origin product mutation is forbidden');
@@ -221,7 +285,11 @@ async function proxy(req, res) {
   const body = ['GET', 'HEAD'].includes(req.method || '') ? undefined : await readBody(req);
   const response = await fetch(new URL(req.url, native), { method: req.method, body,
     headers: { accept: String(req.headers.accept || '*/*'), 'content-type': String(req.headers['content-type'] || 'application/json'), origin: native.origin }, signal: AbortSignal.timeout(10_000) });
-  const bytes = Buffer.from(await response.arrayBuffer());
+  let bytes = Buffer.from(await response.arrayBuffer());
+  if (transform && (response.headers.get('content-type') || '').includes('application/json')) {
+    try { bytes = Buffer.from(JSON.stringify(transform(JSON.parse(bytes.toString('utf8'))))); }
+    catch { /* Keep the native response byte-identical if the optional projection cannot be decorated. */ }
+  }
   const headers = { 'cache-control': 'no-store', 'content-type': response.headers.get('content-type') || 'application/octet-stream' };
   for (const name of ['content-disposition', 'x-content-sha256']) { const value = response.headers.get(name); if (value) headers[name] = value; }
   res.writeHead(response.status, headers); res.end(bytes);
@@ -232,29 +300,38 @@ function networkErrorCode(error) {
   return null;
 }
 async function authorityInputMutation(res, taskId, input) {
-  const endpoint = { goal: 'v1/product-goal', support: 'v1/product-instructions', material: 'v1/product-materials', converse: 'v1/product-conversation' }[input.action];
+  const endpoint = { goal: 'v1/product-goal', support: 'v1/product-instructions', material: 'v1/product-materials', converse: 'v1/product-conversation',
+    memory_save: 'v1/product-memory/save', memory_change: 'v1/product-memory/change' }[input.action];
   assert.ok(endpoint, 'Unsupported authority input mutation');
   try {
     const projectionResponse = await fetch(new URL(`v1/authority?taskId=${encodeURIComponent(taskId)}`, authority), {
       signal: AbortSignal.timeout(2_000), headers: { accept: 'application/json' },
     });
     const projectionBytes = Buffer.from(await projectionResponse.arrayBuffer());
+    let taskBoundByAuthority = false;
     if (!projectionResponse.ok) {
-      if (projectionResponse.status === 404) {
-        let missing;
-        try { missing = JSON.parse(projectionBytes.toString('utf8')); } catch {}
-        if (missing && typeof missing === 'object' && !Array.isArray(missing)
-          && JSON.stringify(Object.keys(missing).sort()) === JSON.stringify(['error'])
-          && missing.error === 'Unknown task') return 'refused';
+      let failedProjection;
+      try { failedProjection = JSON.parse(projectionBytes.toString('utf8')); } catch {}
+      if (['memory_save', 'memory_change'].includes(input.action) && failedProjection?.taskId === taskId) {
+        // The Authority has positively identified this task; global memory may be written before project scope exists.
+        taskBoundByAuthority = true;
+      } else {
+        if (projectionResponse.status === 404) {
+          if (failedProjection && typeof failedProjection === 'object' && !Array.isArray(failedProjection)
+            && JSON.stringify(Object.keys(failedProjection).sort()) === JSON.stringify(['error'])
+            && failedProjection.error === 'Unknown task') return 'refused';
+        }
+        sendFailure(res, projectionResponse.status, 'PRODUCT_AUTHORITY_REJECTED', 'The current Irixi authority rejected this task input update.',
+          authorityRejectionDetails(projectionBytes, 'projection'));
+        return 'handled';
       }
-      sendFailure(res, projectionResponse.status, 'PRODUCT_AUTHORITY_REJECTED', 'The current Irixi authority rejected this task input update.',
-        authorityRejectionDetails(projectionBytes, 'projection'));
-      return 'handled';
     }
-    let projection;
-    try { projection = JSON.parse(projectionBytes.toString('utf8'))?.projection; }
-    catch { throw publicError('PRODUCT_AUTHORITY_INVALID', 'The current Irixi authority returned an invalid task projection.', 503); }
-    if (projection?.taskId !== taskId) throw publicError('PRODUCT_AUTHORITY_BINDING_MISMATCH', 'The current Irixi authority is bound to a different product task.', 409);
+    if (!taskBoundByAuthority) {
+      let projection;
+      try { projection = JSON.parse(projectionBytes.toString('utf8'))?.projection; }
+      catch { throw publicError('PRODUCT_AUTHORITY_INVALID', 'The current Irixi authority returned an invalid task projection.', 503); }
+      if (projection?.taskId !== taskId) throw publicError('PRODUCT_AUTHORITY_BINDING_MISMATCH', 'The current Irixi authority is bound to a different product task.', 409);
+    }
     const body = structuredClone(input); delete body.action;
     const response = await fetch(new URL(endpoint, authority), { method: 'POST', signal: AbortSignal.timeout(10_000),
       headers: { accept: 'application/json', 'content-type': 'application/json', origin: authority.origin }, body: JSON.stringify(body) });
@@ -305,6 +382,48 @@ async function currentExpiredResultProjection(taskId, setup, { confirmedOnly = f
     return projection;
   } catch { return null; }
 }
+function currentLearningPreviewUrl(value, taskId) {
+  const preview = value?.preview, artifact = value?.artifact;
+  const url = value?.previewLink || value?.links?.preview;
+  if (value?.taskId !== taskId || value?.current !== true || value?.native?.bindingCurrent !== true
+    || preview?.status !== 'ready' || preview.taskId !== taskId || preview.goalVersionId !== value.goalVersionId
+    || preview.executionId !== value.execution?.id || preview.registrySha256 !== value.product?.registrySha256
+    || preview.artifactId !== artifact?.id || preview.artifactVersion !== artifact?.version
+    || preview.candidateSha256 !== artifact?.candidateSha256
+    || !value.product?.capabilities?.staticPreviewEntries?.includes(preview.entry)
+    || !value.product?.capabilities?.staticPreviewFiles?.includes(preview.entry)
+    || typeof url !== 'string' || !url.startsWith('/product-preview/')) return null;
+  return url;
+}
+function confirmedLearningPreviewSourceIsCurrent(value, result) {
+  const expected = { taskId: result.taskId, projectId: result.projectId,
+    goalVersionId: result.reuseInput.expectedGoalVersionId, executionId: result.reuseInput.expectedExecutionId,
+    registrySha256: result.reuseInput.expectedRegistrySha256, artifactId: result.reuseInput.expectedArtifactId,
+    artifactVersion: result.reuseInput.expectedArtifactVersion, candidateSha256: result.reuseInput.expectedCandidateSha256 };
+  return confirmedLearningPreviewSourceMatches(value, expected);
+}
+function currentConfirmedLearningPreviewUrl(value, result) {
+  return confirmedLearningPreviewSourceIsCurrent(value, result) ? currentLearningPreviewUrl(value, result.taskId) : null;
+}
+async function readLearningNativeState(taskId) {
+  const response = await fetch(new URL('/api/product-state', native), {
+    signal: AbortSignal.timeout(3_000), headers: { accept: 'application/json' },
+  });
+  if (!response.ok) return null;
+  const value = await response.json();
+  return value?.taskId === taskId ? value : null;
+}
+async function createLearningPreview(taskId, expected) {
+  const response = await fetch(new URL(`/api/product/tasks/${encodeURIComponent(taskId)}/actions`, native), {
+    method: 'POST', signal: AbortSignal.timeout(10_000),
+    headers: { accept: 'application/json', 'content-type': 'application/json', origin: native.origin },
+    body: JSON.stringify({ action: 'preview', expectedGoalVersionId: expected.goalVersionId,
+      expectedExecutionId: expected.executionId, expectedRegistrySha256: expected.registrySha256,
+      expectedArtifactId: expected.artifact.id, expectedArtifactVersion: expected.artifact.version,
+      expectedCandidateSha256: expected.artifact.candidateSha256, entry: 'index.html' }),
+  });
+  if (!response.ok) throw publicError('LEARNING_PREVIEW_REJECTED', 'The current confirmed learning result did not accept its bound preview request.', 409);
+}
 async function staticFile(urlPath) {
   if (vendor[urlPath]) return vendor[urlPath];
   const decoded = decodeURIComponent(urlPath.split('?')[0]);
@@ -348,6 +467,7 @@ const server = http.createServer(async (req, res) => {
           reason, error: reason })); return;
       }
       await stopNativeRuntime();
+      await stopMemoryAuthority();
       activeTaskId = value.task.id;
       await saveActiveTask(activeTaskId);
       res.writeHead(201, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)); return;
@@ -355,6 +475,116 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && incoming.pathname === '/api/product/projects') {
       const value = await bootstrap.listRegisteredProjects();
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify({ projects: value })); return;
+    }
+    if (req.method === 'GET' && incoming.pathname === '/api/product/learning-entry') {
+      const taskId = incoming.searchParams.get('taskId');
+      if (!taskId || activeTaskId !== taskId) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ available: false, status: 'unavailable' })); return;
+      }
+      const result = await bootstrap.findCurrentConfirmedResult('sample-article-project');
+      if (!result || result.taskId !== taskId) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ available: false, status: 'unavailable' })); return;
+      }
+      const value = await readLearningNativeState(taskId);
+      const url = currentConfirmedLearningPreviewUrl(value, result);
+      if (url) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ available: true, status: 'ready', url, view: 'learn' })); return;
+      }
+      if (confirmedLearningPreviewSourceIsCurrent(value, result)) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ available: true, status: 'preview_pending' })); return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ available: false, status: 'unavailable' })); return;
+    }
+    if (req.method === 'POST' && incoming.pathname === '/api/product/learning-entry/open') {
+      assertProductMutation();
+      const input = await readJsonBody(req);
+      if (JSON.stringify(Object.keys(input).sort()) !== JSON.stringify(['view'])
+        || !['learn', 'records'].includes(input.view)) {
+        throw publicError('LEARNING_ENTRY_INPUT_INVALID', 'Choose the learning page or its saved-records entry.', 400);
+      }
+      const result = await bootstrap.findCurrentConfirmedResult('sample-article-project');
+      if (!result) throw publicError('LEARNING_RESULT_UNAVAILABLE', 'No current confirmed article-learning result is available.', 404);
+      if (activeTaskId && activeTaskId !== result.taskId) {
+        const current = await bootstrap.taskSwitchState(activeTaskId);
+        if (current?.inFlight) {
+          sendFailure(res, 409, 'LEARNING_ENTRY_BUSY', `“${current.title}”仍有工作在途；不会切换或取消它。请先回到当前工作并让它到达安全停点，再点学习同事。`, {
+            recoveryUrl: `/native?taskId=${encodeURIComponent(current.taskId)}`,
+          }); return;
+        }
+      }
+      let currentValue = null;
+      try { if (activeTaskId === result.taskId) currentValue = await readLearningNativeState(result.taskId); } catch {}
+      if (!currentValue) {
+        if (!result.canReuseCurrentResult) {
+          const recoveryUrl = `/native?taskId=${encodeURIComponent(result.taskId)}`;
+          sendFailure(res, 409, 'LEARNING_RESULT_RECOVERY_REQUIRED', '学习成果仍保留，但当前状态不能安全地复用原确认结果；请先打开原生任务核对恢复状态。没有启动新轮。', { recoveryUrl }); return;
+        }
+        const prepared = await bootstrap.prepareRun(result.taskId, result.reuseInput);
+        if (prepared?.prepared?.reused !== true || prepared.prepared.reuseCurrentResult !== true
+          || prepared.prepared.executionId !== result.reuseInput.expectedExecutionId) {
+          throw publicError('LEARNING_RESULT_RECOVERY_MISMATCH', '原确认结果没有按原执行绑定恢复；未启动新的模型工作。', 409);
+        }
+        const policy = await writeRuntimePolicy(result.taskId, result.projectId);
+        await stopNativeRuntime();
+        const runtime = await startNativeRuntime(result.taskId, policy.file);
+        if (runtime.ready?.taskId !== result.taskId || runtime.ready?.modelCalls !== 0
+          || runtime.ready?.allStartedServicesReady !== true) {
+          throw publicError('LEARNING_RUNTIME_NOT_READY', '原文章学习结果已保留，但本机后台未确认零模型恢复就绪。', 503);
+        }
+        const setup = await bootstrap.state(result.taskId);
+        const currentResult = await currentExpiredResultProjection(result.taskId, setup, { confirmedOnly: true });
+        if (!currentResult || currentResult.execution?.id !== result.reuseInput.expectedExecutionId
+          || currentResult.artifact?.id !== result.reuseInput.expectedArtifactId
+          || currentResult.artifact?.candidateSha256 !== result.reuseInput.expectedCandidateSha256) {
+          throw publicError('LEARNING_RESULT_RECOVERY_MISMATCH', '恢复后的目标、登记或已确认候选与原结果不一致。', 409);
+        }
+        activeTaskId = result.taskId;
+        await saveActiveTask(activeTaskId);
+        currentValue = await readLearningNativeState(result.taskId);
+      }
+      if (currentConfirmedLearningPreviewUrl(currentValue, result)) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ available: true, status: 'ready', url: currentConfirmedLearningPreviewUrl(currentValue, result), view: input.view })); return;
+      }
+      const artifact = currentValue?.artifact;
+      const expected = {
+        taskId: result.taskId, projectId: result.projectId,
+        goalVersionId: currentValue?.goalVersionId,
+        executionId: currentValue?.execution?.id,
+        registrySha256: currentValue?.product?.registrySha256,
+        artifactId: result.reuseInput.expectedArtifactId,
+        artifactVersion: result.reuseInput.expectedArtifactVersion,
+        candidateSha256: result.reuseInput.expectedCandidateSha256,
+        artifact,
+      };
+      if (expected.goalVersionId !== result.goalVersionId
+        || expected.executionId !== result.reuseInput.expectedExecutionId
+        || expected.registrySha256 !== result.reuseInput.expectedRegistrySha256
+        || !confirmedLearningPreviewSourceMatches(currentValue, expected)) {
+        throw publicError('LEARNING_PREVIEW_UNAVAILABLE', 'The current learning task did not expose a preview bound to its confirmed result.', 409);
+      }
+      if (currentValue.preview?.status !== 'pending') await createLearningPreview(result.taskId, expected);
+      const deadline = Date.now() + 12_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        currentValue = await readLearningNativeState(result.taskId);
+        if (!confirmedLearningPreviewSourceIsCurrent(currentValue, result)) {
+          throw publicError('LEARNING_PREVIEW_BINDING_CHANGED', '学习预览准备期间原确认结果绑定发生变化；没有打开新成果。', 409);
+        }
+        const url = currentConfirmedLearningPreviewUrl(currentValue, result);
+        if (url) {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ available: true, status: 'ready', url, view: input.view })); return;
+        }
+        if (currentValue?.preview?.status === 'failed') throw publicError('LEARNING_PREVIEW_FAILED', '当前确认学习成果的预览生成失败；可再次从学习同事入口重试。', 503);
+      }
+      res.writeHead(202, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ available: true, status: 'preview_pending', taskId: result.taskId })); return;
     }
     if (req.method === 'GET' && incoming.pathname === '/api/product-state' && !activeTaskId) {
       const value = await bootstrap.state();
@@ -367,7 +597,20 @@ const server = http.createServer(async (req, res) => {
       const setupAliases = { instructions: 'support', materials: 'material', chat: 'converse', continue: 'resume' };
       if (typeof input.action === 'string' && setupAliases[input.action]) input.action = setupAliases[input.action];
       const taskId = decodeURIComponent(bootstrapAction[1]);
+      if (input.action === 'memory_save' || input.action === 'memory_change') {
+        const direct = await authorityInputMutation(res, taskId, input);
+        if (direct === 'handled') { bootstrap.invalidateMemoryCache(); return; }
+        if (nativeRuntime) throw publicError('PRODUCT_AUTHORITY_UNAVAILABLE', 'Long-term memory changes require the current Authority writer; the current native runtime is unavailable.', 503);
+        await startMemoryAuthority(taskId);
+        const started = await authorityInputMutation(res, taskId, input);
+        if (started === 'handled') { bootstrap.invalidateMemoryCache(); return; }
+        throw publicError('PRODUCT_AUTHORITY_UNAVAILABLE', 'The current Authority writer did not accept the long-term memory change.', 503);
+      }
       const localState = await bootstrap.state(taskId);
+      if (['run', 'resume', 'continue'].includes(input.action)
+          && (await bootstrap.state(taskId, { refreshMemories: true })).memory?.stalePreparedPrompt) {
+        throw publicError('MEMORY_BINDING_STALE', 'Long-term memory changed after preparation; prepare the same current run again before starting the Lead.', 409);
+      }
       const offlineMutableInput = ['goal', 'support', 'material'].includes(input.action);
       const localSetupAction = (localState.execution === null && ['goal', 'support', 'material', 'converse'].includes(input.action))
         || (localState.execution !== null && offlineMutableInput);
@@ -384,6 +627,7 @@ const server = http.createServer(async (req, res) => {
         if (direct === 'handled') return;
         /* Only ECONNREFUSED is proof that the fixed local authority is absent. */
         await stopNativeRuntime();
+        await stopMemoryAuthority();
         const afterStop = await authorityInputMutation(res, taskId, input);
         if (afterStop === 'handled') return;
         let value;
@@ -395,6 +639,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ accepted: true, action: input.action, ...value })); return;
       }
       if (input.action === 'authorize_scope') {
+        await stopMemoryAuthority();
         if (localState.execution === null) await stopNativeRuntime();
         const value = await bootstrap.authorizeScope(taskId, { expectedGoalVersionId: input.expectedGoalVersionId,
           projectId: input.projectId, expectedScopeFingerprint: input.expectedScopeFingerprint || input.scopeFingerprint });
@@ -424,6 +669,7 @@ const server = http.createServer(async (req, res) => {
             expectedCandidateSha256: input.expectedCandidateSha256 };
           if (restoreRequested) for (const key of restoreFields) preparationInput[key] = input[key];
         }
+        await stopMemoryAuthority();
         const value = await bootstrap.prepareRun(taskId, preparationInput);
         const policy = await writeRuntimePolicy(taskId, value.prepared.projectId);
         await stopNativeRuntime();
@@ -454,6 +700,7 @@ const server = http.createServer(async (req, res) => {
           aiEnabled: process.env.IRIXI_PRODUCT_ENABLE_AI === '1', modelCalls: 0 } })); return;
       }
       if (input.action === 'select_scope' || input.action === 'scope') {
+        await stopMemoryAuthority();
         if (localState.execution === null || localState.setup?.selectedScope?.current !== true) await stopNativeRuntime();
         const value = await bootstrap.selectScope(taskId, { expectedGoalVersionId: input.expectedGoalVersionId,
           projectId: input.projectId, expectedScopeFingerprint: input.expectedScopeFingerprint || input.scopeFingerprint });
@@ -472,7 +719,14 @@ const server = http.createServer(async (req, res) => {
           && setup.setup?.selectedScope?.current !== true)) {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(setupPublicState(setup))); return;
       }
-      try { return await proxy(req, res); } catch {
+      try { return await proxy(req, res, { transform: (value) => ({ ...value,
+        ...(setup.task?.id === activeTaskId && value.taskId === activeTaskId
+          && setup.task.goalVersionId === value.goalVersionId
+          && ['utility', 'game', 'agent'].includes(setup.task.functionId) ? { functionId: setup.task.functionId } : {}),
+        memory: setup.memory,
+        ...(setup.memory?.stalePreparedPrompt ? { canPrepareRun: true, blockedReason: 'memory_binding_stale',
+          nextStep: '长期记忆在原生准备后发生变化；先按相同目标和项目范围重新准备，再启动 Lead。',
+          native: { ...value.native, actions: { ...value.native?.actions, canRun: false } } } : {}) }) }); } catch {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(JSON.stringify(setupPublicState({ ...setup, status: 'runtime_unavailable', canRun: false, canReconnect: setup.canReconnect === true,
           blockedReason: 'native_runtime_unavailable', runtimeError: 'Native product runtime is unavailable; reconnect preserves the same execution ledger and deadline.' }))); return;
@@ -538,6 +792,7 @@ async function shutdown(signal) {
   const closed = new Promise((resolve) => server.close(resolve));
   server.closeIdleConnections?.();
   await stopNativeRuntime();
+  await stopMemoryAuthority();
   await closed;
   process.exit(signal === 'SIGINT' ? 130 : 143);
 }

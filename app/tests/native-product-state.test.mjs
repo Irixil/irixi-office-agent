@@ -1,9 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createBoundTextareaDraft, nativeActionPayload, nativeCoworkerPresence, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, renderNativeMarkup, safeLocalPath } from '../public/native-product-state.js';
+import { canCreateNativeTask, createBoundTextareaDraft, escapeHtml, nativeActionPayload, nativeCoworkerPresence, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, renderNativeMarkup, safeLocalPath } from '../public/native-product-state.js';
 
 const PLAN_SHA256 = 'a'.repeat(64);
+
+test('办公室职能归属独立于原生执行角色', () => {
+  assert.equal(officeFunctionForStation('researcher'), 'learning');
+  assert.equal(officeFunctionForStation(' Researcher '), 'learning');
+  assert.equal(officeFunctionForStation('writer'), 'utility');
+  assert.equal(officeFunctionForStation('reviewer'), 'game');
+  assert.equal(officeFunctionForStation('steward'), 'agent');
+  assert.equal(officeFunctionForStation('archivist'), 'archive');
+  assert.equal(officeFunctionForStation('developer'), null);
+  assert.equal(officeFunctionForCoworker({ officeRole: 'researcher', role: 'writer', stationRole: 'writer' }), 'learning');
+});
+
+test('把目标等用户文本写入办公室HTML前逐字符转义', () => {
+  assert.equal(escapeHtml('<img src=x onerror="alert(1)">'), '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+});
 
 function projection(overrides = {}) {
   return {
@@ -35,6 +50,8 @@ test('新建原生任务保持空成功条件和边界，不由前端补写', ()
   assert.deepEqual(normalizeNativeTaskDraft({ statement: '目标', successCriteria: ' 条件一 \n\n条件二', boundaries: [' 边界一 ', ''] }), {
     title: '', statement: '目标', successCriteria: ['条件一', '条件二'], boundaries: ['边界一'],
   });
+  assert.equal(normalizeNativeTaskDraft({ statement: '目标', functionId: 'game' }).functionId, 'game');
+  assert.equal(Object.hasOwn(normalizeNativeTaskDraft({ statement: '旧目标', functionId: 'reviewer' }), 'functionId'), false);
 });
 
 test('无任务初始化响应是正常设置态，不要求执行或产品登记', () => {
@@ -54,10 +71,55 @@ test('无任务初始化响应是正常设置态，不要求执行或产品登�
   assert.equal(value.links.projects, '/api/product/projects');
 });
 
+test('原生新任务入口仅在有受控创建链接且没有活动执行时开放', () => {
+  const task = projection({ links: { createTask: '/api/product/tasks' }, execution: null });
+  assert.equal(canCreateNativeTask(task), true);
+  assert.equal(canCreateNativeTask({ ...task, status: 'completed', execution: { id: 'execution-done', phase: 'completed' },
+    native: { actions: { canCancel: false, canPause: false }, sessions: [{ status: 'completed' }] } }), true);
+  assert.equal(canCreateNativeTask({ ...task, status: 'ready_to_export', execution: {
+    id: 'execution-exported', phase: 'executing', stopReason: null,
+    deadline: '2026-10-15T10:26:44.040Z',
+    modelCalls: Array.from({ length: 5 }, () => ({ status: 'completed' })),
+  } }), true);
+  assert.equal(canCreateNativeTask({ ...task, status: 'ready_to_export', execution: {
+    id: 'execution-exported', phase: 'executing', deadline: '2026-10-15T10:26:44.040Z',
+    modelCalls: [{ status: 'running' }],
+  } }), false);
+  assert.equal(canCreateNativeTask({ ...task, status: 'ready_to_export', execution: {
+    id: 'execution-exported', phase: 'executing', stopReason: null, goalVersionId: 'goal-native-1',
+  }, native: { actions: { phase: 'complete', canCancel: true, canPause: true }, sessions: Array.from({ length: 5 }, () => ({ status: 'completed' })) } }), true);
+  assert.equal(canCreateNativeTask({ ...task, execution: { id: 'execution-running', phase: 'executing' } }), false);
+  assert.equal(canCreateNativeTask({ ...task, execution: { id: 'execution-expired', phase: 'executing', deadline: '2020-01-01T00:00:00Z', modelCalls: [] } }), true);
+  assert.equal(canCreateNativeTask({ ...task, execution: { id: 'execution-planned', phase: 'planned' },
+    native: { actions: { canCancel: true, canPause: false }, sessions: [{ status: 'running' }] } }), false);
+  assert.equal(canCreateNativeTask({ ...task, links: {} }), false);
+  assert.equal(canCreateNativeTask(task, 'openoffice-blocked'), false);
+  const terminal = normalizeNativeProductState(projection({ status: 'completed',
+    execution: { id: 'execution-done', phase: 'completed', stopReason: null } }));
+  assert.equal(terminal.links.createTask, '/api/product/tasks');
+  assert.equal(canCreateNativeTask(terminal), true);
+  const staleExportPhase = normalizeNativeProductState(projection({ status: 'ready_to_export',
+    execution: { id: 'execution-exported', phase: 'executing', deadline: '2026-10-15T10:26:44.040Z',
+      modelCalls: Array.from({ length: 5 }, () => ({ status: 'completed' })) } }));
+  assert.equal(staleExportPhase.execution.modelCalls.length, 5);
+  assert.equal(staleExportPhase.links.createTask, '/api/product/tasks');
+  assert.equal(canCreateNativeTask(staleExportPhase), true);
+  const nativeComplete = normalizeNativeProductState(projection({ status: 'ready_to_export',
+    execution: { id: 'run-native-fixture', phase: 'executing', stopReason: null, goalVersionId: 'goal-native-1' },
+    native: { bindingCurrent: true, aiEnabled: false, actions: { phase: 'complete', canCancel: true, canPause: true },
+      sessions: Array.from({ length: 5 }, (_, index) => ({ eventId: `event-${index}`, status: 'completed' })) },
+  }));
+  assert.equal(nativeComplete.native.actions.phase, 'complete');
+  assert.equal(nativeComplete.native.actions.canCancel, true);
+  assert.equal(nativeComplete.native.sessions.length, 5);
+  assert.equal(nativeComplete.links.createTask, '/api/product/tasks');
+  assert.equal(canCreateNativeTask(nativeComplete), true);
+});
+
 test('待选范围与待授权是正常设置态，并保留完整目标和登记项目', () => {
   const task = {
     id: 'task-setup-1', title: '原生设置', goalVersionId: 'goal-setup-1', statement: '接入登记项目',
-    successCriteria: ['保留完整条件'], boundaries: ['设置阶段不执行'],
+    successCriteria: ['保留完整条件'], boundaries: ['设置阶段不执行'], functionId: 'game',
   };
   const project = {
     projectId: 'project-live-1', label: '已登记项目', scopeFingerprint: 'scope-live-1',
@@ -66,10 +128,14 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
   const waiting = normalizeNativeProductState({ task, status: 'waiting_scope', execution: null, registry: null, setup: { projects: [project], selectedProject: null, selectedScope: null } });
   assert.equal(waiting.setupPending, true);
   assert.equal(waiting.setupStatus, 'waiting_scope');
+  assert.equal(waiting.links.createTask, '/api/product/tasks');
+  assert.equal(waiting.functionId, 'game');
+  assert.equal(canCreateNativeTask(waiting), true);
   assert.equal(waiting.officeStatus, 'ready');
   assert.deepEqual(waiting.successCriteria, ['保留完整条件']);
   assert.deepEqual(waiting.setup.projects[0], project);
   assert.equal(nativeProductAsOfficeTask(waiting).goal.versions[0].boundaries[0], '设置阶段不执行');
+  assert.equal(nativeProductAsOfficeTask(waiting).functionId, 'game');
 
   const selected = normalizeNativeProductState({
     task, status: 'waiting_scope_authorization', execution: null, registry: null,
@@ -77,6 +143,7 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
     native: { actions: { canAuthorizeScope: true } },
   });
   assert.equal(selected.setupStatus, 'waiting_scope_authorization');
+  assert.equal(canCreateNativeTask(selected), true);
   assert.equal(selected.setup.selectedScope.current, true);
   assert.equal(selected.native.actions.canAuthorizeScope, true);
   assert.deepEqual(nativeActionPayload(selected, 'authorize_scope', { projectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint }), {
@@ -280,7 +347,7 @@ test('原生同事讨论只接受当前目标历史，并同时受模型能力�
   assert.throws(() => nativeActionPayload({ ...value, current: false, execution: null }, 'chat', { text: '旧绑定', agentId: 'product-senior-developer' }), /执行绑定不完整/);
 });
 
-test('只在原生状态明确给出角色时点亮对应办公室工位', () => {
+test('原生执行角色保留在 roster，不映射成办公室职能工位', () => {
   const unknown = normalizeNativeProductState(projection({ team: { agents: [{ id: 'product-developer', actor: 'developer', name: 'developer', status: 'idle' }] } }));
   const unknownTask = nativeProductAsOfficeTask(unknown);
   assert.equal(unknown.stationRole, null);
@@ -291,7 +358,7 @@ test('只在原生状态明确给出角色时点亮对应办公室工位', () =>
   const developer = normalizeNativeProductState(projection({ actor: 'developer' }));
   const developerTask = nativeProductAsOfficeTask(developer);
   assert.equal(developer.stationRole, 'writer');
-  assert.equal(developerTask.activeRole, 'writer');
+  assert.equal(developerTask.activeRole, null);
   assert.deepEqual(developerTask.workItems, []);
 
   const roster = normalizeNativeProductState(projection({
@@ -302,10 +369,45 @@ test('只在原生状态明确给出角色时点亮对应办公室工位', () =>
   }));
   const rosterTask = nativeProductAsOfficeTask(roster);
   assert.equal(rosterTask.team.agents[0].name, '原生开发员');
+  assert.equal(rosterTask.activeRole, null);
+  assert.equal(rosterTask.activeAgentId, null);
   assert.equal(rosterTask.workItems[0].role, 'writer');
   assert.equal(rosterTask.workItems[0].status, 'running');
   assert.equal(roster.native.actions.canRun, true);
   assert.equal(roster.links.actions, '/api/product/tasks/task-native-1/actions');
+});
+
+test('原生任务职能显式传入，旧任务不按执行阶段分类', () => {
+  assert.equal(normalizeNativeProductState(projection({ functionId: 'utility' })).functionId, 'utility');
+  assert.equal(nativeProductAsOfficeTask(normalizeNativeProductState(projection({ functionId: 'game' }))).functionId, 'game');
+  assert.equal(normalizeNativeProductState(projection({ functionId: 'reviewer' })).functionId, null);
+  assert.equal(normalizeNativeProductState(projection({ functionId: undefined, actor: 'reviewer' })).functionId, null);
+
+  const executingGame = normalizeNativeProductState(projection({
+    functionId: 'utility', status: 'running', actor: 'reviewer',
+    team: [{ id: 'native-reviewer', actor: 'reviewer', name: '实际 Reviewer', status: 'working' }],
+    workItems: [{ id: 'review-work', agentId: 'native-reviewer', title: '审阅', status: 'running' }],
+    native: { bindingCurrent: true, registrySha256: 'registry-1', sessions: [{ agentId: 'native-reviewer', role: 'reviewer', status: 'running' }] },
+  }));
+  const officeTask = nativeProductAsOfficeTask(executingGame);
+  assert.equal(officeTask.activeRole, null);
+  assert.equal(nativeCoworkerPresence(executingGame, officeTask, 'reviewer').active, false);
+  assert.equal(nativeCoworkerPresence(executingGame, officeTask, 'writer').active, true);
+});
+
+test('匹配职能的只读讨论只选择当前团队内已登记的原生 Lead', () => {
+  const lead = { id: 'native-lead', name: '真实 Lead' };
+  const product = { functionId: 'agent', current: true, native: { runAgentId: lead.id, aiEnabled: true, actions: { canChat: true } }, team: [lead] };
+  assert.deepEqual(nativeFunctionChatContext(product, 'agent', true), { functionOwner: true, member: lead, canSend: true });
+  assert.deepEqual(nativeFunctionChatContext(product, 'utility', true), { functionOwner: false, member: null, canSend: false });
+  assert.deepEqual(nativeFunctionChatContext({ ...product, functionId: null }, 'agent', true), { functionOwner: false, member: null, canSend: false });
+  assert.deepEqual(nativeFunctionChatContext({ ...product, team: [] }, 'agent', true), { functionOwner: true, member: null, canSend: false });
+  assert.equal(nativeFunctionChatContext(product, 'learning', true).canSend, false);
+  assert.equal(nativeFunctionChatContext(product, 'archive', true), null);
+  assert.equal(nativeFunctionChatContext({ ...product, current: false }, 'agent', true).canSend, false);
+  assert.equal(nativeFunctionChatContext({ ...product, native: { ...product.native, aiEnabled: false } }, 'agent', true).canSend, false);
+  assert.equal(nativeFunctionChatContext({ ...product, native: { ...product.native, actions: { canChat: false } } }, 'agent', true).canSend, false);
+  assert.equal(nativeFunctionChatContext(product, 'agent', false).canSend, false);
 });
 
 test('审阅通过与确认分别映射为等待确认和允许下载', () => {
@@ -428,6 +530,22 @@ test('原生动作始终绑定当前目标、执行与产品登记，调用输�
   assert.equal(nativeActionPayload(product, 'materials', { name: '资料', text: '正文' }).action, 'materials');
 });
 
+test('记忆保存和修正绑定当前目标，但不附带无关执行与登记字段', () => {
+  const product = normalizeNativeProductState(projection());
+  assert.deepEqual(nativeActionPayload(product, 'memory_save', {
+    scopeType: 'global', kind: 'preference', title: '语言', text: '简短中文。',
+  }), {
+    scopeType: 'global', kind: 'preference', title: '语言', text: '简短中文。',
+    action: 'memory_save', expectedGoalVersionId: 'goal-native-1',
+  });
+  assert.deepEqual(nativeActionPayload(product, 'memory_change', {
+    memoryId: 'memory-abc123', expectedRevision: 2, operation: 'deactivate',
+  }), {
+    memoryId: 'memory-abc123', expectedRevision: 2, operation: 'deactivate',
+    action: 'memory_change', expectedGoalVersionId: 'goal-native-1',
+  });
+});
+
 test('失效绑定或未知动作不能形成原生动作载荷', () => {
   const current = normalizeNativeProductState(projection());
   const stale = normalizeNativeProductState(projection({ current: false }));
@@ -526,7 +644,7 @@ test('原生轮询复用规范化DOM并只保留同绑定的有效范围选择�
     value: 'agent-office-native-server',
     options: [
       { value: 'agent-office-native-server', dataset: { scopeFingerprint: 'agent-scope', scopeCurrent: 'true' } },
-      { value: 'sample-project', dataset: { scopeFingerprint: fingerprint, scopeCurrent: 'true' } },
+      { value: 'sample-article-project', dataset: { scopeFingerprint: fingerprint, scopeCurrent: 'true' } },
     ],
     get selectedOptions() { return this.options.filter((option) => option.value === this.value); },
     focus() { this.focused = true; },
@@ -557,12 +675,12 @@ test('原生轮询复用规范化DOM并只保留同绑定的有效范围选择�
 
   const firstMarkup = markup('等待资格', 'scope-v1', true);
   assert.equal(renderNativeMarkup(root, firstMarkup, 'task/goal/catalog-v1'), true);
-  scope.value = 'sample-project';
+  scope.value = 'sample-article-project';
   const oldButton = button;
   const enabledMarkup = markup('可以选择', 'scope-v1', false);
   assert.equal(renderNativeMarkup(root, enabledMarkup, 'task/goal/catalog-v1', oldButton), true);
   assert.equal(html.includes('<button data-native-focus-key="scope-submit">'), true);
-  assert.equal(scope.value, 'sample-project');
+  assert.equal(scope.value, 'sample-article-project');
   assert.equal(button.focused, true);
   assert.deepEqual(button.focusOptions, { preventScroll: true });
   assert.equal(root.innerHTML, root.dataset.nativeRenderDOM);

@@ -6,6 +6,7 @@ import type { GatewayEvent } from "@office/shared";
 import {
   assertProductProjection,
   assertProductWorkspace,
+  isAllowedAuthorityUrl,
   loadProductProjectRegistry,
   productProjectionMatches,
   productRegistrySha256,
@@ -58,6 +59,19 @@ export type IrixiEventBinding = {
 };
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+function isValidLeadPlanText(text: unknown): text is string {
+  if (typeof text !== "string" || !text.trim() || text.includes("\u0000") || Buffer.byteLength(text) > 40_000) return false;
+  const markers = [...text.matchAll(/\[\/?PLAN\]/g)];
+  if (markers.length !== 2 || markers[0][0] !== "[PLAN]" || markers[1][0] !== "[/PLAN]") return false;
+  const opening = markers[0].index!;
+  const closing = markers[1].index!;
+  const lineStart = (index: number) => index === 0 || text[index - 1] === "\n";
+  const lineEnd = (index: number, length: number) => index + length === text.length || text[index + length] === "\n"
+    || (text[index + length] === "\r" && text[index + length + 1] === "\n");
+  if (!lineStart(opening) || !lineEnd(opening, 6) || !lineStart(closing) || !lineEnd(closing, 7)) return false;
+  const body = text.slice(opening + 6, closing).replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  return Boolean(body.trim());
+}
 const PRODUCT_LEARNING_AUTHORITY_ROUTES = new Set([
   "GET /v1/intake",
   "GET /v1/learning/client-state",
@@ -461,10 +475,8 @@ export function createIrixiIntegration() {
     throw new Error("Product registry authority or task does not match the configured Irixi endpoint");
   }
   const authorityTaskId = expectedTaskId;
+  if (!isAllowedAuthorityUrl(rawUrl)) throw new Error("Irixi authority must use an explicit HTTP loopback origin on a non-privileged port");
   const endpoint = new URL(rawUrl);
-  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.port !== "3869" || endpoint.pathname !== "/") {
-    throw new Error("Irixi authority must use the fixed loopback endpoint http://127.0.0.1:3869/");
-  }
   const taskBindings = new Map<string, IrixiEventBinding>();
   const taskActors = new Map<string, "lead" | "developer" | "reviewer">();
   const reviewContracts = new Map<string, NonNullable<Projection["confirmedContract"]>>();
@@ -689,8 +701,7 @@ export function createIrixiIntegration() {
       const value = await response.json();
       if (!response.ok || value?.taskId !== expectedTaskId || typeof value.goalVersionId !== "string"
         || typeof value.executionId !== "string" || typeof value.registrySha256 !== "string"
-        || typeof value.agentId !== "string" || typeof value.planText !== "string"
-        || !value.planText.startsWith("[PLAN]\n") || !value.planText.trimEnd().endsWith("[/PLAN]")
+        || typeof value.agentId !== "string" || !isValidLeadPlanText(value.planText)
         || sha256(value.planText) !== value.planSha256) {
         throw new Error(typeof value?.error === "string" ? value.error : "Irixi returned a malformed saved Lead plan");
       }

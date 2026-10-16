@@ -14,6 +14,15 @@ const STATUS_MAP = {
   completed: 'completed',
 };
 const SHA256 = /^[a-f0-9]{64}$/;
+const OFFICE_FUNCTION_IDS = new Set(['utility', 'game', 'agent']);
+const OFFICE_FUNCTION_BY_STATION = {
+  researcher: 'learning', writer: 'utility', reviewer: 'game', steward: 'agent',
+  archivist: 'archive', coordinator: 'coordination',
+};
+
+export function escapeHtml(value) {
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
 
 export function nativeReviewBinding(product) {
   const artifact = product?.artifact;
@@ -138,6 +147,14 @@ const ACTOR_ROLE = {
   coordinator: 'coordinator',
 };
 
+export function officeFunctionForStation(value) {
+  return OFFICE_FUNCTION_BY_STATION[String(value || '').trim().toLowerCase()] || null;
+}
+
+export function officeFunctionForCoworker(detail) {
+  return officeFunctionForStation(detail?.officeRole || detail?.stationRole || detail?.role);
+}
+
 function requiredString(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`OpenOffice 状态缺少 ${name}。`);
   return value.trim();
@@ -148,7 +165,7 @@ function optionalString(value) {
 }
 
 export function normalizeNativeTaskDraft(input = {}) {
-  return {
+  const draft = {
     title: typeof input.title === 'string' ? input.title.trim() : '',
     statement: typeof input.statement === 'string' ? input.statement.trim() : '',
     successCriteria: typeof input.successCriteria === 'string'
@@ -158,6 +175,9 @@ export function normalizeNativeTaskDraft(input = {}) {
       ? input.boundaries.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
       : Array.isArray(input.boundaries) ? input.boundaries.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : [],
   };
+  const functionId = typeof input.functionId === 'string' ? input.functionId.trim() : '';
+  if (OFFICE_FUNCTION_IDS.has(functionId)) draft.functionId = functionId;
+  return draft;
 }
 
 function stationRoleFor(value) {
@@ -282,6 +302,7 @@ function normalizeNative(raw) {
     canRun: false, canReview: false, canConfirm: false, canPreview: false, canGoal: false, canScope: false, canAuthorizeScope: false, canPause: false,
     canCancel: false, canChat: false, canInstructions: false, canMaterials: false, canInspectDiff: false, canRevise: false, canApprovePlan: false,
   };
+  actions.phase = optionalString(raw.actions?.phase);
   actions.canContinue = raw.actions?.canResume === true || raw.actions?.canContinue === true;
   actions.canResume = raw.actions?.canResume === true;
   actions.resumeReason = optionalString(raw.actions?.resumeReason);
@@ -319,6 +340,30 @@ export function safeLocalPath(value) {
   } catch {
     return null;
   }
+}
+
+function nativeExecutionActive(product) {
+  const execution = product?.execution;
+  const activeCall = execution?.modelCalls?.some((call) => ['reserved', 'running', 'started', 'in_progress'].includes(call?.status))
+    || execution?.calls?.some((call) => ['reserved', 'running', 'started', 'in_progress'].includes(call?.status));
+  const activeSession = product?.native?.sessions?.some((session) => ['running', 'in_progress', 'working'].includes(session.status));
+  if (activeCall || activeSession) return true;
+  if (['complete', 'completed', 'idle'].includes(product?.native?.actions?.phase)) return false;
+  if (['running', 'executing', 'in_progress'].includes(product?.native?.actions?.phase)) return true;
+
+  // Authority may retain an old execution phase after the task has reached a
+  // user-facing terminal state. Prefer live task/call state over that phase.
+  if (['ready_to_export', 'completed', 'failed', 'blocked', 'cancelled', 'archived'].includes(product?.status)) return false;
+  const deadline = Date.parse(execution?.deadline || '');
+  if (Number.isFinite(deadline) && deadline <= Date.now()) return false;
+  return Boolean(execution?.id && (
+    ['running', 'executing', 'in_progress'].includes(execution.phase)
+    || ['running', 'in_progress'].includes(product.status)
+  ));
+}
+
+export function canCreateNativeTask(product, backendMode = 'openoffice') {
+  return backendMode === 'openoffice' && Boolean(safeLocalPath(product?.links?.createTask)) && !nativeExecutionActive(product);
 }
 
 function nativeTaskPath(value) {
@@ -384,6 +429,7 @@ export function normalizeNativeProductState(raw) {
         patch: null,
       },
       officeStatus: 'idle',
+      memory: { entries: [], projectScopeCurrent: false, indexAvailable: raw.memory?.indexAvailable === true },
     };
   }
   if (raw.task && typeof raw.task === 'object' && ['waiting_scope', 'waiting_scope_authorization', 'ready_to_run', 'runtime_starting', 'runtime_unavailable'].includes(raw.status)) {
@@ -398,6 +444,7 @@ export function normalizeNativeProductState(raw) {
       setupStatus: status,
       taskId,
       title: optionalString(raw.task.title) || `OpenOffice 任务 ${taskId}`,
+      functionId: OFFICE_FUNCTION_IDS.has(raw.task.functionId) ? raw.task.functionId : null,
       goalStatement: requiredString(raw.task.statement, 'task.statement'),
       successCriteria: Array.isArray(raw.task.successCriteria) ? raw.task.successCriteria.filter((item) => typeof item === 'string') : [],
       boundaries: Array.isArray(raw.task.boundaries) ? raw.task.boundaries.filter((item) => typeof item === 'string') : [],
@@ -423,6 +470,8 @@ export function normalizeNativeProductState(raw) {
       stationRole: null,
       execution: raw.execution && typeof raw.execution === 'object' ? {
         id: optionalString(raw.execution.id), phase: optionalString(raw.execution.phase), stopReason: optionalString(raw.execution.stopReason),
+        deadline: optionalString(raw.execution.deadline),
+        modelCalls: Array.isArray(raw.execution.modelCalls) ? raw.execution.modelCalls.map((call) => ({ status: optionalString(call?.status) })) : [],
       } : null,
       registry: raw.registry && typeof raw.registry === 'object' ? {
         status: optionalString(raw.registry.status), projectId: optionalString(raw.registry.projectId),
@@ -440,7 +489,7 @@ export function normalizeNativeProductState(raw) {
       canPrepareRun: raw.canPrepareRun === true,
       blockedReason: optionalString(raw.blockedReason),
       links: {
-        createTask: null,
+        createTask: safeLocalPath(raw.links?.createTask) || (!nativeExecutionActive(raw) ? '/api/product/tasks' : null),
         projects: safeLocalPath(raw.links?.projects) || '/api/product/projects',
         nativeTask: null,
         actions: safeLocalPath(raw.links?.actions) || `/api/product/tasks/${encodeURIComponent(taskId)}/actions`,
@@ -448,6 +497,7 @@ export function normalizeNativeProductState(raw) {
         patch: null,
       },
       officeStatus: status === 'runtime_unavailable' ? 'partial' : 'ready',
+      memory: normalizeMemory(raw.memory),
     };
   }
   const taskId = requiredString(raw.taskId, 'taskId');
@@ -487,6 +537,7 @@ export function normalizeNativeProductState(raw) {
   const product = {
     taskId,
     title: optionalString(raw.title) || `OpenOffice 任务 ${taskId}`,
+    functionId: OFFICE_FUNCTION_IDS.has(raw.functionId || raw.task?.functionId) ? raw.functionId || raw.task.functionId : null,
     goalStatement: optionalString(raw.goalStatement) || 'OpenOffice 尚未提供目标正文。',
     successCriteria: Array.isArray(raw.successCriteria) ? raw.successCriteria.filter((item) => typeof item === 'string') : [],
     boundaries: Array.isArray(raw.boundaries) ? raw.boundaries.filter((item) => typeof item === 'string') : [],
@@ -502,6 +553,8 @@ export function normalizeNativeProductState(raw) {
       id: optionalString(raw.execution.id),
       phase: optionalString(raw.execution.phase),
       stopReason: optionalString(raw.execution.stopReason),
+      deadline: optionalString(raw.execution.deadline),
+      modelCalls: Array.isArray(raw.execution.modelCalls) ? raw.execution.modelCalls.map((call) => ({ status: optionalString(call?.status) })) : [],
     } : null,
     artifact: raw.artifact && typeof raw.artifact === 'object' ? {
       id: optionalString(raw.artifact.id),
@@ -528,6 +581,9 @@ export function normalizeNativeProductState(raw) {
     team,
     workItems: normalizeWorkItems(raw.workItems),
     conversations: normalizeConversations(raw.conversations),
+    memory: normalizeMemory(raw.memory),
+    canPrepareRun: raw.canPrepareRun === true,
+    blockedReason: optionalString(raw.blockedReason),
     native,
     product: raw.product && typeof raw.product === 'object' ? {
       projectId: optionalString(raw.product.projectId),
@@ -551,6 +607,7 @@ export function normalizeNativeProductState(raw) {
       maxDurationMs: Number.isFinite(raw.product.native?.maxDurationMs) ? raw.product.native.maxDurationMs : null,
     } : null,
     links: {
+      createTask: safeLocalPath(raw.links?.createTask) || (!nativeExecutionActive(raw) ? '/api/product/tasks' : null),
       nativeTask: nativeTaskPath(raw.links?.nativeTask),
       actions: safeLocalPath(raw.links?.actions),
       candidate: safeLocalPath(raw.links?.candidate),
@@ -573,18 +630,19 @@ export function nativeProductAsOfficeTask(product) {
     const role = item.role || matching?.stationRole || null;
     return role ? [{ ...item, role, agentId: matching?.id || item.agentId || null }] : [];
   });
-  const runningWork = product.current && product.officeStatus === 'running' ? workItems.find((item) => item.status === 'running') : null;
-  const workingAgent = product.current && product.officeStatus === 'running' ? roster.find((agent) => agent.status === 'working') : null;
-  const activeRole = product.current && product.officeStatus === 'running' ? product.stationRole || runningWork?.role || workingAgent?.stationRole || null : null;
-  const activeAgent = activeRole ? roster.find((agent) => agent.stationRole === activeRole) : null;
+  // Native execution identities are displayed from the native roster. Do not
+  // project an executor phase onto one of the office-function coworkers.
+  const activeRole = null;
+  const activeAgent = null;
   return {
     id: product.taskId,
     title: product.title,
+    functionId: OFFICE_FUNCTION_IDS.has(product.functionId) ? product.functionId : null,
     type: 'project',
     provider: 'openoffice',
     status: product.officeStatus,
     activeRole,
-    activeAgentId: activeAgent?.id || runningWork?.agentId || null,
+    activeAgentId: null,
     updatedAt: null,
     goal: {
       activeVersionId: product.goalVersionId,
@@ -619,9 +677,25 @@ export function nativeCoworkerPresence(product, officeTask, role) {
   const member = members.find((agent) => agent?.stationRole === role || agent?.roleKey === role) || null;
   const matchingWork = workItems.filter((item) => item?.role === role || (member?.id && item?.agentId === member.id));
   const workItem = matchingWork.find((item) => item.status === 'running') || matchingWork.at(-1) || null;
-  const active = product?.current === true && officeTask?.status === 'running'
-    && (officeTask.activeRole === role || member?.status === 'working' || workItem?.status === 'running');
+  const ownsFunction = OFFICE_FUNCTION_BY_STATION[role] === product?.functionId;
+  const active = product?.current === true && officeTask?.status === 'running' && ownsFunction;
   return { member, workItem, active };
+}
+
+export function nativeFunctionDiscussionMember(product, functionId) {
+  if (!['utility', 'game', 'agent'].includes(functionId) || product?.functionId !== functionId) return null;
+  const leadId = product?.native?.runAgentId;
+  if (typeof leadId !== 'string' || !leadId) return null;
+  return product.team.find((agent) => agent.id === leadId) || null;
+}
+
+export function nativeFunctionChatContext(product, functionId, actionBound) {
+  if (functionId === 'learning') return { functionOwner: false, member: null, canSend: false };
+  if (!['utility', 'game', 'agent'].includes(functionId)) return null;
+  const functionOwner = product?.functionId === functionId;
+  const member = functionOwner ? nativeFunctionDiscussionMember(product, functionId) : null;
+  return { functionOwner, member, canSend: Boolean(functionOwner && member?.id && product.current === true
+    && product.native?.aiEnabled === true && product.native?.actions.canChat === true && actionBound === true) };
 }
 
 export function normalizeNativeCandidate(raw, product) {
@@ -658,8 +732,27 @@ export function normalizeNativeCandidate(raw, product) {
   };
 }
 
+function normalizeMemory(raw) {
+  const entries = Array.isArray(raw?.entries) ? raw.entries.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || !Number.isInteger(entry.revision)
+        || !['preference', 'convention'].includes(entry.kind) || !['global', 'project'].includes(entry.scopeType)
+        || !['active', 'deactivated', 'deleted'].includes(entry.status)) return [];
+    return [{ id: entry.id, revision: entry.revision, kind: entry.kind, scopeType: entry.scopeType,
+      title: optionalString(entry.title) || '未命名记忆', text: optionalString(entry.text) || '', status: entry.status,
+      ownerTaskId: optionalString(entry.ownerTaskId), source: entry.source && typeof entry.source === 'object' ? {
+        type: optionalString(entry.source.type), taskId: optionalString(entry.source.taskId), eventId: optionalString(entry.source.eventId), revision: entry.source.revision,
+      } : null }];
+  }) : [];
+  const references = Array.isArray(raw?.references) ? raw.references.flatMap((item) => item && typeof item.id === 'string' && Number.isInteger(item.revision)
+    ? [{ id: item.id, revision: item.revision, title: optionalString(item.title) || item.id,
+      ownerTaskId: optionalString(item.ownerTaskId), sourceEventId: optionalString(item.sourceEventId) }] : []) : [];
+  return { entries, references, projectScopeCurrent: raw?.projectScopeCurrent === true,
+    indexAvailable: raw?.indexAvailable === true, indexDegraded: optionalString(raw?.indexDegraded),
+    currentForExecution: raw?.currentForExecution !== false, stalePreparedPrompt: raw?.stalePreparedPrompt === true };
+}
+
 export function nativeActionPayload(product, action, input = {}) {
-  const setupActions = ['goal', 'instructions', 'materials', 'scope', 'authorize_scope', 'prepare_run'];
+  const setupActions = ['goal', 'instructions', 'materials', 'scope', 'authorize_scope', 'prepare_run', 'memory_save', 'memory_change'];
   const executionActions = ['pause', 'cancel', 'continue', 'run', 'approve_plan', 'review', 'revise', 'preview', 'chat'];
   if (![...setupActions, ...executionActions].includes(action)) throw new Error('不支持这个原生任务动作。');
   if (!product?.authorityCurrent || !product.goalVersionId) throw new Error('当前原生任务目标绑定不完整。');
@@ -672,8 +765,8 @@ export function nativeActionPayload(product, action, input = {}) {
     expectedGoalVersionId: product.goalVersionId,
   };
   const registrySha256 = product.product?.registrySha256 || product.registry?.registrySha256 || null;
-  if (action !== 'prepare_run' && product.execution?.id) payload.expectedExecutionId = product.execution.id;
-  if (action !== 'prepare_run' && registrySha256) payload.expectedRegistrySha256 = registrySha256;
+  if (action !== 'prepare_run' && !['memory_save', 'memory_change'].includes(action) && product.execution?.id) payload.expectedExecutionId = product.execution.id;
+  if (action !== 'prepare_run' && !['memory_save', 'memory_change'].includes(action) && registrySha256) payload.expectedRegistrySha256 = registrySha256;
   if (['review', 'revise', 'preview'].includes(action)) {
     if (!product.artifact?.id || product.artifact.version === null || product.artifact.version === undefined) throw new Error('当前原生候选版本绑定不完整。');
     payload.expectedArtifactId = product.artifact.id;

@@ -56,6 +56,12 @@ The upstream hard-ceiling behavior that force-completes work was deliberately no
 - Phaser `3.80.1`, MIT, used for the local pixel office scene. License: `third_party/Phaser-MIT.txt`.
 - EasyStar.js `0.4.4`, MIT, used for collision-aware local pathfinding. License: `third_party/EasyStar-MIT.txt`.
 
+## Optional local memory retrieval
+
+- Upstream: [XERJ](https://github.com/xerj-org/xerj), fixed local runtime version `1.0.0-rc.95`.
+- The Desktop adapter can connect to a user-installed local XERJ service for lexical retrieval in an explicitly selected namespace. If it is unavailable, local memory remains available without XERJ retrieval.
+- No XERJ executable, index, credentials, or user data is included in this repository. The upstream Apache-2.0 license text is retained at `third_party/XERJ-Apache-2.0.txt`.
+
 ## Noto Sans SC document font
 
 - Upstream: <https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc>
