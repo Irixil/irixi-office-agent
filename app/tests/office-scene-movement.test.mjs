@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import EasyStar from 'easystarjs';
 import test from 'node:test';
 
-import { footToCell, pointToSegmentDistance, worldToCell } from '../public/office-geometry.js';
+import { canStepWithoutCornerCutting, footToCell, pointToSegmentDistance, worldToCell } from '../public/office-geometry.js';
 
 globalThis.Phaser = {
   Scene: class {},
@@ -12,6 +13,7 @@ globalThis.Phaser = {
   Input: { Keyboard: { KeyCodes: { UP: 38, DOWN: 40, LEFT: 37, RIGHT: 39 } } },
   Geom: { Rectangle: class { constructor(...args) { this.args = args; } } },
 };
+globalThis.EasyStar = EasyStar;
 
 const dispatched = [];
 const windowListeners = [];
@@ -31,8 +33,11 @@ globalThis.CustomEvent = class {
   constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
 };
 
-const { alignedLocalActionEnd, coworkerAnimationSpec, coworkerHitArea, coworkerLocalActions, coworkerTransitionSafeFrames, createOfficeBridge, isEditableTarget, normalizeRoomContract, OfficeScene, PEOPLE, phaserAnimationFrames, seatedV6Contract, stewardBookOwner, stewardRouteLegs, stewardV6Contract, TILE } = await import(new URL('../public/office-game.js?movement-regression', import.meta.url));
-const ROOM = normalizeRoomContract(JSON.parse(readFileSync(new URL('../../art/office-playable-v1/concept-runtime-v4/manifest.json', import.meta.url), 'utf8')));
+const { alignedLocalActionEnd, coworkerAnimationSpec, coworkerHitArea, coworkerLocalActions, coworkerTransitionSafeFrames, createOfficeBridge, isEditableTarget, normalizeRoomContract, OfficeScene, PEOPLE, phaserAnimationFrames, scaledCoworkerHitArea, SEATED_ROLE_POSITION_CORRECTION, SEATED_ROLE_RENDER_SCALE, seatedBodyRenderOffset, seatedRoleBodyRenderOffset, seatedV6Contract, stewardBookOwner, stewardRouteLegs, stewardV6Contract, TILE } = await import(new URL('../public/office-game.js?movement-regression', import.meta.url));
+const BASE_ROOM = JSON.parse(readFileSync(new URL('../../art/office-playable-v1/concept-runtime-v4/manifest.json', import.meta.url), 'utf8'));
+const FLOOR_EXTENSION = JSON.parse(readFileSync(new URL('../../art/office-playable-v1/concept-runtime-v5/manifest.json', import.meta.url), 'utf8'));
+const ROOM = normalizeRoomContract(BASE_ROOM);
+const EXTENDED_ROOM = normalizeRoomContract(BASE_ROOM, FLOOR_EXTENSION);
 const COWORKERS = JSON.parse(readFileSync(new URL('../../art/office-playable-v1/concept-runtime-v4/characters/coworkers/manifest.json', import.meta.url), 'utf8'));
 const V6_ROOT = new URL('../../art/office-playable-v1/motion-repair-v6/', import.meta.url);
 const V6_INTEGRATION = JSON.parse(readFileSync(new URL('integration-manifest.json', V6_ROOT), 'utf8'));
@@ -44,13 +49,33 @@ const CONTINUITY_ROOT = new URL('continuity-repair-v3/', REST_ROOT);
 const CONTINUITY_INTEGRATION = JSON.parse(readFileSync(new URL('integration-manifest.json', CONTINUITY_ROOT), 'utf8'));
 const CONTINUITY_TRANSITIONS = Object.fromEntries(Object.entries(CONTINUITY_INTEGRATION.transitions).map(([role, binding]) => [role, JSON.parse(readFileSync(new URL(binding.manifest, CONTINUITY_ROOT), 'utf8'))]));
 const ARCHIVIST_REST_OVERRIDE = JSON.parse(readFileSync(new URL(CONTINUITY_INTEGRATION.archivistRestOverride.manifest, CONTINUITY_ROOT), 'utf8'));
+const REVIEWER_SLEEP_TRANSITION = JSON.parse(readFileSync(new URL('../../art/office-playable-v1/rest-states-v6/continuity-repair-v4/reviewer-sleep-transition-v2/manifest.json', import.meta.url), 'utf8'));
 const MOLE_MANIFEST = JSON.parse(readFileSync(new URL(V6_INTEGRATION.stewardMole.manifest, V6_ROOT), 'utf8'));
 const MOLE_ROUTE = JSON.parse(readFileSync(new URL(V6_INTEGRATION.stewardMole.routeContract, V6_ROOT), 'utf8'));
 const MOLE_ACTIONS = Object.fromEntries(MOLE_MANIFEST.actions.map(({ action, manifest }) => [action, JSON.parse(readFileSync(new URL(`steward-mole/${manifest}`, V6_ROOT), 'utf8'))]));
 const OFFICE_SOURCE = readFileSync(new URL('../public/office-game.js', import.meta.url), 'utf8');
+const APP_SOURCE = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+const INDEX_SOURCE = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
 test('下载触发 beforeunload 时不会销毁仍在显示的办公室场景', () => {
   assert.equal(windowListeners.some(({ type }) => type === 'beforeunload'), false);
+});
+
+test('办公室保留五个角色身份并显示指定的职能名称', () => {
+  assert.deepEqual(PEOPLE.map(({ role }) => role), ['researcher', 'writer', 'reviewer', 'steward', 'archivist']);
+  assert.deepEqual(PEOPLE.slice(1).map(({ name }) => name), ['小鼠工具开发同事', '龙猫小游戏开发同事', '鼹鼠Agent开发同事', '花枝鼠档案记忆同事']);
+  assert.match(APP_SOURCE, /utility:\s*\{ title: '小工具', action: '交代小工具需求'/);
+  assert.match(APP_SOURCE, /game:\s*\{ title: '小游戏', action: '交代小游戏需求'/);
+  assert.match(APP_SOURCE, /agent:\s*\{ title: 'Agent', action: '交代 Agent 需求'/);
+});
+
+test('职能分类只在提交原生表单时发送，取消会清空临时分类且目标内容经HTML转义', () => {
+  assert.match(INDEX_SOURCE, /<input type="hidden" name="functionId" value="">/);
+  assert.match(INDEX_SOURCE, /<button class="secondary-button" type="button" data-close-dialog>取消<\/button>/);
+  assert.match(APP_SOURCE, /\$\('#task-dialog'\)\.addEventListener\('close', \(\) => \{\s*\$\('#task-form'\)\.reset\(\);\s*setTaskFunction\(''\);\s*\}\)/);
+  assert.match(APP_SOURCE, /api\(state\.nativeProduct\.links\.createTask, \{ method: 'POST', body: JSON\.stringify\(input\) \}\)/);
+  assert.match(APP_SOURCE, /delete body\.functionId/);
+  assert.match(APP_SOURCE, /\$\{esc\(statusText\)\}/);
 });
 
 function movementScene() {
@@ -71,11 +96,12 @@ function movementScene() {
   let killed = 0;
   scene.updateLocalCoworkers = () => {};
   scene.inputLocked = () => false;
+  scene.scale = { width: 1440, height: 810 };
   scene.cursors = { left: { isDown: false }, right: { isDown: false }, up: { isDown: false }, down: { isDown: false } };
   scene.keys = { A: { isDown: false }, D: { isDown: false }, W: { isDown: false }, S: { isDown: false } };
   scene.grid = { isWalkable: () => true };
   scene.player = player;
-  scene.cameras = { main: { zoom: 1 } };
+  scene.cameras = { main: { zoom: 1, centerOn(x, y) { this.center = [x, y]; } } };
   scene.destinationMarker = { visible: false, setVisible(value) { this.visible = value; return this; } };
   scene.tweens = {
     add(config) { tween = config; return config; },
@@ -145,6 +171,136 @@ test('最后一步真实完成后才同步最终像素、idle 和 arrival', () =
   assert.equal(host.dataset.walkTarget, '');
   assert.equal(dispatched.length, 1);
   assert.equal(dispatched[0].type, 'irixi:arrival');
+});
+
+test('相机只留出水平步进余量并跟随玩家，点击仍通过 Phaser 世界坐标换算', async () => {
+  const scene = new OfficeScene();
+  const camera = {
+    zoom: 1,
+    setBounds(...bounds) { this.bounds = bounds; return this; },
+    setZoom(value) { this.zoom = value; return this; },
+    centerOn(x, y) { this.center = [x, y]; return this; },
+    getWorldPoint(x, y) { this.pointerWorld = [x + 64, y]; return { x: x + 64, y }; },
+  };
+  scene.room = ROOM;
+  scene.scale = { width: 1440, height: 810 };
+  scene.cameras = { main: camera };
+  scene.player = { x: 930, y: 500 };
+  scene.fitCamera();
+  assert.deepEqual(camera.bounds, [0, 0, 1440, 810]);
+  assert.equal(camera.zoom, 1440 / (1440 - TILE * 4));
+  assert.ok(Math.abs(camera.center[0] - 784) < 1e-9 && Math.abs(camera.center[1] - 441) < 1e-9);
+
+  scene.scale = { width: 536, height: 520 };
+  scene.fitCamera();
+  assert.equal(camera.zoom, 520 / 810);
+  assert.equal(520 / camera.zoom, 810);
+  assert.ok(Math.abs(536 / camera.zoom - 536 * 810 / 520) < 1e-9);
+  assert.deepEqual(camera.center, [930, 405]);
+
+  scene.inputLocked = () => false;
+  scene.grid = { isWalkable: () => false };
+  scene.isFurniturePoint = () => false;
+  await scene.walkToPointer({ x: 400, y: 320 });
+  assert.deepEqual(camera.pointerWorld, [464, 320]);
+  assert.equal(host.dataset.lastPointerCell, '14,10');
+
+  scene.room = EXTENDED_ROOM;
+  scene.scale = { width: 1440, height: 810 };
+  scene.player = { x: 900, y: 1200 };
+  scene.fitCamera();
+  assert.deepEqual(camera.bounds, [0, 0, 1568, 1620]);
+  assert.equal(camera.center[1], 1200, 'camera follows the player vertically inside the expanded map');
+  assert.ok(810 / camera.zoom < EXTENDED_ROOM.height, 'camera never zooms out to show both floors at once');
+  assert.equal(camera.zoom, 1440 / (1440 - TILE * 4), 'camera scale is based on one floor, not the expanded world bounds');
+  scene.player.y = 100;
+  scene.centerCameraOnPlayer();
+  assert.ok(Math.abs(camera.center[1] - 369) < 1e-9, 'camera clamps to the outer world edge');
+  scene.player.x = 1550;
+  scene.centerCameraOnPlayer();
+  assert.equal(camera.center[0], 1568 - 1440 / camera.zoom / 2, 'upper-floor camera stays inside its image coverage');
+  scene.player.y = 1200;
+  scene.centerCameraOnPlayer();
+  assert.equal(camera.center[0], 1440 - 1440 / camera.zoom / 2, 'ground-floor camera does not reveal the uncovered union margin');
+});
+
+test('同一世界中的楼上、原楼梯和一楼连通，碰撞与深度锚点共享平移坐标', async () => {
+  assert.deepEqual([EXTENDED_ROOM.width, EXTENDED_ROOM.height, EXTENDED_ROOM.floorWidth, EXTENDED_ROOM.groundFloorY], [1568, 1620, 1440, 810]);
+  assert.deepEqual(EXTENDED_ROOM.workstations.reviewer.home, [1195, 1355]);
+  assert.deepEqual(EXTENDED_ROOM.workstations.archivist.home, [1180, 1549]);
+  assert.equal(EXTENDED_ROOM.backgroundLayers[0].key, 'office-upper-gallery');
+  assert.equal(EXTENDED_ROOM.backgroundLayers[0].x, 128);
+  assert.equal(EXTENDED_ROOM.backgroundLayers[0].x + EXTENDED_ROOM.backgroundLayers[0].width, EXTENDED_ROOM.width);
+  assert.equal(EXTENDED_ROOM.backgroundLayers[1].y, 810);
+  assert.deepEqual(EXTENDED_ROOM.blockedRects.find(({ id }) => id === 'upper-stair-railing-inner').rect, [1208, 610, 100, 200]);
+
+  const scene = new OfficeScene();
+  scene.room = EXTENDED_ROOM;
+  const map = scene.makeCollisionMap();
+  const walkable = (x, y) => y >= 0 && y < map.length && x >= 0 && x < map[0].length && map[y][x] === 0;
+  const spawn = footToCell(...EXTENDED_ROOM.spawn, TILE);
+  scene.playerCell = spawn;
+  scene.grid = { isWalkable: walkable };
+  const upperGallery = worldToCell(848, 390, TILE);
+  const queue = [spawn];
+  const reached = new Set([`${spawn.x},${spawn.y}`]);
+  while (queue.length) {
+    const cell = queue.shift();
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const x = cell.x + dx; const y = cell.y + dy;
+      if (!walkable(x, y) || (dx && dy && (!walkable(cell.x + dx, cell.y) || !walkable(cell.x, cell.y + dy))) || reached.has(`${x},${y}`)) continue;
+      reached.add(`${x},${y}`); queue.push({ x, y });
+    }
+  }
+  assert.ok(reached.has(`${upperGallery.x},${upperGallery.y}`), 'main floor can be reached from the spawn through the existing staircase');
+  assert.ok(walkable(...Object.values(worldToCell(1168, 800, TILE))), 'upper carpet exit is walkable after its measured horizontal offset');
+  assert.equal(walkable(...Object.values(worldToCell(16, 400, TILE))), false, 'the empty margin before the translated upper image remains non-walkable');
+  for (const point of FLOOR_EXTENSION.world.stairConnection.walkableCenterline) {
+    const cell = footToCell(...point, TILE);
+    assert.ok(walkable(cell.x, cell.y) && reached.has(`${cell.x},${cell.y}`), `stair foot point ${point.join(',')} is on the connected walk surface`);
+  }
+  const finder = new EasyStar.js();
+  finder.setGrid(map);
+  finder.setAcceptableTiles([0]);
+  finder.enableDiagonals();
+  finder.disableCornerCutting();
+  finder.setIterationsPerCalculation(600);
+  finder.enableSync();
+  let easyStarPath = null;
+  finder.findPath(spawn.x, spawn.y, upperGallery.x, upperGallery.y, (path) => { easyStarPath = path; });
+  finder.calculate();
+  assert.ok(easyStarPath?.length, 'the installed EasyStar returns an actual route between floors');
+  for (let index = 1; index < easyStarPath.length; index += 1) {
+    const previous = easyStarPath[index - 1]; const next = easyStarPath[index];
+    const dx = next.x - previous.x; const dy = next.y - previous.y;
+    assert.equal(canStepWithoutCornerCutting(walkable, previous.x, previous.y, dx, dy), true, `EasyStar step ${index} stays on the connected floor surface`);
+  }
+  const actualFeet = easyStarPath.map(({ x, y }) => [x * TILE + TILE / 2, (y + 1) * TILE]);
+  host.dataset.easyStarDiagnosticFeet = JSON.stringify(actualFeet);
+  for (const foot of [[1168, 800], [1168, 832], [1200, 896], [1232, 960], [1232, 1024]]) {
+    assert.ok(actualFeet.some(([x, y]) => x === foot[0] && y === foot[1]), `EasyStar crosses the measured seam/stair foot point ${foot.join(',')}`);
+  }
+  assert.equal(walkable(...Object.values(worldToCell(1078, 330, TILE))), false, 'upper central reading table remains blocked after translation');
+  assert.equal(walkable(...Object.values(footToCell(1200, 832, TILE))), false, 'the former route point on the stair-side railing is no longer walkable');
+  assert.equal(walkable(...Object.values(worldToCell(1080, 832, TILE))), false, 'the diagonal opening does not remove the adjacent top wall');
+  assert.equal(walkable(...Object.values(worldToCell(1000, 840, TILE))), false, 'first-floor bookcase wall remains blocked outside the stair opening');
+
+  const steward = stewardV6Contract(V6_INTEGRATION, MOLE_MANIFEST, MOLE_ACTIONS, MOLE_ROUTE, EXTENDED_ROOM);
+  assert.deepEqual(steward.deskDock.worldAnchor, [960, 1120]);
+  assert.deepEqual(steward.steward.routeContract.outboundWaypoints[1], [960, 1210]);
+  assert.deepEqual(steward.steward.integration.propVisibility.fixedDeskStackWorldBBox, [960, 1079, 1022, 1119]);
+  const writer = seatedV6Contract(V6_INTEGRATION, 'writer', V6_SEATED.writer, EXTENDED_ROOM);
+  assert.equal(writer.deskDock.stationPatch.worldPosition[1], V6_SEATED.writer.stationPatch.worldPosition[1] + 810);
+  for (const [role, workstation] of Object.entries(EXTENDED_ROOM.workstations)) {
+    const target = scene.nearestWalkable({ interactionPoint: workstation.interactionPoint });
+    assert.ok(target && reached.has(`${target.x},${target.y}`), `${role} remains reachable after the shared world offset`);
+  }
+  scene.inputLocked = () => false;
+  scene.cameras = { main: { getWorldPoint(x, y) { return { x, y }; } } };
+  scene.startPath = async (destination, target) => { scene.lastTestPath = { destination, target }; return true; };
+  await scene.walkToPointer({ x: 848, y: 390 });
+  assert.equal(host.dataset.lastClickAccepted, 'true', 'clicking the upper gallery enters the same pathfinding world');
+  assert.deepEqual(scene.lastTestPath.destination, upperGallery);
 });
 
 test('到达同事后重复点击会再次确认已到身边，不会误报不可达', async () => {
@@ -299,6 +455,7 @@ test('输入锁期间清除 Phaser 按键状态但继续自动走近', () => {
 
   runtime.scene.update(200);
   assert.equal(resets, 1);
+  assert.deepEqual(runtime.scene.cameras.main.center, [ROOM.width / 2, ROOM.height / 2]);
   assert.deepEqual(runtime.scene.playerCell, { x: 14, y: 13 });
   assert.equal(runtime.scene.stepInProgress, true);
   assert.equal(runtime.scene.manualMoving, false);
@@ -380,9 +537,15 @@ test('循环生活动作只在完整帧循环边界结束', () => {
 test('v6 工作与休息入口把四个坐席角色的变帧时长、锚点和安全帧原样接入', () => {
   assert.equal(V6_INTEGRATION.id, 'office-playable-motion-v6-integration');
   assert.equal(REST_INTEGRATION.id, 'office-playable-rest-states-v6-integration');
+  const expectedRegistrationOffsets = { researcher: 0, writer: 10.92, reviewer: -4.4, archivist: -8.12 };
   for (const [role, binding] of Object.entries(V6_INTEGRATION.seatedRoles)) {
     const restManifest = REST_SEATED[role];
     const contract = seatedV6Contract(V6_INTEGRATION, role, V6_SEATED[role], ROOM, REST_INTEGRATION, restManifest);
+    assert.deepEqual(contract.deskDock.worldAnchor, ROOM.workstations[role].home);
+    assert.deepEqual(contract.deskDock.renderRegistrationPoint, [contract.anchor[0], restManifest.fixedContentBottom]);
+    const [offsetX, offsetY] = seatedBodyRenderOffset(contract.anchor, contract.deskDock.renderRegistrationPoint, SEATED_ROLE_RENDER_SCALE[role]);
+    assert.equal(offsetX, 0);
+    assert.ok(Math.abs(offsetY - expectedRegistrationOffsets[role]) < 1e-9, `${role} 固定注册偏移不匹配`);
     const idle = coworkerAnimationSpec(contract, role, 'idle');
     const working = coworkerAnimationSpec(contract, role, 'working');
     assert.equal(idle.isStatic, false);
@@ -409,9 +572,14 @@ test('v6 工作与休息入口把四个坐席角色的变帧时长、锚点和�
     assert.deepEqual(contract.deskDock.stationPatch, V6_SEATED[role].stationPatch);
   }
   const reviewer = seatedV6Contract(V6_INTEGRATION, 'reviewer', V6_SEATED.reviewer, ROOM);
-  assert.deepEqual(reviewer.deskDock.worldAnchor, [1200, 550]);
+  assert.deepEqual(reviewer.deskDock.worldAnchor, ROOM.workstations.reviewer.home);
+  assert.deepEqual(reviewer.deskDock.worldAnchor, [1195, 545]);
   assert.deepEqual(reviewer.deskDock.stationPatch.worldPosition, [1194, 443]);
   assert.equal(reviewer.deskDock.frontLayerDepthY, 592);
+  const archivist = seatedV6Contract(V6_INTEGRATION, 'archivist', V6_SEATED.archivist, ROOM);
+  assert.deepEqual(archivist.deskDock.worldAnchor, [1180, 739]);
+  const researcher = seatedV6Contract(V6_INTEGRATION, 'researcher', V6_SEATED.researcher, ROOM);
+  assert.deepEqual(researcher.deskDock.worldAnchor, [240, 645]);
   assert.match(OFFICE_SOURCE, /MOTION_ROOT = `\$\{ASSET_ROOT\}motion-repair-v6\//);
   assert.match(OFFICE_SOURCE, /REST_ROOT = `\$\{ASSET_ROOT\}rest-states-v6\//);
   assert.match(OFFICE_SOURCE, /CONTINUITY_ROOT = `\$\{REST_ROOT\}continuity-repair-v3\//);
@@ -449,6 +617,34 @@ test('continuity v3 只播放生成的中间帧，端点由 work13 与 idle0 提
     assert.deepEqual(spec.frameDurationsMs, ARCHIVIST_REST_OVERRIDE.states[state].frameDurationsMs);
     assert.deepEqual(spec.anchor, ARCHIVIST_REST_OVERRIDE.anchor);
   }
+});
+
+test('reviewer 入睡与醒来经过同一组精确端点和反向中间帧', () => {
+  const contract = seatedV6Contract(
+    V6_INTEGRATION, 'reviewer', V6_SEATED.reviewer, ROOM,
+    REST_INTEGRATION, REST_SEATED.reviewer,
+    CONTINUITY_INTEGRATION, CONTINUITY_TRANSITIONS.reviewer,
+    null, REVIEWER_SLEEP_TRANSITION,
+  );
+  const toSleep = coworkerAnimationSpec(contract, 'reviewer', 'idle-to-sleep');
+  const toIdle = coworkerAnimationSpec(contract, 'reviewer', 'sleep-to-idle');
+  const idle = coworkerAnimationSpec(contract, 'reviewer', 'idle');
+  const sleeping = coworkerAnimationSpec(contract, 'reviewer', 'sleeping');
+
+  assert.deepEqual(toSleep.frames, [0, 1, 2]);
+  assert.deepEqual(toSleep.frameDurationsMs, [100, 180, 260]);
+  assert.equal(toSleep.animation.returnTo, 'sleeping');
+  assert.deepEqual(toIdle.frames, [...toSleep.frames].reverse());
+  assert.deepEqual(toIdle.frameDurationsMs, [260, 180, 100]);
+  assert.equal(toIdle.animation.returnTo, 'idle');
+  assert.equal(toSleep.textureKey, 'coworker-reviewer-sleep-transition-v5');
+  assert.deepEqual(REVIEWER_SLEEP_TRANSITION.sourceFrameIndices, [0, 1, 3]);
+  assert.equal(REVIEWER_SLEEP_TRANSITION.excludedSourceFrame.index, 2);
+  assert.match(REVIEWER_SLEEP_TRANSITION.excludedSourceFrame.reason, /^head dipped below the fixed sleep endpoint and rebounded upward at the endpoint/);
+  assert.deepEqual(coworkerTransitionSafeFrames('idle', 'idle-to-sleep', idle), [0]);
+  assert.deepEqual(coworkerTransitionSafeFrames('sleeping', 'sleep-to-idle', sleeping), [0]);
+  assert.deepEqual(coworkerLocalActions(contract), ['sleeping', 'slack']);
+  assert.equal(toSleep.animation.transition, true);
 });
 
 test('重复状态刷新不重启工作循环，退出只在 v6 安全帧生效', () => {
@@ -646,6 +842,120 @@ test('slack 是单次动作并在自身末帧自动回 idle', () => {
   assert.equal(person.nextLocalActionAt > 1000, true);
 });
 
+test('静态鼹鼠姿态只等待自己实际拥有的帧，不会卡在 idle→working 的第 3 帧', () => {
+  const contract = stewardV6Contract(V6_INTEGRATION, MOLE_MANIFEST, MOLE_ACTIONS, MOLE_ROUTE, ROOM);
+  const idle = coworkerAnimationSpec(contract, 'steward', 'idle');
+  assert.equal(idle.isStatic, true);
+  assert.deepEqual(coworkerTransitionSafeFrames('idle', 'working', idle), [idle.frames[0]]);
+
+  const body = {
+    anims: { currentFrame: { textureFrame: 0 } }, frame: { name: 0 }, texture: { key: idle.textureKey },
+    getData() { return true; }, setOrigin() { return this; }, setInteractive() { return this; },
+    stop() { return this; }, setTexture(key) { this.texture.key = key; return this; },
+    setFrame(frame) { this.frame.name = frame; return this; },
+  };
+  const person = { role: 'steward', localAction: 'idle', pendingAction: null,
+    sprite: { getByName() { return body; }, setInteractive() { return this; } } };
+  const scene = new OfficeScene();
+  scene.coworkerContracts = { steward: contract };
+  scene.reducedMotion = false;
+  scene.syncRoleDebug = () => {};
+  assert.equal(scene.setPersonAction(person, 'working', 'task'), true);
+  assert.equal(person.localAction, 'working');
+  assert.equal(person.pendingAction, null);
+
+  const writerContract = seatedV6Contract(V6_INTEGRATION, 'writer', V6_SEATED.writer, ROOM, REST_INTEGRATION, REST_SEATED.writer);
+  const reducedBody = {
+    anims: { currentFrame: { textureFrame: 0 } }, frame: { name: 0 }, texture: { key: 'coworker-writer-idle' },
+    getData() { return true; }, setOrigin() { return this; }, setInteractive() { return this; },
+    stop() { return this; }, setTexture(key) { this.texture.key = key; return this; }, setFrame(frame) { this.frame.name = frame; return this; },
+  };
+  const reducedPerson = { role: 'writer', localAction: 'idle', pendingAction: null,
+    sprite: { getByName() { return reducedBody; }, setInteractive() { return this; } } };
+  scene.coworkerContracts = { writer: writerContract };
+  scene.reducedMotion = true;
+  assert.equal(scene.setPersonAction(reducedPerson, 'working', 'task'), true);
+  assert.equal(reducedPerson.pendingAction, null);
+});
+
+test('真实 Agent 工作中可跑完一次取书、归档路线，轮询不重置，完成后只呼吸等待', () => {
+  const actions = [];
+  const statusText = { text: '待命', setText(value) { this.text = value; } };
+  const completions = new Map();
+  const body = {
+    on(_event, callback) { this.updateFrame = callback; },
+    once(event, callback) { completions.set(event, callback); },
+  };
+  const person = {
+    role: 'steward', home: [960, 310], active: true, localEligible: false, activitySource: 'task',
+    localAction: 'working', pendingTaskAction: null, statusText,
+    sprite: {
+      x: 960, y: 310, getByName() { return body; }, setAlpha() { return this; },
+      setPosition(x, y) { this.x = x; this.y = y; return this; }, setDepth(depth) { this.depth = depth; return this; },
+    },
+  };
+  let deskVisible = true; let shelfVisible = false;
+  const scene = new OfficeScene();
+  scene.people = new Map([['steward', person]]);
+  scene.coworkerContracts = { steward: stewardV6Contract(V6_INTEGRATION, MOLE_MANIFEST, MOLE_ACTIONS, MOLE_ROUTE, ROOM) };
+  scene.stewardDeskStack = { setVisible(value) { deskVisible = value; } };
+  scene.stewardShelfStack = { setVisible(value) { shelfVisible = value; } };
+  scene.reducedMotion = false;
+  scene.time = { now: 0 };
+  scene.player = { x: 0, y: 0 };
+  scene.tweens = { add(config) { return { ...config, pause() {}, resume() {} }; } };
+  scene.setPersonAction = (_person, action, source) => { actions.push({ action, source }); person.localAction = action; };
+  scene.syncRoleDebug = () => {};
+  scene.initializeStewardRoutine();
+  const routine = scene.stewardRoutine;
+
+  const completeRoute = () => {
+    while (routine.tween) {
+      const tween = routine.tween;
+      tween.onComplete();
+    }
+  };
+
+  scene.updateStewardRoutine(3000);
+  assert.equal(routine.phase, 'pickup');
+  assert.equal(deskVisible, false);
+  assert.deepEqual(actions.at(-1), { action: 'pickup-books', source: 'local' });
+
+  body.updateFrame(null, { textureFrame: 4 });
+  assert.equal(routine.bookOwner, 'mole');
+  completions.get('animationcomplete-steward-pickup-books')();
+  assert.equal(routine.phase, 'outbound');
+
+  const carriedState = { phase: routine.phase, bookOwner: routine.bookOwner, legs: routine.legs, tween: routine.tween };
+  scene.setTask({ nativeProduct: true, functionId: 'agent', status: 'running' });
+  scene.setTask({ nativeProduct: true, functionId: 'agent', status: 'running' });
+  assert.deepEqual({ phase: routine.phase, bookOwner: routine.bookOwner, legs: routine.legs, tween: routine.tween }, carriedState);
+  assert.equal(person.pendingTaskAction.action, 'working');
+  completeRoute();
+  assert.equal(routine.phase, 'shelving');
+  assert.deepEqual(actions.at(-1), { action: 'shelve-books', source: 'local' });
+
+  body.updateFrame(null, { textureFrame: 5 });
+  assert.equal(routine.bookOwner, 'shelf');
+  assert.equal(shelfVisible, true);
+  completions.get('animationcomplete-steward-shelve-books')();
+  assert.equal(routine.phase, 'returning');
+  completeRoute();
+  assert.equal(routine.phase, 'completed');
+  assert.equal(routine.bookOwner, 'shelf');
+  assert.equal(deskVisible, false);
+  assert.equal(shelfVisible, true);
+  assert.equal(person.localAction, 'wait-empty');
+  assert.equal(statusText.text, '正在工作');
+  assert.deepEqual(person.sprite && [person.sprite.x, person.sprite.y], person.home);
+
+  scene.updateStewardRoutine(100000);
+  scene.setTask({ nativeProduct: true, functionId: 'agent', status: 'running' });
+  assert.equal(routine.phase, 'completed');
+  assert.equal(person.localAction, 'wait-empty');
+  assert.equal(actions.filter(({ action }) => action === 'pickup-books').length, 1);
+});
+
 test('鼹鼠 v6 使用 11 张独立动作表、一楼合同路线与完整书本所有权交接', () => {
   const contract = stewardV6Contract(V6_INTEGRATION, MOLE_MANIFEST, MOLE_ACTIONS, MOLE_ROUTE, ROOM);
   assert.equal(MOLE_MANIFEST.actions.length, 11);
@@ -784,7 +1094,16 @@ test('v4 五位同事均使用原生状态表和实测桌前锚点', () => {
   }
   assert.match(OFFICE_SOURCE, /const WALK_CYCLE_MS = 480/);
   assert.match(OFFICE_SOURCE, /animation\.frameCount \* 1000 \/ WALK_CYCLE_MS/);
-  assert.doesNotMatch(OFFICE_SOURCE, /body\.setScale\(/);
+  assert.match(OFFICE_SOURCE, /body\.setScale\(renderScale\)/);
+  assert.match(OFFICE_SOURCE, /body\.setPosition\(\.\.\.seatedRoleBodyRenderOffset\(character\.role, anchor, contract\?\.deskDock\?\.renderRegistrationPoint, renderScale\)\)/);
+  assert.deepEqual(SEATED_ROLE_RENDER_SCALE, { researcher: 1, writer: 1.12, reviewer: 0.92, archivist: 0.86, steward: 1 });
+  assert.deepEqual(SEATED_ROLE_POSITION_CORRECTION, { researcher: [0, 0], writer: [0, 0], reviewer: [0, 0], archivist: [18, 0], steward: [0, 0] });
+  assert.deepEqual(scaledCoworkerHitArea([-50, -80, 100, 120], 0.8, [4, -8]), [-36, -72, 80, 96]);
+  const writerRenderOffset = seatedBodyRenderOffset([88, 194], [88, 103], 1.12);
+  assert.equal(writerRenderOffset[0], 0);
+  assert.ok(Math.abs(writerRenderOffset[1] - 10.92) < 1e-9);
+  assert.deepEqual(seatedRoleBodyRenderOffset('archivist', [96, 194], [96, 136], 0.86), [18, -8.120000000000001]);
+  assert.deepEqual(scaledCoworkerHitArea([-50, -80, 100, 120], 0.86, [18, -8.120000000000001]), [-25, -76.92, 86, 103.2]);
 });
 
 test('主角按 v4 原生画布与脚点渲染，不改变路径坐标', () => {
@@ -807,6 +1126,7 @@ test('主角按 v4 原生画布与脚点渲染，不改变路径坐标', () => {
         anims: { currentAnim: null },
         setOrigin(x, y) { this.origin = [x, y]; return this; },
         setScale(value) { this.scale = value; return this; },
+        setPosition(x, y) { this.position = [x, y]; return this; },
         setName(name) { this.name = name; return this; },
         setData() { return this; },
         play(key) { this.anims.currentAnim = { key }; return this; },
@@ -822,4 +1142,11 @@ test('主角按 v4 原生画布与脚点渲染，不改变路径坐标', () => {
   assert.deepEqual(footToCell(player.x, player.y, 32), { x: 15, y: 13 });
   assert.equal(player.depth, 448);
   assert.equal(body.anims.currentAnim.key, 'irixi-down-idle');
+
+  scene.coworkerContracts = { writer: { frameSize: [176, 208], anchor: [88, 194], deskDock: { renderRegistrationPoint: [88, 103] }, animations: { idle: { frameSize: [176, 208], anchor: [88, 194], frames: [0], static: true } } } };
+  scene.textures = { exists: () => true };
+  const writer = scene.makeAnimal(9, 8, { role: 'writer' }, '小鼠', false);
+  assert.equal(writer.getByName('body').scale, SEATED_ROLE_RENDER_SCALE.writer);
+  assert.deepEqual(writer.getByName('body').origin, [0.5, 194 / 208]);
+  assert.ok(Math.abs(writer.getByName('body').position[1] - 10.92) < 1e-9);
 });

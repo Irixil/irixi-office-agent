@@ -1,5 +1,5 @@
 import { registerChannel, initTransports, publishEvent, destroyTransports, reinitChannel, isChannelActive } from "./transport.js";
-import { wsChannel, setPairCode, sendToClient, setProductRuntimeViewProvider } from "./ws-server.js";
+import { wsChannel, setPairCode, sendToClient, setProductRuntimeViewProvider, irixiPublicIntegration } from "./ws-server.js";
 import { ablyChannel } from "./ably-client.js";
 import { telegramChannel, setTelegramAgentDefs, syncTelegramHiredAgents } from "./telegram-channel.js";
 import { config, CONFIG_DIR, AI_EXECUTION_DISABLED, LOCAL_ONLY_TRIAL, MAC_TRIAL_CONFIG, MAC_TRIAL_MODE, hasSetupRun, reloadConfig, saveConfig } from "./config.js";
@@ -22,7 +22,7 @@ import { startTunnel, stopTunnel, isTunnelRunning } from "./tunnel.js";
 import { loadTeamState, saveTeamState, clearTeamState, type TeamState, type PersistedAgent, bufferEvent, archiveProject, resetProjectBuffer, setProjectName, listProjects, loadProject, loadProjectBuffer, rateProject } from "./team-state.js";
 import { clearRuntimeState, killPreviousInstances, registerRuntimeState } from "./runtime-state.js";
 import { assertMacTrialCommand, macTrialRestoredAgentAllowed, sameMacTrialPath } from "./mac-trial-guard.js";
-import { ARTICLE_INFERENCE_TAG, buildProductApprovedExecutionPrompt, createIrixiIntegration, integratedAutoReviewTransition, persistInferenceTerminalBeforePublish, persistIntegratedTerminalBeforePublish, persistIntakeTerminalBeforePublish, withoutIrixiProtocolTags } from "./irixi-integration.js";
+import { ARTICLE_INFERENCE_TAG, buildProductApprovedExecutionPrompt, integratedAutoReviewTransition, persistInferenceStartFailureBeforePublish, persistInferenceTerminalBeforePublish, persistIntegratedTerminalBeforePublish, persistIntakeTerminalBeforePublish, withoutIrixiProtocolTags } from "./irixi-integration.js";
 import { ARTICLE_PROJECT_CAPACITY } from "./article-project-capacity.js";
 import { completeArticleReviewPayload } from "./article-project-review.js";
 import { assertProductAgent, assertProductWorkspace, finishProductPreview, getProductPreviewContext, loadProductProjectRegistry, productPreviewMatches, productRegistrySha256 } from "./product-project-registry.js";
@@ -43,7 +43,7 @@ let orc: Orchestrator;
 let scanner: ProcessScanner | null = null;
 let outputReader: ExternalOutputReader | null = null;
 let runtimeState: RuntimeOwnerInfo | null = null;
-const irixiIntegration = createIrixiIntegration();
+const irixiIntegration = irixiPublicIntegration;
 
 /** Track external agents so PING can broadcast them */
 const externalAgents = new Map<string, { agentId: string; name: string; backendId: string; pid: number; cwd: string | null; startedAt: number; status: "working" | "idle" }>();
@@ -688,6 +688,7 @@ function handleCommand(parsed: Command, meta: CommandMeta) {
         const effectiveRepoPath = productRegistry?.workspace.path || parsed.repoPath || agentWorkDirs.get(parsed.agentId);
         const freshNativeProductPlan = parsed.nativeProductPlanStart === true && Boolean(productRegistry)
           && orc.isTeamLead(parsed.agentId) && parsed.prompt.startsWith("IRIXI_NATIVE_PRODUCT_EXECUTION_V1\n");
+        const registeredProductReview = irixiIntegration?.isRegisteredProductReview(parsed.taskId, finalPrompt) === true;
         const start = () => {
           if (freshNativeProductPlan) {
             const teamId = agent.teamId ?? `team-${agent.agentId}`;
@@ -696,15 +697,18 @@ function handleCommand(parsed: Command, meta: CommandMeta) {
             orc.setOriginalTask(agent.agentId, "");
           }
           const currentPhaseOverride = finalPrompt.startsWith("IRIXI_PRODUCT_CONVERSATION_V1\n") ? "conversation"
-            : finalPrompt.startsWith("IRIXI_PRODUCT_REVIEW_V1\n") ? "review"
+            : registeredProductReview ? "review"
             : orc.getPhaseOverrideForLeader(parsed.agentId);
           console.log(`[Gateway] Product task phase: ${currentPhaseOverride ?? "default"}${freshNativeProductPlan ? " (fresh Lead plan)" : ""}`);
-          orc.runTask(parsed.agentId, parsed.taskId, finalPrompt, { repoPath: effectiveRepoPath, phaseOverride: currentPhaseOverride });
+          const registeredLearningInference = currentPhaseOverride === "conversation"
+            && irixiIntegration?.hasInferenceReservation(parsed.taskId) === true
+            && finalPrompt.includes("\n\nARTICLE_LEARNING_INFERENCE_12\n");
+          orc.runTask(parsed.agentId, parsed.taskId, finalPrompt, { repoPath: effectiveRepoPath, phaseOverride: currentPhaseOverride, registeredLearningInference, registeredProductReview });
         };
         if (irixiIntegration) {
           const authorize = finalPrompt.startsWith("IRIXI_PRODUCT_CONVERSATION_V1\n")
-            ? irixiIntegration.authorize(parsed.taskId, "reviewer", undefined, undefined, effectiveRepoPath)
-            : finalPrompt.startsWith("IRIXI_PRODUCT_REVIEW_V1\n")
+            ? irixiIntegration.authorize(parsed.taskId, "reviewer", finalPrompt, undefined, effectiveRepoPath)
+            : registeredProductReview
             ? Promise.resolve()
             : finalPrompt.startsWith("PROJECT_INTAKE_DISCUSSION_07\n")
             ? irixiIntegration.authorizeIntake(parsed.taskId, finalPrompt)
@@ -713,7 +717,14 @@ function handleCommand(parsed: Command, meta: CommandMeta) {
             : irixiIntegration.authorize(parsed.taskId, "developer", finalPrompt, undefined, effectiveRepoPath);
           void authorize.then(start).catch((error) => {
             const message = error instanceof Error ? error.message : "Irixi authority rejected this run";
-            publishEvent({ type: "TASK_FAILED", agentId: parsed.agentId, taskId: parsed.taskId, error: message });
+            const failed = { type: "TASK_FAILED" as const, agentId: parsed.agentId, taskId: parsed.taskId, error: message };
+            if (irixiIntegration) {
+              void persistInferenceStartFailureBeforePublish({
+                integration: irixiIntegration, event: failed,
+                buffer: (terminal) => bufferEvent(terminal),
+                publish: (terminal) => publishEvent(terminal),
+              });
+            } else publishEvent(failed);
           });
         } else start();
       }
@@ -1835,13 +1846,23 @@ async function main() {
         expectedRegistrySha256: current.product.registrySha256,
         expectedArtifactId: artifact.id,
         expectedArtifactVersion: artifact.version,
+        expectedCandidateSha256: artifact.candidateSha256,
+        expectedReviewId: artifact.review?.id || null,
       });
       if (review.artifactId !== artifact.id || review.artifactVersion !== artifact.version
-        || review.candidateSha256 !== auto.candidateSha256) {
+        || review.candidateSha256 !== auto.candidateSha256 || review.expectedReviewId !== (artifact.review?.id || null)
+        || !review.dispatchEventId) {
         throw new Error("Product review request changed candidate version during dispatch");
       }
 
       const reviewTaskId = `product-review-${createHash("sha256").update(auto.dispatchEventId).digest("hex").slice(0, 24)}`;
+      await irixiIntegration.registerProductReviewTask(reviewTaskId, reviewerAgentId, reviewer.role, {
+        goalVersionId: current.goalVersionId, executionId: current.execution.id,
+        registrySha256: current.product.registrySha256, artifactId: artifact.id,
+        artifactVersion: artifact.version, candidateSha256: artifact.candidateSha256,
+        expectedReviewId: artifact.review?.id || null, reviewRoundId: review.reviewRoundId || null,
+        dispatchEventId: review.dispatchEventId, prompt: review.prompt, promptSha256: review.promptSha256,
+      });
       handleCommand(CommandSchema.parse({ type: "RUN_TASK", agentId: reviewerAgentId, taskId: reviewTaskId, prompt: review.prompt }), {
         role: "owner", clientId: `product-auto-review:${auto.dispatchEventId}`,
       });

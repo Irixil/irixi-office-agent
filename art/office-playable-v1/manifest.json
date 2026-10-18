@@ -1,0 +1,251 @@
+{
+  "packId": "irixi-office-playable-v1",
+  "status": "integration-ready-runtime-v2",
+  "revision": "runtime-v3-large-protagonist",
+  "coordinateSystem": "top-left origin; x right; y down",
+  "coworkerAnimationContract": {
+    "status": "integration-ready",
+    "frameSize": [64, 72],
+    "anchor": [32, 68],
+    "sheetGrid": [4, 4],
+    "rowOrder": ["idle", "working", "sleeping", "slack"],
+    "columnOrder": ["00", "01", "02", "03"],
+    "actions": {
+      "idle": {"fps": 3, "loop": true, "interruptible": true},
+      "working": {"fps": 6, "loop": true, "interruptible": false},
+      "sleeping": {"fps": 3, "loop": true, "interruptible": true},
+      "slack": {"fps": 5, "loop": false, "returnTo": "idle", "interruptible": true}
+    },
+    "roleBindings": {
+      "researcher": "agent-hamster",
+      "writer": "agent-mouse",
+      "reviewer": "agent-chinchilla",
+      "steward": "agent-mole",
+      "archivist": "agent-fancy-rat"
+    },
+    "sheets": {
+      "agent-hamster": "characters/hamster/runtime/spritesheet.png",
+      "agent-mouse": "characters/mouse/runtime/spritesheet.png",
+      "agent-chinchilla": "characters/chinchilla/runtime/spritesheet.png",
+      "agent-mole": "characters/mole/runtime/spritesheet.png",
+      "agent-fancy-rat": "characters/fancy-rat/runtime/spritesheet.png"
+    },
+    "deskDock": {
+      "furniture": "archive-desk",
+      "characterAnchorOffsetFromDeskPivot": [0, -25],
+      "backLayer": "environment/furniture/archive-desk-back.png",
+      "frontLayer": "environment/furniture/archive-desk-front.png",
+      "drawOrder": ["backLayer", "character", "frontLayer"],
+      "note": "working props and hands are composed at desktop height; tune only the shared dock offset in-engine"
+    },
+    "runtimePriority": ["working", "sleeping", "slack", "idle"],
+    "runtimeNote": "backend active work status selects working; sleeping/slack/idle are local no-task states and never trigger model calls"
+  },
+  "world": {
+    "logicalSize": [960, 540],
+    "baseGrid": [16, 16],
+    "camera": "elevated slightly-front-facing top-down 2D",
+    "background": "environment/room-base-960x540.png",
+    "highResolutionMaster": "environment/room-base.png",
+    "navigationPlan": "environment/layer-plan.json"
+  },
+  "characters": {
+    "irixi": {
+      "role": "player",
+      "artRevision": "runtime-v3-large-protagonist",
+      "frameSize": [72, 80],
+      "anchor": [36, 76],
+      "directions": ["down", "left", "right", "up"],
+      "sheet": "characters/irixi/spritesheet.png",
+      "sheetGrid": [3, 4],
+      "rowOrder": ["down", "left", "right", "up"],
+      "columnOrder": ["idle", "walk-a", "walk-b"],
+      "animations": {
+        "idle": {
+          "loop": true,
+          "fps": 1,
+          "pattern": ["{direction}-idle.png"]
+        },
+        "walk": {
+          "loop": true,
+          "fps": 7,
+          "pattern": [
+            "{direction}-walk-a.png",
+            "{direction}-idle.png",
+            "{direction}-walk-b.png",
+            "{direction}-idle.png"
+          ]
+        }
+      },
+      "frameDirectory": "characters/irixi/frames",
+      "metrics": "characters/irixi/metrics.json",
+      "motionPreviews": {
+        "down": "characters/irixi/preview/down-walk.gif",
+        "left": "characters/irixi/preview/left-walk.gif",
+        "right": "characters/irixi/preview/right-walk.gif",
+        "up": "characters/irixi/preview/up-walk.gif",
+        "fourDirectionProof": "characters/irixi/preview/four-direction-walk-proof.gif",
+        "fourDirectionContact": "characters/irixi/preview/four-direction-contact.png"
+      },
+      "visualMass": {
+        "nativeScalePolicy": "compare rendered PNGs at 1x on the same foot baseline; do not upscale in CSS or shrink coworkers",
+        "downIdleVisibleBBox": [12, 11, 60, 76],
+        "downIdleOpaquePixels": 2261,
+        "downIdleHeadBodyMaxContiguousRowWidth": 48,
+        "native1xComparison": "preview/irixi-native-1x-size-comparison.png",
+        "enlargedInspection": "preview/irixi-size-comparison-4x.png"
+      },
+      "identityLocks": [
+        "top hat",
+        "anatomical-right monocle",
+        "anatomical-left cane ownership",
+        "forest-green tailcoat",
+        "burgundy bow tie"
+      ]
+    },
+    "agent-hamster": {
+      "role": "researcher",
+      "frameSize": [64, 72],
+      "anchor": [32, 68],
+      "sheet": "characters/hamster/runtime/spritesheet.png",
+      "sheetGrid": [4, 4],
+      "rowOrder": ["idle", "working", "sleeping", "slack"],
+      "columnOrder": ["00", "01", "02", "03"],
+      "frameDirectory": "characters/hamster/runtime/frames",
+      "previewDirectory": "characters/hamster/runtime/preview",
+      "workingProp": "dark-green ledger and screen-left quill",
+      "workingTopologyLock": {
+        "coordinateSpace": "screen-space",
+        "activeLimb": "screen-left hand",
+        "activeShoulder": "screen-left shoulder",
+        "anchorLimb": "screen-right hand",
+        "propHand": "screen-left hand owns the quill",
+        "anchorProp": "dark-green ledger supported at center"
+      },
+      "slackRead": "nibbles one biscuit; visible cheek puff",
+      "animationStatus": "four model-generated whole-character frames per action",
+      "legacyStaticSheet": "characters/hamster/states.png"
+    },
+    "agent-mouse": {
+      "role": "writer",
+      "frameSize": [64, 72],
+      "anchor": [32, 68],
+      "sheet": "characters/mouse/runtime/spritesheet.png",
+      "sheetGrid": [4, 4],
+      "rowOrder": ["idle", "working", "sleeping", "slack"],
+      "columnOrder": ["00", "01", "02", "03"],
+      "frameDirectory": "characters/mouse/runtime/frames",
+      "previewDirectory": "characters/mouse/runtime/preview",
+      "workingProp": "parchment and screen-left quill",
+      "workingTopologyLock": {
+        "coordinateSpace": "screen-space",
+        "activeLimb": "screen-left hand",
+        "activeShoulder": "screen-left shoulder",
+        "anchorLimb": "screen-right hand",
+        "propHand": "screen-left hand owns the quill",
+        "anchorProp": "parchment supported at center"
+      },
+      "slackRead": "folds and admires a tiny scrap-paper shape",
+      "animationStatus": "four model-generated whole-character frames per action"
+    },
+    "agent-chinchilla": {
+      "role": "reviewer",
+      "frameSize": [64, 72],
+      "anchor": [32, 68],
+      "sheet": "characters/chinchilla/runtime/spritesheet.png",
+      "sheetGrid": [4, 4],
+      "rowOrder": ["idle", "working", "sleeping", "slack"],
+      "columnOrder": ["00", "01", "02", "03"],
+      "frameDirectory": "characters/chinchilla/runtime/frames",
+      "previewDirectory": "characters/chinchilla/runtime/preview",
+      "workingProp": "blueprint and blueprint tube",
+      "slackRead": "grooms and admires its large fluffy tail",
+      "animationStatus": "four model-generated whole-character frames per action"
+    },
+    "agent-mole": {
+      "role": "steward",
+      "frameSize": [64, 72],
+      "anchor": [32, 68],
+      "sheet": "characters/mole/runtime/spritesheet.png",
+      "sheetGrid": [4, 4],
+      "rowOrder": ["idle", "working", "sleeping", "slack"],
+      "columnOrder": ["00", "01", "02", "03"],
+      "frameDirectory": "characters/mole/runtime/frames",
+      "previewDirectory": "characters/mole/runtime/preview",
+      "workingProp": "brass folding ruler",
+      "slackRead": "measures its own apron pocket and pencil",
+      "animationStatus": "four model-generated whole-character frames per action",
+      "legacyStaticSheet": "characters/mole/states.png"
+    },
+    "agent-fancy-rat": {
+      "role": "archivist",
+      "frameSize": [64, 72],
+      "anchor": [32, 68],
+      "sheet": "characters/fancy-rat/runtime/spritesheet.png",
+      "sheetGrid": [4, 4],
+      "rowOrder": ["idle", "working", "sleeping", "slack"],
+      "columnOrder": ["00", "01", "02", "03"],
+      "frameDirectory": "characters/fancy-rat/runtime/frames",
+      "previewDirectory": "characters/fancy-rat/runtime/preview",
+      "workingProp": "parchment and screen-right sealing stamp",
+      "workingTopologyLock": {
+        "coordinateSpace": "screen-space",
+        "activeLimb": "screen-right hand",
+        "activeShoulder": "screen-right shoulder",
+        "anchorLimb": "screen-left hand",
+        "propHand": "screen-right hand owns the red wooden sealing stamp with brass base in every frame",
+        "anchorProp": "screen-left hand supports the cream parchment",
+        "detachedProp": "none"
+      },
+      "slackRead": "balances and catches its sealing stamp",
+      "animationStatus": "four model-generated whole-character frames per action"
+    }
+  },
+  "furniture": {
+    "archive-desk": {
+      "file": "environment/furniture/archive-desk.png",
+      "backLayer": "environment/furniture/archive-desk-back.png",
+      "frontLayer": "environment/furniture/archive-desk-front.png",
+      "canvas": [160, 96],
+      "pivot": [80, 92],
+      "collisionRect": [12, 54, 136, 38],
+      "occlusionLineY": 54
+    },
+    "office-chair": {
+      "file": "environment/furniture/office-chair.png",
+      "canvas": [80, 96],
+      "pivot": [40, 92],
+      "collisionRect": [14, 66, 52, 26],
+      "occlusionLineY": 62
+    },
+    "archive-cabinet": {
+      "file": "environment/furniture/archive-cabinet.png",
+      "canvas": [128, 96],
+      "pivot": [64, 92],
+      "collisionRect": [10, 64, 108, 28],
+      "occlusionLineY": 58
+    }
+  },
+  "knownGaps": [
+    "Coworker actions use four generated frames each, not the 14-frame cinematic pattern.",
+    "Irixi walk uses three unique poses per direction assembled into a four-step loop; it is not a 14-frame cinematic cycle.",
+    "The room is a fixed empty background plus navigation plan, not a reusable wall/floor autotile set.",
+    "No chair-sit transition, desk-enter/exit transition, emotes, interaction highlights, or stair animation is included."
+  ],
+  "evidence": {
+    "coworkerContactSheet": "preview/coworker-actions-contact.png",
+    "workingTopologyContact": "preview/working-topology-contact.png",
+    "deskAlignment": "preview/coworker-desk-alignment.png",
+    "runtimeScalePreview": "preview/runtime-cast-scale-preview.png",
+    "irixiNative1xComparison": "preview/irixi-native-1x-size-comparison.png",
+    "irixiComparison4x": "preview/irixi-size-comparison-4x.png",
+    "irixiFourDirectionContact": "characters/irixi/preview/four-direction-contact.png",
+    "combinedLoopPreviews": {
+      "idle": "preview/coworkers-idle.gif",
+      "working": "preview/coworkers-working.gif",
+      "sleeping": "preview/coworkers-sleeping.gif",
+      "slack": "preview/coworkers-slack.gif"
+    },
+    "validation": "evidence/runtime-animation-validation.json"
+  }
+}

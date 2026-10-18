@@ -49,7 +49,6 @@ export function startExecution(task, goalVersionId, budget = {}) {
   if (task.execution) {
     task.executionHistory ??= [];
     task.executionHistory.push(structuredClone(task.execution));
-    task.executionHistory = task.executionHistory.slice(-20);
   }
   const limits = { ...DEFAULT_BUDGET, ...budget };
   const modelRoles = new Set(task.workItems.filter((item) => item.kind !== 'delivery' && item.role !== 'steward').map((item) => item.agentId || item.role));

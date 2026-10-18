@@ -104,6 +104,16 @@ export function createOwnedChildSupervisor({ termGraceMs = 5_000, killGraceMs = 
   return { start, stop, fatal, children, get stopping() { return stopping; } };
 }
 
+export async function stopOwnedServicesAfterRoomLeave(room, supervisor) {
+  if (room) {
+    let timer;
+    const leave = Promise.resolve().then(() => room.leave(true)).catch(() => {});
+    await Promise.race([leave, new Promise((resolve) => { timer = setTimeout(resolve, 2_000); })]);
+    clearTimeout(timer);
+  }
+  return supervisor.stop();
+}
+
 export async function assertPortAvailable(port, host = '127.0.0.1') {
   await new Promise((resolve, reject) => {
     const socket = net.createConnection({ host, port });
@@ -181,15 +191,20 @@ function controlled(promise, supervisor, signalFailure) {
   return Promise.race([promise, supervisor.fatal, signalFailure]);
 }
 
-function installSignalFailure() {
+export function installSignalFailure() {
   let rejectSignal;
+  let stopping = false;
   const promise = new Promise((_, reject) => { rejectSignal = reject; });
   promise.catch(() => {});
   const handlers = new Map();
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    const handler = () => rejectSignal(Object.assign(new Error(`Launcher received ${signal}`), { code: 'LAUNCHER_SIGNAL', signal }));
+    const handler = () => {
+      if (stopping) return;
+      stopping = true;
+      rejectSignal(Object.assign(new Error(`Launcher received ${signal}`), { code: 'LAUNCHER_SIGNAL', signal }));
+    };
     handlers.set(signal, handler);
-    process.once(signal, handler);
+    process.on(signal, handler);
   }
   return {
     promise,
@@ -219,6 +234,18 @@ function checkedPort(value, name) {
   const port = Number(value);
   assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535, `${name} is invalid`);
   return port;
+}
+
+export function resolveProductPorts(argv = []) {
+  const ports = {
+    desktop: checkedPort(valueArg(argv, 'desktop-port') || 3847, '--desktop-port'),
+    authority: checkedPort(valueArg(argv, 'authority-port') || 3869, '--authority-port'),
+    openoffice: checkedPort(valueArg(argv, 'openoffice-port') || 9109, '--openoffice-port'),
+    agentOffice: checkedPort(valueArg(argv, 'agent-office-port') || 3029, '--agent-office-port'),
+    scene: checkedPort(valueArg(argv, 'scene-port') || 5189, '--scene-port'),
+  };
+  assert.equal(new Set(Object.values(ports)).size, Object.values(ports).length, 'Started service ports must be distinct');
+  return ports;
 }
 
 export function resolveAgentOfficeUiRoot(agentOfficeRoot) {
@@ -300,11 +327,12 @@ export async function runProductLauncher(argv = process.argv.slice(2)) {
   const explicitZeroModel = hasFlag(argv, 'zero-model');
   assert.equal(enableAi && explicitZeroModel, false, '--enable-ai and --zero-model are mutually exclusive');
   const zeroModel = !enableAi;
+  const ports = resolveProductPorts(argv);
 
   const policy = JSON.parse(await fsp.readFile(policyFile, 'utf8'));
   assert.equal(policy.schemaVersion, 1);
   assert.equal(policy.taskId === undefined || policy.taskId === taskId, true, 'Policy taskId changed');
-  assert.equal(policy.authorityUrl, 'http://127.0.0.1:3869/');
+  assert.equal(policy.authorityUrl, `http://127.0.0.1:${ports.authority}/`, 'Policy Authority URL must match the configured loopback listener');
   assert.equal(await fsp.realpath(policy.workspace.path), policy.workspace.path);
   assert.equal(policy.native.backend, 'codex');
   assert.equal(policy.capabilities.worktree, true);
@@ -362,17 +390,9 @@ export async function runProductLauncher(argv = process.argv.slice(2)) {
     path.join(here, 'desktop-product-server.mjs'),
   ]) assert.equal(fs.existsSync(file), true, `Existing dependency/build is missing: ${file}`);
 
-  const ports = {
-    desktop: checkedPort(valueArg(argv, 'desktop-port') || 3847, '--desktop-port'),
-    authority: 3869,
-    openoffice: checkedPort(valueArg(argv, 'openoffice-port') || 9109, '--openoffice-port'),
-    agentOffice: checkedPort(valueArg(argv, 'agent-office-port') || 3029, '--agent-office-port'),
-    scene: checkedPort(valueArg(argv, 'scene-port') || 5189, '--scene-port'),
-  };
   const activePorts = nativeOnly
     ? [ports.authority, ports.openoffice, ports.agentOffice, ports.scene]
     : Object.values(ports);
-  assert.equal(new Set(activePorts).size, activePorts.length, 'Started service ports must be distinct');
   for (const port of activePorts) await assertPortAvailable(port);
 
   const supervisor = createOwnedChildSupervisor();
@@ -586,9 +606,8 @@ export async function runProductLauncher(argv = process.argv.slice(2)) {
   } finally {
     if (refresh) clearInterval(refresh);
     lifecycle.abort(new Error('Product launcher is stopping'));
-    signals.dispose();
-    if (agentOfficeRoom) await agentOfficeRoom.leave(true).catch(() => {});
-    await supervisor.stop();
+    try { await stopOwnedServicesAfterRoomLeave(agentOfficeRoom, supervisor); }
+    finally { signals.dispose(); }
   }
 }
 

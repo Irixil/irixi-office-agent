@@ -17,14 +17,35 @@ const REST_ROOT = `${ASSET_ROOT}rest-states-v6/`;
 const REST_INTEGRATION_KEY = 'office-rest-v6-integration';
 const CONTINUITY_ROOT = `${REST_ROOT}continuity-repair-v3/`;
 const CONTINUITY_INTEGRATION_KEY = 'office-rest-continuity-v3-integration';
+const REVIEWER_SLEEP_TRANSITION_ROOT = `${REST_ROOT}continuity-repair-v4/reviewer-sleep-transition-v2/`;
+const REVIEWER_SLEEP_TRANSITION_MANIFEST_KEY = 'office-reviewer-sleep-transition-v2';
+const REVIEWER_SLEEP_TRANSITION_TEXTURE_KEY = 'coworker-reviewer-sleep-transition-v5';
+const FLOOR_EXTENSION_KEY = 'office-floor-extension-v5';
+const FLOOR_EXTENSION_ROOT = `${ASSET_ROOT}concept-runtime-v5/`;
 const MOLE_ROUTE_SPEED = 140;
+// One role-wide correction for the existing authored sheets. Keep it constant
+// across work/rest states so a state change never changes the character scale.
+export const SEATED_ROLE_RENDER_SCALE = Object.freeze({
+  researcher: 1,
+  writer: 1.12,
+  reviewer: 0.92,
+  archivist: 0.86,
+  steward: 1,
+});
+export const SEATED_ROLE_POSITION_CORRECTION = Object.freeze({
+  researcher: Object.freeze([0, 0]),
+  writer: Object.freeze([0, 0]),
+  reviewer: Object.freeze([0, 0]),
+  archivist: Object.freeze([18, 0]),
+  steward: Object.freeze([0, 0]),
+});
 
 export const PEOPLE = [
-  { role: 'researcher', name: '仓鼠研究员', species: 'hamster' },
-  { role: 'writer', name: '小鼠写作员', species: 'mouse' },
-  { role: 'reviewer', name: '龙猫审阅员', species: 'chinchilla' },
-  { role: 'steward', name: '鼹鼠事务员', species: 'mole' },
-  { role: 'archivist', name: '花枝鼠档案员', species: 'fancy-rat' },
+  { role: 'researcher', name: '仓鼠学习同事', species: 'hamster' },
+  { role: 'writer', name: '小鼠工具开发同事', species: 'mouse' },
+  { role: 'reviewer', name: '龙猫小游戏开发同事', species: 'chinchilla' },
+  { role: 'steward', name: '鼹鼠Agent开发同事', species: 'mole' },
+  { role: 'archivist', name: '花枝鼠档案记忆同事', species: 'fancy-rat' },
 ];
 const FALLBACK_SPECIES = { researcher: 'hamster', writer: 'mole', reviewer: 'hamster', steward: 'mole', archivist: 'hamster' };
 
@@ -37,20 +58,47 @@ export function pointInPolygon(px, py, points) {
   return inside;
 }
 
-export function normalizeRoomContract(manifest) {
-  const [width, height] = manifest.world.logicalSize;
+export function normalizeRoomContract(manifest, extension = null) {
+  const [floorWidth, floorHeight] = manifest.world.logicalSize;
+  const [width, height] = extension?.world?.logicalSize || [floorWidth, floorHeight];
+  const [groundFloorX, groundFloorY] = extension?.world?.groundFloorOrigin || [0, 0];
+  const [upperFloorX, upperFloorY] = extension?.world?.upperFloorOrigin || [0, 0];
+  const shiftPoint = ([x, y]) => [x + groundFloorX, y + groundFloorY];
+  const shiftRect = ([x, y, rectWidth, rectHeight]) => [x + groundFloorX, y + groundFloorY, rectWidth, rectHeight];
+  const shiftUpperPoint = ([x, y]) => [x + upperFloorX, y + upperFloorY];
+  const shiftUpperRect = ([x, y, rectWidth, rectHeight]) => [x + upperFloorX, y + upperFloorY, rectWidth, rectHeight];
+  const stairConnection = extension?.world?.stairConnection;
+  const blockedRects = manifest.blockedPolygons.flatMap((item) => {
+    if (item.id === 'right-staircase' && stairConnection) return [];
+    // ponytail: the walkable stair polygon is the narrow opening; retaining
+    // the broad top-wall rectangle would cover its diagonal and needlessly
+    // carve a vertical wall gap.
+    if (item.id === 'top-wall-and-shelves' && stairConnection) return [];
+    return [{ id: item.id, rect: shiftRect(item.rect) }];
+  });
+  for (const item of extension?.upperFloor?.blockedPolygons || []) blockedRects.push({ id: item.id, rect: shiftUpperRect(item.rect) });
+  const walkablePolygons = manifest.walkablePolygons.map((points) => points.map(shiftPoint));
+  if (stairConnection) {
+    walkablePolygons.push(stairConnection.groundFlightLocal.map(shiftPoint));
+    walkablePolygons.push(stairConnection.groundLandingLocal.map(shiftPoint));
+    walkablePolygons.push(...extension.upperFloor.walkablePolygons.map((points) => points.map(shiftUpperPoint)));
+  }
   const workstations = Object.fromEntries(Object.entries(manifest.workstations).map(([role, item]) => [role, {
-    home: [...item.characterFootAnchor], interactionPoint: [...item.interactionPoint], frontLayerId: item.frontLayerId,
+    home: shiftPoint(item.characterFootAnchor), interactionPoint: shiftPoint(item.interactionPoint), frontLayerId: item.frontLayerId,
   }]));
   return {
-    width, height,
+    width, height, floorWidth, floorHeight, groundFloorX, groundFloorY,
     columns: Math.ceil(width / TILE), rows: Math.ceil(height / TILE),
     background: manifest.world.background,
-    foregroundItems: manifest.foregroundItems.map((item) => ({ ...item, pivot: [...item.pivot], collisionRect: [...item.collision.rect] })),
-    walkablePolygons: manifest.walkablePolygons.map((points) => points.map((point) => [...point])),
-    blockedRects: manifest.blockedPolygons.map((item) => ({ id: item.id, rect: [...item.rect] })),
+    backgroundLayers: extension ? [
+      { key: 'office-upper-gallery', x: upperFloorX, y: upperFloorY, width: floorWidth, height: floorHeight, depth: -100 },
+      { key: 'office-room-base', x: groundFloorX, y: groundFloorY, width: floorWidth, height: floorHeight, depth: -99 },
+    ] : [{ key: 'office-room-base', x: 0, y: 0, width: floorWidth, height: floorHeight, depth: -100 }],
+    foregroundItems: manifest.foregroundItems.map((item) => ({ ...item, y: item.y + groundFloorY, depthY: item.depthY + groundFloorY, pivot: [...item.pivot], collisionRect: shiftRect(item.collision.rect) })),
+    walkablePolygons,
+    blockedRects,
     workstations,
-    spawn: [...manifest.spawnPoints.irixi],
+    spawn: shiftPoint(manifest.spawnPoints.irixi),
     revision: manifest.revision,
   };
 }
@@ -60,7 +108,7 @@ function frontDepthForRole(room, role) {
   return room.foregroundItems.find((item) => item.id === frontLayerId)?.depthY;
 }
 
-export function seatedV6Contract(integration, role, manifest, room, restIntegration = null, restManifest = null, continuityIntegration = null, transitionManifest = null, restOverride = null) {
+export function seatedV6Contract(integration, role, manifest, room, restIntegration = null, restManifest = null, continuityIntegration = null, transitionManifest = null, restOverride = null, roleRestTransitionManifest = null) {
   const binding = integration.seatedRoles[role];
   const action = binding.action;
   const animation = {
@@ -118,6 +166,19 @@ export function seatedV6Contract(integration, role, manifest, room, restIntegrat
       transition: true,
     },
   } : {};
+  const roleRestTransitionAnimations = roleRestTransitionManifest ? Object.fromEntries(Object.entries(roleRestTransitionManifest.animations).map(([name, item]) => [name, {
+    sheet: roleRestTransitionManifest.spritesheet,
+    textureKey: REVIEWER_SLEEP_TRANSITION_TEXTURE_KEY,
+    frameSize: [...roleRestTransitionManifest.frameSize],
+    anchor: [...roleRestTransitionManifest.anchor],
+    frameIndices: [...item.frameIndices],
+    frameDurationsMs: [...item.frameDurationsMs],
+    safeSwitchFrameIndices: [],
+    hitArea: [...manifest.hitArea],
+    loop: false,
+    returnTo: item.returnTo,
+    transition: true,
+  }])) : {};
   const restingFrame = restAnimations?.idle || { ...animation, sharedArtWith: action, frameIndices: [0], frameDurationsMs: [1000], static: true };
   return {
     id: manifest.id,
@@ -133,20 +194,47 @@ export function seatedV6Contract(integration, role, manifest, room, restIntegrat
       [action]: animation,
       working: { ...animation, sharedArtWith: action, startFrameIndex: transitionManifest ? 13 : undefined },
       ...transitionAnimations,
+      ...roleRestTransitionAnimations,
     },
     localActions: restAnimations ? ['sleeping', 'slack'] : [],
     restIntegrationId: restAnimations ? restIntegration.id : null,
     continuityIntegrationId: transitionManifest ? continuityIntegration.id : null,
     deskDock: {
-      worldAnchor: [...manifest.worldAnchor],
-      characterDepthY: manifest.worldAnchor[1],
+      worldAnchor: [...room.workstations[role].home],
+      characterDepthY: room.workstations[role].home[1],
       frontLayerDepthY: frontDepthForRole(room, role),
-      stationPatch: manifest.stationPatch,
+      // fixedContentBottom is an authored visual registration datum, not a measured chair or hand contact.
+      renderRegistrationPoint: Number.isFinite(restManifest?.fixedContentBottom) ? [manifest.anchor[0], restManifest.fixedContentBottom] : null,
+      stationPatch: manifest.stationPatch ? {
+        ...manifest.stationPatch,
+        worldPosition: [manifest.stationPatch.worldPosition[0], manifest.stationPatch.worldPosition[1] + (room.groundFloorY || 0)],
+      } : null,
     },
   };
 }
 
 export function stewardV6Contract(integration, manifest, actionManifests, routeContract, room) {
+  const groundFloorY = room.groundFloorY || 0;
+  const shiftPoint = ([x, y]) => [x, y + groundFloorY];
+  const shiftBox = ([left, top, right, bottom]) => [left, top + groundFloorY, right, bottom + groundFloorY];
+  const sourceMole = integration.stewardMole;
+  const stewardIntegration = {
+    ...sourceMole,
+    homeWorldFoot: shiftPoint(sourceMole.homeWorldFoot),
+    shelfWorldFoot: shiftPoint(sourceMole.shelfWorldFoot),
+    outboundWaypoints: sourceMole.outboundWaypoints.map(shiftPoint),
+    returnWaypoints: sourceMole.returnWaypoints.map(shiftPoint),
+    propVisibility: {
+      ...sourceMole.propVisibility,
+      fixedDeskStackWorldBBox: shiftBox(sourceMole.propVisibility.fixedDeskStackWorldBBox),
+      shelfPatchWorldBBox: shiftBox(sourceMole.propVisibility.shelfPatchWorldBBox),
+    },
+  };
+  const shiftedRoute = {
+    ...routeContract,
+    outboundWaypoints: routeContract.outboundWaypoints.map(shiftPoint),
+    returnWaypoints: routeContract.returnWaypoints.map(shiftPoint),
+  };
   const animations = Object.fromEntries(Object.entries(actionManifests).map(([action, item]) => [action, {
     sheet: item.spritesheet,
     frameSize: [...item.frameSize],
@@ -171,11 +259,11 @@ export function stewardV6Contract(integration, manifest, actionManifests, routeC
     animations,
     localActions: [],
     deskDock: {
-      worldAnchor: [...integration.stewardMole.homeWorldFoot],
-      characterDepthY: integration.stewardMole.homeWorldFoot[1],
+      worldAnchor: [...stewardIntegration.homeWorldFoot],
+      characterDepthY: stewardIntegration.homeWorldFoot[1],
       frontLayerDepthY: frontDepthForRole(room, 'steward'),
     },
-    steward: { manifest, routeContract, integration: integration.stewardMole },
+    steward: { manifest, routeContract: shiftedRoute, integration: stewardIntegration },
   };
 }
 
@@ -249,6 +337,22 @@ export function coworkerHitArea(contract, action = 'idle') {
   return [left - anchor[0] - padding, top - anchor[1] - padding, right - left + padding * 2, bottom - top + padding * 2];
 }
 
+export function scaledCoworkerHitArea(hitArea, scale = 1, [offsetX, offsetY] = [0, 0]) {
+  return [hitArea[0] * scale + offsetX, hitArea[1] * scale + offsetY, hitArea[2] * scale, hitArea[3] * scale];
+}
+
+export function seatedBodyRenderOffset(anchor, registrationPoint, scale = 1) {
+  if (!Array.isArray(registrationPoint) || registrationPoint.length !== 2) return [0, 0];
+  return [(1 - scale) * (registrationPoint[0] - anchor[0]) || 0, (1 - scale) * (registrationPoint[1] - anchor[1]) || 0];
+}
+
+export function seatedRoleBodyRenderOffset(role, anchor, registrationPoint, scale = 1) {
+  const base = seatedBodyRenderOffset(anchor, registrationPoint, scale);
+  const correction = SEATED_ROLE_POSITION_CORRECTION[role] || [0, 0];
+  return [base[0] + correction[0], base[1] + correction[1]];
+}
+
+
 export function coworkerLocalActions(contract) {
   const configured = contract?.localActions || contract?.behavior?.localActions || [];
   return configured
@@ -257,8 +361,11 @@ export function coworkerLocalActions(contract) {
 }
 
 export function coworkerTransitionSafeFrames(fromAction, toAction, currentSpec) {
+  if (currentSpec?.isStatic) return currentSpec.frames?.length ? [currentSpec.frames[0]] : [];
   if (fromAction === 'working' && toAction === 'work-to-rest') return [13];
   if (fromAction === 'idle' && toAction === 'rest-to-work') return [0];
+  if (fromAction === 'idle' && toAction === 'idle-to-sleep') return [0];
+  if (fromAction === 'sleeping' && toAction === 'sleep-to-idle') return [0];
   if (fromAction === 'idle' && toAction === 'working') return [3];
   if (fromAction === 'idle' && ['sleeping', 'slack'].includes(toAction)) return [0, 3];
   if (['sleeping', 'slack'].includes(fromAction) && toAction === 'idle') return [3];
@@ -294,6 +401,7 @@ export function isEditableTarget(target) {
 const stateLabel = {
   idle: '待命', reading: '整理档案', researching: '核对材料', drafting: '起草成果', reviewing: '独立核对',
   waiting_user: '等待主人确认', completed: '交付完成', failed: '工作受阻', active: '正在工作', replying: '正在回复', done: '已完成',
+  learning_available: '可继续学习', cancelled: '本次已取消',
 };
 
 export function createOfficeBridge(scene) {
@@ -361,10 +469,16 @@ export class OfficeScene extends Phaser.Scene {
 
   preload() {
     this.load.json('office-room-manifest', `${ROOM_ROOT}manifest.json`);
+    this.load.json(FLOOR_EXTENSION_KEY, `${FLOOR_EXTENSION_ROOT}manifest.json`);
+    this.load.once(`filecomplete-json-${FLOOR_EXTENSION_KEY}`, (_key, _type, extension) => {
+      const version = extension?.revision ? `?v=${encodeURIComponent(extension.revision)}` : '';
+      this.load.image('office-upper-gallery', `${FLOOR_EXTENSION_ROOT}${extension.upperFloor.visual.runtimeImage}${version}`);
+    });
     this.load.json('irixi-v4-manifest', `${ROOM_ROOT}characters/irixi/manifest.json`);
     this.load.json(MOTION_INTEGRATION_KEY, `${MOTION_ROOT}integration-manifest.json`);
     this.load.json(REST_INTEGRATION_KEY, `${REST_ROOT}integration-manifest.json`);
     this.load.json(CONTINUITY_INTEGRATION_KEY, `${CONTINUITY_ROOT}integration-manifest.json`);
+    this.load.json(REVIEWER_SLEEP_TRANSITION_MANIFEST_KEY, `${REVIEWER_SLEEP_TRANSITION_ROOT}manifest.json`);
     this.load.once('filecomplete-json-irixi-v4-manifest', (_key, _type, manifest) => {
       const version = manifest?.revision ? `?v=${encodeURIComponent(manifest.revision)}` : '';
       for (const [direction, file] of Object.entries(manifest?.directions?.runtime || {})) this.load.image(`irixi-${direction}-idle`, `${ROOM_ROOT}characters/irixi/${file}${version}`);
@@ -427,6 +541,12 @@ export class OfficeScene extends Phaser.Scene {
         for (const [state, item] of Object.entries(manifest.states)) this.load.spritesheet(`coworker-archivist-${state}-continuity-v3`, `${CONTINUITY_ROOT}${overrideDirectory}${item.spritesheet}${version}`, { frameWidth: manifest.frameSize[0], frameHeight: manifest.frameSize[1] });
       });
     });
+    this.load.once(`filecomplete-json-${REVIEWER_SLEEP_TRANSITION_MANIFEST_KEY}`, (_key, _type, manifest) => {
+      const version = `?v=${encodeURIComponent(manifest.id)}`;
+      this.load.spritesheet(REVIEWER_SLEEP_TRANSITION_TEXTURE_KEY, `${REVIEWER_SLEEP_TRANSITION_ROOT}${manifest.spritesheet}${version}`, {
+        frameWidth: manifest.frameSize[0], frameHeight: manifest.frameSize[1],
+      });
+    });
     this.load.once('filecomplete-json-office-room-manifest', (_key, _type, manifest) => {
       const assetVersion = manifest?.revision ? `?v=${encodeURIComponent(manifest.revision)}` : '';
       this.load.image('office-room-base', `${ROOM_ROOT}${manifest.world.background}${assetVersion}`);
@@ -440,22 +560,25 @@ export class OfficeScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#120d0a');
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const roomManifest = this.cache.json.get('office-room-manifest');
-    this.room = normalizeRoomContract(roomManifest);
+    const floorExtension = this.cache.json.get(FLOOR_EXTENSION_KEY);
+    this.room = normalizeRoomContract(roomManifest, floorExtension);
     this.irixiContract = this.cache.json.get('irixi-v4-manifest');
     this.motionIntegration = this.cache.json.get(MOTION_INTEGRATION_KEY);
     this.restIntegration = this.cache.json.get(REST_INTEGRATION_KEY);
     this.continuityIntegration = this.cache.json.get(CONTINUITY_INTEGRATION_KEY);
-    this.coworkerContracts = Object.fromEntries(Object.keys(this.motionIntegration.seatedRoles).map((role) => [role, seatedV6Contract(this.motionIntegration, role, this.cache.json.get(`coworker-${role}-motion-manifest`), this.room, this.restIntegration, this.cache.json.get(`coworker-${role}-rest-manifest`), this.continuityIntegration, this.cache.json.get(`coworker-${role}-continuity-manifest`), role === 'archivist' ? this.cache.json.get('coworker-archivist-rest-continuity-manifest') : null)]));
+    this.coworkerContracts = Object.fromEntries(Object.keys(this.motionIntegration.seatedRoles).map((role) => [role, seatedV6Contract(this.motionIntegration, role, this.cache.json.get(`coworker-${role}-motion-manifest`), this.room, this.restIntegration, this.cache.json.get(`coworker-${role}-rest-manifest`), this.continuityIntegration, this.cache.json.get(`coworker-${role}-continuity-manifest`), role === 'archivist' ? this.cache.json.get('coworker-archivist-rest-continuity-manifest') : null, role === 'reviewer' ? this.cache.json.get(REVIEWER_SLEEP_TRANSITION_MANIFEST_KEY) : null)]));
     const stewardManifest = this.cache.json.get('coworker-steward-motion-manifest');
     const stewardActions = Object.fromEntries(stewardManifest.actions.map(({ action }) => [action, this.cache.json.get(`coworker-steward-${action}-manifest`)]));
     this.coworkerContracts.steward = stewardV6Contract(this.motionIntegration, stewardManifest, stewardActions, this.cache.json.get('coworker-steward-route-contract'), this.room);
-    for (const [role, contract] of Object.entries(this.coworkerContracts)) this.room.workstations[role].home = [...contract.deskDock.worldAnchor];
     const coworkerTextures = Object.entries(this.coworkerContracts).flatMap(([role, contract]) => [coworkerAnimationSpec(contract, role, 'idle')?.textureKey, ...Object.keys(contract.animations).map((action) => coworkerAnimationSpec(contract, role, action)?.textureKey), contract.deskDock?.stationPatch?.file ? `coworker-${role}-station-patch` : null]);
     ['office-room-base', ...this.irixiContract.directions.order.map((direction) => `irixi-${direction}-idle`), ...this.irixiContract.directions.order.map((direction) => `irixi-${direction}-walk-sheet`), ...coworkerTextures, 'steward-book-stack-desk', 'steward-book-stack-shelf', ...this.room.foregroundItems.map((item) => `room-foreground-${item.id}`)]
       .filter((key) => this.textures.exists(key))
       .forEach((key) => this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR));
     this.createCoworkerAnimations();
-    this.add.image(this.room.width / 2, this.room.height / 2, 'office-room-base').setDepth(-100);
+    for (const layer of this.room.backgroundLayers) {
+      this.add.image(layer.x + layer.width / 2, layer.y + layer.height / 2, layer.key)
+        .setDisplaySize(layer.width, layer.height).setDepth(layer.depth);
+    }
     this.drawStationPatches();
     this.drawStewardProps();
     for (const name of this.irixiContract.directions.order) {
@@ -477,9 +600,12 @@ export class OfficeScene extends Phaser.Scene {
       const renderDepth = contract.deskDock.characterDepthY ?? (Number.isFinite(frontDepth) ? Math.min(home[1], frontDepth - 1) : home[1]);
       sprite.setPosition(...home).setDepth(renderDepth);
       const hitArea = coworkerHitArea(contract);
-      sprite.setInteractive(new Phaser.Geom.Rectangle(...hitArea), Phaser.Geom.Rectangle.Contains);
+      const renderScale = SEATED_ROLE_RENDER_SCALE[person.role] || 1;
+      const renderOffset = seatedRoleBodyRenderOffset(person.role, contract.anchor, contract.deskDock.renderRegistrationPoint, renderScale);
+      const scaledHitArea = scaledCoworkerHitArea(hitArea, renderScale, renderOffset);
+      sprite.setInteractive(new Phaser.Geom.Rectangle(...scaledHitArea), Phaser.Geom.Rectangle.Contains);
       const hasLocalActions = coworkerLocalActions(contract).length > 0;
-      const officePerson = { ...person, home: [...home], renderDepth, hitArea, interactionPoint: [...this.room.workstations[person.role].interactionPoint], sprite, statusText: sprite.getByName('status'), active: false, activitySource: 'local', actionSource: 'local', localEligible: true, localAction: null, localActionIndex: 0, nextLocalActionAt: this.time.now + (hasLocalActions ? localRestDelay(person.role, true) : Number.POSITIVE_INFINITY), pendingAction: null };
+      const officePerson = { ...person, home: [...home], renderDepth, renderScale, renderOffset, hitArea: scaledHitArea, interactionPoint: [...this.room.workstations[person.role].interactionPoint], sprite, statusText: sprite.getByName('status'), active: false, activitySource: 'local', actionSource: 'local', localEligible: true, localAction: null, localActionIndex: 0, nextLocalActionAt: this.time.now + (hasLocalActions ? localRestDelay(person.role, true) : Number.POSITIVE_INFINITY), pendingAction: null };
       sprite.on('pointerdown', () => this.talkTo(officePerson));
       this.people.set(person.role, officePerson);
       this.setPersonAction(officePerson, 'idle', 'local', true);
@@ -499,9 +625,25 @@ export class OfficeScene extends Phaser.Scene {
   fitCamera() {
     const width = this.scale.width;
     const height = this.scale.height;
-    const zoom = crispZoom(width, height, this.room.width, this.room.height);
-    this.cameras.main.setZoom(zoom);
-    this.cameras.main.centerOn(this.room.width / 2, this.room.height / 2);
+    const camera = this.cameras.main;
+    const floorWidth = this.room.floorWidth || this.room.width;
+    const zoom = Math.max(crispZoom(width, height, floorWidth, this.room.floorHeight), height / this.room.floorHeight, width / (floorWidth - TILE * 4));
+    camera.setBounds(0, 0, this.room.width, this.room.height);
+    camera.setZoom(zoom);
+    this.centerCameraOnPlayer();
+  }
+
+  centerCameraOnPlayer() {
+    const camera = this.cameras.main;
+    const viewWidth = this.scale.width / camera.zoom;
+    const viewHeight = this.scale.height / camera.zoom;
+    const playerX = this.player?.x ?? this.room.width / 2;
+    const playerY = this.player?.y ?? (this.room.groundFloorY + this.room.floorHeight / 2);
+    const visibleLayers = this.room.backgroundLayers?.filter((layer) => playerY + viewHeight / 2 > layer.y && playerY - viewHeight / 2 < layer.y + layer.height);
+    const minX = visibleLayers?.length ? Math.max(...visibleLayers.map((layer) => layer.x)) : 0;
+    const maxX = visibleLayers?.length ? Math.min(...visibleLayers.map((layer) => layer.x + layer.width)) : this.room.width;
+    const clampCenter = (value, min, max, view) => view >= max - min ? (min + max) / 2 : Math.max(min + view / 2, Math.min(max - view / 2, value));
+    camera.centerOn(clampCenter(playerX, minX, maxX, viewWidth), clampCenter(playerY, 0, this.room.height, viewHeight));
   }
 
   makeCollisionMap() {
@@ -531,11 +673,11 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   drawStewardProps() {
-    const props = this.motionIntegration.stewardMole.propVisibility;
+    const props = this.coworkerContracts.steward.steward.integration.propVisibility;
     const [deskX, deskY, deskRight, deskBottom] = props.fixedDeskStackWorldBBox;
     const [shelfX, shelfY, shelfRight, shelfBottom] = props.shelfPatchWorldBBox;
     this.stewardDeskStack = this.add.image(deskX, deskY, 'steward-book-stack-desk').setOrigin(0, 0).setDisplaySize(deskRight - deskX, deskBottom - deskY).setDepth(deskBottom - 1);
-    this.stewardShelfStack = this.add.image(shelfX, shelfY, 'steward-book-stack-shelf').setOrigin(0, 0).setDisplaySize(shelfRight - shelfX, shelfBottom - shelfY).setDepth(this.motionIntegration.stewardMole.shelfWorldFoot[1] - 1).setVisible(false);
+    this.stewardShelfStack = this.add.image(shelfX, shelfY, 'steward-book-stack-shelf').setOrigin(0, 0).setDisplaySize(shelfRight - shelfX, shelfBottom - shelfY).setDepth(this.coworkerContracts.steward.steward.integration.shelfWorldFoot[1] - 1).setVisible(false);
   }
 
   createCoworkerAnimations() {
@@ -591,6 +733,11 @@ export class OfficeScene extends Phaser.Scene {
     const frameSize = idleSpec?.frameSize || contract?.frameSize || [64, 72];
     const anchor = idleSpec?.anchor || contract?.anchor || [32, 68];
     const body = this.add.sprite(0, 0, texture, idleSpec?.frames?.[0] || 0).setOrigin(anchor[0] / frameSize[0], anchor[1] / frameSize[1]).setName('body');
+    if (!owl) {
+      const renderScale = SEATED_ROLE_RENDER_SCALE[character.role] || 1;
+      body.setScale(renderScale);
+      body.setPosition(...seatedRoleBodyRenderOffset(character.role, anchor, contract?.deskDock?.renderRegistrationPoint, renderScale));
+    }
     body.setData('runtime', !owl && Boolean(idleSpec && this.textures.exists(idleSpec.textureKey)));
     if (owl) body.play('irixi-down-idle');
     const name = this.add.text(0, 9, label, { fontFamily: 'system-ui', fontSize: '10px', color: '#fff3cf', backgroundColor: '#183b32', padding: { x: 4, y: 2 } }).setOrigin(.5, 0);
@@ -627,6 +774,7 @@ export class OfficeScene extends Phaser.Scene {
     this.updateStewardMotionPause();
     this.updateStewardRoutine(time);
     this.updateLocalCoworkers(time);
+    this.centerCameraOnPlayer();
     if (time - this.lastRoleDebugAt >= 240) {
       this.syncRoleDebug();
       this.lastRoleDebugAt = time;
@@ -822,7 +970,7 @@ export class OfficeScene extends Phaser.Scene {
       if (active) {
         const [x, y] = person.home;
         this.moveCoworker(person, x, y);
-        this.setPersonAction(person, 'working', activitySource);
+        this.setPersonAction(person, role === 'steward' && this.stewardRoutine?.completed ? 'wait-empty' : 'working', activitySource);
       } else {
         this.moveCoworker(person, ...person.home);
         const workTransitionPending = person.pendingAction?.action === 'working' || person.pendingAction?.then?.action === 'working' || person.afterTransition?.action === 'working';
@@ -834,7 +982,7 @@ export class OfficeScene extends Phaser.Scene {
   setPersonAction(person, action, source = person.activitySource || 'local', force = false, then = null, direct = false) {
     const body = person.sprite.getByName('body');
     const contract = this.coworkerContracts[person.role];
-    const transitionActions = ['work-to-rest', 'rest-to-work'];
+    const transitionActions = ['work-to-rest', 'rest-to-work', 'idle-to-sleep', 'sleep-to-idle'];
     const continuityEnabled = Boolean(contract.animations['work-to-rest'] && contract.animations['rest-to-work'] && !this.reducedMotion);
     if (!direct && transitionActions.includes(person.localAction) && !transitionActions.includes(action)) {
       person.afterTransition = { action, source };
@@ -852,6 +1000,13 @@ export class OfficeScene extends Phaser.Scene {
       then = { action: 'working', source };
       action = 'rest-to-work';
     }
+    if (!direct && !this.reducedMotion && person.role === 'reviewer' && person.localAction === 'idle' && action === 'sleeping' && contract.animations['idle-to-sleep']) {
+      then ||= { action: 'sleeping', source };
+      action = 'idle-to-sleep';
+    } else if (!direct && !this.reducedMotion && person.role === 'reviewer' && person.localAction === 'sleeping' && action === 'idle' && contract.animations['sleep-to-idle']) {
+      then ||= { action: 'idle', source };
+      action = 'sleep-to-idle';
+    }
     const requested = coworkerAnimationSpec(contract, person.role, action);
     const resolvedAction = requested ? action : 'idle';
     const spec = requested || coworkerAnimationSpec(contract, person.role, 'idle');
@@ -864,7 +1019,7 @@ export class OfficeScene extends Phaser.Scene {
     }
     const currentSpec = coworkerAnimationSpec(contract, person.role, person.localAction);
     const currentFrame = Number(body.anims?.currentFrame?.textureFrame ?? body.frame?.name ?? body.frame?.index ?? 0);
-    const safeFrames = coworkerTransitionSafeFrames(person.localAction, action, currentSpec);
+    const safeFrames = this.reducedMotion ? [currentFrame] : coworkerTransitionSafeFrames(person.localAction, action, currentSpec);
     if (!force && safeFrames.length && !isSafeSwitchFrame(currentFrame, safeFrames)) {
       person.pendingAction = { action, source, then };
       this.syncRoleDebug();
@@ -881,7 +1036,11 @@ export class OfficeScene extends Phaser.Scene {
       return true;
     }
     body.setOrigin(spec.anchor[0] / spec.frameSize[0], spec.anchor[1] / spec.frameSize[1]);
-    const hitArea = spec.animation.hitArea || coworkerHitArea(contract, action);
+    const hitArea = scaledCoworkerHitArea(
+      spec.animation.hitArea || coworkerHitArea(contract, action),
+      person.renderScale || SEATED_ROLE_RENDER_SCALE[person.role] || 1,
+      person.renderOffset || [0, 0],
+    );
     person.hitArea = hitArea;
     person.sprite.setInteractive(new Phaser.Geom.Rectangle(...hitArea), Phaser.Geom.Rectangle.Contains);
     const key = `${person.role}-${action}`;
@@ -969,7 +1128,7 @@ export class OfficeScene extends Phaser.Scene {
     };
     const body = person.sprite.getByName('body');
     body.on('animationupdate', (_animation, frame) => {
-      const owner = stewardBookOwner(person.localAction, Number(frame.textureFrame), this.stewardRoutine.bookOwner, this.motionIntegration.stewardMole.propVisibility);
+      const owner = stewardBookOwner(person.localAction, Number(frame.textureFrame), this.stewardRoutine.bookOwner, this.coworkerContracts.steward.steward.integration.propVisibility);
       if (owner === this.stewardRoutine.bookOwner) return;
       this.stewardRoutine.bookOwner = owner;
       if (owner === 'shelf') this.stewardShelfStack.setVisible(true);
@@ -1024,7 +1183,10 @@ export class OfficeScene extends Phaser.Scene {
     const routine = this.stewardRoutine;
     const person = this.people?.get('steward');
     if (!routine || !person || routine.completed || routine.phase !== 'waiting' || time < routine.nextAt) return;
-    if (person.active || !person.localEligible || this.reducedMotion) { routine.nextAt = time + 1000; return; }
+    if ((!person.active && !person.localEligible) || (person.active && person.activitySource !== 'task') || this.reducedMotion) {
+      routine.nextAt = time + 1000;
+      return;
+    }
     routine.phase = 'pickup';
     routine.bookOwner = 'transition';
     this.stewardDeskStack.setVisible(false);
@@ -1106,7 +1268,7 @@ export class OfficeScene extends Phaser.Scene {
     routine.pauseReasons.clear();
     person.renderDepth = person.home[1];
     person.pendingTaskAction = null;
-    this.setPersonAction(person, person.active ? 'working' : 'wait-empty', person.active ? person.activitySource : 'local', true);
+    this.setPersonAction(person, 'wait-empty', person.active ? person.activitySource : 'local', true);
     this.syncRoleDebug();
   }
 

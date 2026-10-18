@@ -7,7 +7,8 @@
     "bit-office": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "schemas"
   ],
   "scripts": {
     "dev": "NODE_ENV=development WS_PORT=9099 tsx watch src/index.ts",

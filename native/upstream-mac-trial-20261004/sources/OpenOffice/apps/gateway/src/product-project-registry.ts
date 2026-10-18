@@ -4,6 +4,29 @@ import path from "node:path";
 
 const HEX64 = /^[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9_-]{1,160}$/;
+const MAX_NOOBI_REGISTERED_READONLY_PNG_BYTES = 2 * 1024 * 1024;
+const NOOBI_REGISTERED_READONLY_PNG_PATHS = new Set([
+  "public/assets/images/books/book-stack-at-desk.png",
+  "public/assets/images/books/book-stack-master.png",
+  "public/assets/images/books/book-stack-shelved-patch.png",
+  "public/assets/images/irixi/runtime/down.png",
+  "public/assets/images/irixi/runtime/irixi-left.png",
+  "public/assets/images/irixi/runtime/irixi-right.png",
+  "public/assets/images/irixi/runtime/irixi-up.png",
+  "public/assets/images/irixi/walk/down/spritesheet.png",
+  "public/assets/images/irixi/walk/left/spritesheet.png",
+  "public/assets/images/irixi/walk/right/spritesheet.png",
+  "public/assets/images/irixi/walk/up/spritesheet.png",
+  "public/assets/images/rooms/room-1440x810.png",
+]);
+
+export function isAllowedProductSourceFile(projectId: string, sourcePath: string, bytes: number, writable: boolean): boolean {
+  if (!Number.isInteger(bytes) || bytes < 0) return false;
+  if (bytes <= 512 * 1024) return true;
+  return projectId === "noobi-owl-book-sorter-v1" && !writable
+    && NOOBI_REGISTERED_READONLY_PNG_PATHS.has(sourcePath)
+    && bytes <= MAX_NOOBI_REGISTERED_READONLY_PNG_BYTES;
+}
 
 export type ProductProjectRegistry = {
   schemaVersion: 1;
@@ -12,7 +35,7 @@ export type ProductProjectRegistry = {
   goalVersionId: string;
   taskInputBindingSha256: string;
   pipelineBindingSha256: string;
-  authorityUrl: "http://127.0.0.1:3869/";
+  authorityUrl: string;
   workspace: {
     path: string;
     scopeFingerprint: string;
@@ -103,6 +126,29 @@ export function productPreviewMatches(context: ProductPreviewContext | null, val
     && value.artifact?.candidateSha256 === context.candidateSha256);
 }
 
+export function isNoobiBuiltPreviewAsset(projectId: string, value: string): boolean {
+  return projectId === "noobi-owl-book-sorter-v1" && typeof value === "string" && value.length <= 240
+    && value.startsWith("assets/") && !value.includes("\\") && !value.includes("\0")
+    && !path.posix.isAbsolute(value) && path.posix.normalize(value) === value
+    && value.split("/").every((part) => part && part !== "." && part !== ".." && !part.startsWith("."));
+}
+
+export function productPreviewContentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === ".html" || ext === ".htm" ? "text/html; charset=utf-8"
+    : ext === ".css" ? "text/css; charset=utf-8"
+      : ext === ".js" || ext === ".mjs" ? "application/javascript; charset=utf-8"
+        : ext === ".png" ? "image/png"
+          : ext === ".svg" ? "image/svg+xml"
+            : ext === ".webp" ? "image/webp"
+              : ext === ".avif" ? "image/avif"
+                : ext === ".gif" ? "image/gif"
+                  : ext === ".ico" ? "image/x-icon"
+                    : ext === ".json" ? "application/json; charset=utf-8"
+                      : ext === ".woff" ? "font/woff"
+                        : ext === ".woff2" ? "font/woff2" : "application/octet-stream";
+}
+
 function fail(message: string): never {
   throw new Error(`Product project registry rejected: ${message}`);
 }
@@ -126,6 +172,20 @@ function exactKeys(value: Record<string, unknown>, expected: string[], label: st
   if (JSON.stringify(actual) !== JSON.stringify(wanted)) fail(`${label} fields changed`);
 }
 
+export function isAllowedAuthorityUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const endpoint = new URL(value);
+    const port = Number(endpoint.port);
+    return endpoint.protocol === "http:" && endpoint.hostname === "127.0.0.1"
+      && Number.isInteger(port) && port >= 1024 && port <= 65535
+      && !endpoint.username && !endpoint.password && endpoint.pathname === "/"
+      && !endpoint.search && !endpoint.hash && endpoint.href === value;
+  } catch {
+    return false;
+  }
+}
+
 export function productProjectRegistryEnabled(): boolean {
   return Boolean(process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE?.trim());
 }
@@ -144,7 +204,7 @@ export function loadProductProjectRegistry(): ProductProjectRegistry | null {
   exactKeys(value, ["schemaVersion", "projectId", "taskId", "goalVersionId", "taskInputBindingSha256", "pipelineBindingSha256", "authorityUrl", "workspace", "native", "capabilities"], "root");
   if (value.schemaVersion !== 1 || !SAFE_ID.test(value.projectId) || !SAFE_ID.test(value.taskId) || !SAFE_ID.test(value.goalVersionId)) fail("identity is invalid");
   if (!HEX64.test(value.taskInputBindingSha256) || !HEX64.test(value.pipelineBindingSha256)) fail("binding digest is invalid");
-  if (value.authorityUrl !== "http://127.0.0.1:3869/") fail("authority URL must use the fixed loopback endpoint");
+  if (!isAllowedAuthorityUrl(value.authorityUrl)) fail("authority URL must be an explicit HTTP loopback origin on a non-privileged port");
 
   if (!value.workspace || typeof value.workspace !== "object" || Array.isArray(value.workspace)) fail("workspace is invalid");
   exactKeys(value.workspace, ["path", "scopeFingerprint", "sourceSnapshotSha256", "sourceHead", "sourceManifest", "allowedWritePaths", "checks"], "workspace");
@@ -152,19 +212,20 @@ export function loadProductProjectRegistry(): ProductProjectRegistry | null {
   if (!HEX64.test(value.workspace.scopeFingerprint) || !HEX64.test(value.workspace.sourceSnapshotSha256)) fail("workspace binding is invalid");
   if (typeof value.workspace.sourceHead !== "string" || !/^[a-f0-9]{40}$/.test(value.workspace.sourceHead)) fail("workspace source HEAD is invalid");
   if (!Array.isArray(value.workspace.sourceManifest) || !value.workspace.sourceManifest.length || value.workspace.sourceManifest.length > 256) fail("workspace source manifest is invalid");
+  value.workspace.allowedWritePaths = stringArray(value.workspace.allowedWritePaths, "allowed write paths").map((item, index) => relativePath(item, `allowedWritePaths[${index}]`));
   value.workspace.sourceManifest = value.workspace.sourceManifest.map((entry: unknown, index: number) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) fail(`sourceManifest[${index}] is invalid`);
     const item = entry as Record<string, unknown>;
     exactKeys(item, ["path", "bytes", "sha256", "mode"], `sourceManifest[${index}]`);
     const sourcePath = relativePath(item.path, `sourceManifest[${index}].path`);
-    if (!Number.isInteger(item.bytes) || Number(item.bytes) < 0 || Number(item.bytes) > 512 * 1024
+    const writable = Array.isArray(value.workspace.allowedWritePaths) && value.workspace.allowedWritePaths.includes(sourcePath);
+    if (!Number.isInteger(item.bytes) || !isAllowedProductSourceFile(value.projectId, sourcePath, item.bytes as number, writable)
       || !HEX64.test(String(item.sha256 || "")) || !Number.isInteger(item.mode) || Number(item.mode) < 0 || Number(item.mode) > 0o777) {
       fail(`sourceManifest[${index}] is invalid`);
     }
     return { path: sourcePath, bytes: Number(item.bytes), sha256: String(item.sha256), mode: Number(item.mode) };
   });
   if (new Set(value.workspace.sourceManifest.map((entry: { path: string }) => entry.path)).size !== value.workspace.sourceManifest.length) fail("workspace source manifest paths are not unique");
-  value.workspace.allowedWritePaths = stringArray(value.workspace.allowedWritePaths, "allowed write paths").map((item, index) => relativePath(item, `allowedWritePaths[${index}]`));
   if (value.workspace.allowedWritePaths.some((entry: string) => !value.workspace.sourceManifest.some((source: { path: string }) => source.path === entry))) fail("writable paths are absent from the source manifest");
   value.workspace.checks = stringArray(value.workspace.checks, "checks", 32);
 

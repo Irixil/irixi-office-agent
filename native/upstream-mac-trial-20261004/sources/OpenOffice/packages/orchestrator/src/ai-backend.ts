@@ -28,7 +28,11 @@ export interface BuildArgsOpts {
   worktree?: boolean;
   /** Force a backend-enforced read-only filesystem for reviewer processes. */
   readOnly?: boolean;
+  /** Fixed registered learning response schema selected by the orchestrator. */
+  outputSchema?: "article-learning-explain" | "article-learning-assess";
 }
+
+export type RegisteredLearningSchema = NonNullable<BuildArgsOpts["outputSchema"]>;
 
 /** Stability level of a backend adapter */
 export type BackendStability = "stable" | "beta" | "experimental";
@@ -41,6 +45,8 @@ export interface AIBackend {
   name: string;
   command: string;
   buildArgs(prompt: string, opts: BuildArgsOpts): string[];
+  /** UTF-8 size of a backend-owned fixed structured-output schema. */
+  outputSchemaUtf8Bytes?(schema: RegisteredLearningSchema): number;
   /** Extra env vars to delete before spawning (e.g. CLAUDECODE) */
   deleteEnv?: string[];
   /** Whether this backend accepts stdin messages while running */

@@ -296,7 +296,7 @@ export class Orchestrator extends EventEmitter<OrchestratorEventMap> {
     // (causes exit code 1). All backends use managed worktrees (~/.open-office[-dev]/worktrees/) instead.
     if (!isConversation) this.setupWorktreeForAgent(agentId, taskId, repoPath ?? session.workspaceDir);
 
-    session.runTask(taskId, prompt, repoPath, teamContext, true /* isUserInitiated */, opts?.phaseOverride);
+    session.runTask(taskId, prompt, repoPath, teamContext, true /* isUserInitiated */, opts?.phaseOverride, opts?.registeredLearningInference, opts?.registeredProductReview);
   }
 
   /**

@@ -31,8 +31,35 @@ export type TemplateName =
  * Passing them through a worker template can repeat those headers via memory or
  * recovery context, so the budget wrapper must receive the registered bytes.
  */
-export function selectBoundWorkerPrompt(rendered: string, registered: string): string {
-  return registered.startsWith("ARTICLE_LEARNING_INFERENCE_12\n") ? registered : rendered;
+export function selectBoundWorkerPrompt(
+  rendered: string,
+  registered: string,
+  context: { phaseOverride?: string; registeredLearningInference?: boolean; registeredProductReview?: boolean } = {},
+): string {
+  const registeredLearning = registered.startsWith("ARTICLE_LEARNING_INFERENCE_12\n")
+    || (context.phaseOverride === "conversation" && context.registeredLearningInference === true
+      && registered.startsWith("IRIXI_PRODUCT_CONVERSATION_V1\n")
+      && registered.includes("\n\nARTICLE_LEARNING_INFERENCE_12\n"));
+  const registeredReview = context.phaseOverride === "review" && context.registeredProductReview === true
+    && registered.startsWith("IRIXI_PRODUCT_REVIEW_V1\n");
+  return registeredLearning || registeredReview ? registered : rendered;
+}
+
+export function registeredLearningOutputSchema(
+  registered: string,
+  context: { phaseOverride?: string; registeredLearningInference?: boolean } = {},
+): "article-learning-explain" | "article-learning-assess" | undefined {
+  const marker = "\n\nARTICLE_LEARNING_INFERENCE_12\n";
+  const markerAt = registered.indexOf(marker);
+  if (context.phaseOverride !== "conversation" || context.registeredLearningInference !== true
+    || !registered.startsWith("IRIXI_PRODUCT_CONVERSATION_V1\n") || markerAt < 0
+    || registered.indexOf(marker, markerAt + marker.length) >= 0) return undefined;
+  const bodyStart = markerAt + marker.length;
+  const envelopeAt = registered.indexOf("\n{", bodyStart);
+  if (envelopeAt < 0) return undefined;
+  const kindLines = registered.slice(bodyStart, envelopeAt).match(/^IRIXI_INFERENCE_KIND: (explain|assess)$/gm) || [];
+  if (kindLines.length !== 1) return undefined;
+  return kindLines[0].endsWith("explain") ? "article-learning-explain" : "article-learning-assess";
 }
 
 // Shared report format — system parses these fields from agent output

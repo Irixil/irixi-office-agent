@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientStateErrorStatus } from "./client-state-http.js";
+import { clientStateBodyLimit, clientStateErrorStatus } from "./client-state-http.js";
+
+test("product client-state limit matches Authority while legacy remains 64 KiB", () => {
+  assert.equal(clientStateBodyLimit(true), 320 * 1024);
+  assert.equal(clientStateBodyLimit(false), 64 * 1024);
+});
 
 function statusError(status: unknown, message = "controlled client-state failure") {
   return Object.assign(new Error(message), { status });

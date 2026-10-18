@@ -10,7 +10,7 @@ import { nanoid } from "nanoid";
 import { removeWorktree, getIsolatedGitEnv } from "./worktree.js";
 import type { AIBackend } from "./ai-backend.js";
 import type { AgentStatus, TaskResultPayload, OrchestratorEvent, LogActivityEvent, BeforeNativeCall } from "./types.js";
-import { selectBoundWorkerPrompt, type TemplateName } from "./prompt-templates.js";
+import { registeredLearningOutputSchema, selectBoundWorkerPrompt, type TemplateName } from "./prompt-templates.js";
 import { prepareNativePrompt, type NativePromptBudgetSnapshot } from "./native-prompt-budget.js";
 import { getMemoryContext, commitSession, buildRecoveryContext, getRecoveryString, saveSessionHistory, updateWorkState, clearAgentWorkState } from "./memory.js";
 
@@ -285,6 +285,8 @@ interface QueuedTask {
   repoPath?: string;
   teamContext?: string;
   phaseOverride?: string;
+  registeredLearningInference?: boolean;
+  registeredProductReview?: boolean;
 }
 
 export interface AgentSessionOpts {
@@ -434,7 +436,7 @@ export class AgentSession {
     this._renderPrompt = opts.renderPrompt;
   }
 
-  async runTask(taskId: string, prompt: string, repoPath?: string, teamContext?: string, isUserInitiated = false, phaseOverride?: string) {
+  async runTask(taskId: string, prompt: string, repoPath?: string, teamContext?: string, isUserInitiated = false, phaseOverride?: string, registeredLearningInference = false, registeredProductReview = false) {
     // A user cancellation or fail-closed guard stop blocks automatic restarts
     // (from flushResults, delegation, retry) until a fresh user-initiated task.
     if (this._userCancelled && !isUserInitiated) {
@@ -447,7 +449,7 @@ export class AgentSession {
 
     if (this.process || this.admissionPending) {
       const position = this.taskQueue.length + 1;
-      this.taskQueue.push({ taskId, prompt, repoPath, teamContext, phaseOverride });
+      this.taskQueue.push({ taskId, prompt, repoPath, teamContext, phaseOverride, registeredLearningInference, registeredProductReview });
       this.onEvent({
         type: "task:queued",
         agentId: this.agentId,
@@ -480,7 +482,7 @@ export class AgentSession {
     this.currentTaskId = taskId;
     this.currentPhase = phaseOverride ?? null;
     const isReviewer = this.role.toLowerCase().includes("review");
-    const registeredProductReview = isReviewer && phaseOverride === "review"
+    const registeredReviewInput = registeredProductReview && isReviewer && phaseOverride === "review"
       && prompt.startsWith("IRIXI_PRODUCT_REVIEW_V1\n");
     // Worktree path takes priority over repoPath — the whole point of worktree
     // isolation is to keep agent work off the main branch. repoPath is only used
@@ -605,7 +607,18 @@ export class AgentSession {
         const canResume = !isReviewer && this.hasHistory && !!this.sessionId;
         fullPrompt = this._renderPrompt(canResume ? "worker-continue" : workerInitial, templateVars);
       }
-      fullPrompt = selectBoundWorkerPrompt(fullPrompt, prompt);
+      fullPrompt = selectBoundWorkerPrompt(fullPrompt, prompt, { phaseOverride, registeredLearningInference, registeredProductReview: registeredReviewInput });
+      const outputSchema = this.backend.id === "codex"
+        ? registeredLearningOutputSchema(prompt, { phaseOverride, registeredLearningInference })
+        : undefined;
+      const outputSchemaUtf8Bytes = outputSchema ? this.backend.outputSchemaUtf8Bytes?.(outputSchema) : 0;
+      if (outputSchema && (!this._nativePromptAdmission || outputSchemaUtf8Bytes === undefined)) {
+        throw new Error("Registered learning schema requires an admitted, sized output-schema budget.");
+      }
+      // Identify preflight attempts too; Authority records these as not-created,
+      // never as a model call reservation.
+      const attemptId = nanoid(16);
+      this.currentNativeAttemptId = attemptId;
       let promptBudget: NativePromptBudgetSnapshot | undefined;
       if (this._nativePromptAdmission) {
         const occurrences = prompt ? fullPrompt.split(prompt) : [fullPrompt];
@@ -620,7 +633,11 @@ export class AgentSession {
           executionModelId: this._model || "",
           limits: { modelId: this._nativePromptAdmission.modelId, contextWindowTokens: this._nativePromptAdmission.contextWindowTokens,
             effectiveContextPercent: this._nativePromptAdmission.effectiveContextPercent },
-          reserves: { outputTokens: this._nativePromptAdmission.outputTokens, protocolTokens: this._nativePromptAdmission.protocolTokens },
+          reserves: {
+            outputTokens: this._nativePromptAdmission.outputTokens,
+            protocolTokens: this._nativePromptAdmission.protocolTokens,
+            outputSchemaUtf8Bytes: outputSchemaUtf8Bytes ?? 0,
+          },
           blocks: promptBlocks,
           separator: "",
         });
@@ -628,8 +645,6 @@ export class AgentSession {
         fullPrompt = prepared.prompt;
         promptBudget = { ...prepared.budget, removedExactDuplicateCount: prepared.removedExactDuplicates.length };
       }
-      const attemptId = nanoid(16);
-      this.currentNativeAttemptId = attemptId;
       let authorityDeadline: number | undefined;
       if (this._beforeNativeCall) {
         const { createHash } = await import("node:crypto");
@@ -676,7 +691,7 @@ export class AgentSession {
         continue: false,
         resumeSessionId: this.role.toLowerCase().includes("review") ? undefined : (this.sessionId ?? undefined),
         fullAccess,
-        noTools: this._isTeamLead || registeredProductReview,
+        noTools: this._isTeamLead || registeredReviewInput,
         disableMultiAgent: Boolean(this._beforeNativeCall),
         model: this._model,
         modelReasoningEffort: this._beforeNativeCall && this._model === "gpt-6-luna" ? "medium" : undefined,
@@ -684,6 +699,7 @@ export class AgentSession {
         agentType,
         worktree: this.useNativeWorktree,
         readOnly: nativeReadOnly,
+        outputSchema,
         // Only skip resume on first execute (to shed conversational create/design context).
         // On subsequent runs (result forwarding, user feedback), resume so leader keeps context.
         skipResume: isFirstExecute && this.hasHistory,
@@ -1276,8 +1292,8 @@ export class AgentSession {
    * the close handler finishes cleaning up (currentTaskPrompt, etc.),
    * corrupting the retry's work-state. dequeueNext() picks it up safely.
    */
-  prependTask(taskId: string, prompt: string, repoPath?: string, teamContext?: string, phaseOverride?: string) {
-    this.taskQueue.unshift({ taskId, prompt, repoPath, teamContext, phaseOverride });
+  prependTask(taskId: string, prompt: string, repoPath?: string, teamContext?: string, phaseOverride?: string, registeredLearningInference = false, registeredProductReview = false) {
+    this.taskQueue.unshift({ taskId, prompt, repoPath, teamContext, phaseOverride, registeredLearningInference, registeredProductReview });
     this.onEvent({
       type: "task:queued",
       agentId: this.agentId,
@@ -1291,7 +1307,7 @@ export class AgentSession {
     if (this.taskQueue.length === 0) return;
     const next = this.taskQueue.shift()!;
     setTimeout(() => {
-      this.runTask(next.taskId, next.prompt, next.repoPath, next.teamContext, false, next.phaseOverride);
+      this.runTask(next.taskId, next.prompt, next.repoPath, next.teamContext, false, next.phaseOverride, next.registeredLearningInference, next.registeredProductReview);
     }, CONFIG.timing.dequeueDelayMs);
   }
 

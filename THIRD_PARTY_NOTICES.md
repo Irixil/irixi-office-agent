@@ -2,6 +2,10 @@
 
 This stage source snapshot includes the previously adapted local OpenOffice and agent-office source under `native/`. Their original LICENSE files and existing attribution are retained. Historical integration notes below describe their dated implementation scope.
 
+## 2026-10-19 source preview
+
+This preview refreshes the adapted runtime and integration sources from the 2026-10-18 local development snapshot. The upstream revisions below identify the original bases; local adaptations have continued since then. Current desktop task memory, project continuity, review/delivery adapters, office floor extension, and the selected office recording are included in this publication. Original upstream license texts remain intact.
+
 ## Native runtime integration candidate (2026-10-11)
 
 The current Desktop native entry uses the existing, locally adapted OpenOffice runtime at fixed revision `5b0246c396aed041c5262ab0132623bf2b8b067b` and agent-office at fixed revision `b00de4e8615c02605be7b90694dccda55d5d8168`. These are reviewed local revisions, not a claim about the latest upstream release or popularity.

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { authoritativeTerminalOutput, parseAgentOutput } from "./output-parser.js";
 import { parseDelegationLine } from "./agent-session.js";
-import { PromptEngine, selectBoundWorkerPrompt } from "./prompt-templates.js";
+import { PromptEngine, registeredLearningOutputSchema, selectBoundWorkerPrompt } from "./prompt-templates.js";
 
 test("passes a registered learning prompt exactly once without worker context headers", () => {
   const registered = `ARTICLE_LEARNING_INFERENCE_12
@@ -13,6 +13,38 @@ IRIXI_TURN_ID: turn-1`;
   assert.equal(selected, registered);
   assert.equal(selected.match(/^IRIXI_PROJECT_ID:/gm)?.length, 1);
   assert.equal(selectBoundWorkerPrompt("ordinary rendered", "ordinary task"), "ordinary rendered");
+});
+
+test("passes only an explicitly bound learning conversation without development context", () => {
+  const registered = `IRIXI_PRODUCT_CONVERSATION_V1\nRead-only learning call.\n\nARTICLE_LEARNING_INFERENCE_12\nIRIXI_TURN_ID: turn-1`;
+  const rendered = `You are a developer.\n${registered}\n\nIRIXI_APPROVED_PRODUCT_EXECUTION_V1`;
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "conversation", registeredLearningInference: true }), registered);
+  assert.doesNotMatch(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "conversation", registeredLearningInference: true }), /You are a developer|IRIXI_APPROVED_PRODUCT_EXECUTION_V1/);
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "conversation" }), rendered);
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "execute", registeredLearningInference: true }), rendered);
+  assert.equal(selectBoundWorkerPrompt(rendered, `IRIXI_PRODUCT_CONVERSATION_V1\nOrdinary conversation\n\nHello`, { phaseOverride: "conversation", registeredLearningInference: true }), rendered);
+  assert.equal(selectBoundWorkerPrompt(rendered, `prefix\n${registered}`, { phaseOverride: "conversation", registeredLearningInference: true }), rendered);
+});
+
+test("passes a bound product review verbatim but keeps unregistered or spoofed review prompts wrapped", () => {
+  const registered = "IRIXI_PRODUCT_REVIEW_V1\nComplete current candidate and review instructions.";
+  const rendered = `Generic reviewer template\n${registered}\nExtra recovery text`;
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "review", registeredProductReview: true }), registered);
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "review" }), rendered);
+  assert.equal(selectBoundWorkerPrompt(rendered, registered, { phaseOverride: "execute", registeredProductReview: true }), rendered);
+  assert.equal(selectBoundWorkerPrompt(rendered, `prefix\n${registered}`, { phaseOverride: "review", registeredProductReview: true }), rendered);
+});
+
+test("registered explain and assess reservations select only their fixed response schema", () => {
+  const make = (kind: string) => `IRIXI_PRODUCT_CONVERSATION_V1\nRead-only.\n\nARTICLE_LEARNING_INFERENCE_12\nIRIXI_INFERENCE_KIND: ${kind}\nIRIXI_TURN_ID: turn-1\n{"payload":{}}`;
+  const context = { phaseOverride: "conversation", registeredLearningInference: true };
+  assert.equal(registeredLearningOutputSchema(make("explain"), context), "article-learning-explain");
+  assert.equal(registeredLearningOutputSchema(make("assess"), context), "article-learning-assess");
+  assert.equal(registeredLearningOutputSchema(make("summarize"), context), undefined);
+  assert.equal(registeredLearningOutputSchema(make("explain"), { ...context, phaseOverride: "execute" }), undefined);
+  assert.equal(registeredLearningOutputSchema(make("explain"), { ...context, registeredLearningInference: false }), undefined);
+  assert.equal(registeredLearningOutputSchema(`IRIXI_PRODUCT_CONVERSATION_V1\nOrdinary\n\nARTICLE_LEARNING_INFERENCE_12\nIRIXI_INFERENCE_KIND: explain\ntext`, context), undefined);
+  assert.equal(registeredLearningOutputSchema(`${make("explain")}\n\nARTICLE_LEARNING_INFERENCE_12\n`, context), undefined);
 });
 
 test("registered product Developer prompts separate code handoff from downstream acceptance", () => {

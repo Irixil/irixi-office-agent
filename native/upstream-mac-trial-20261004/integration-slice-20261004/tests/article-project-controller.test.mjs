@@ -12,7 +12,7 @@ import { assertArticleNativePrompt } from '../authority/article-project-capacity
 import { resolveDevelopmentBatchBinding } from '../project-intake-20261004/projects/article-learning-12/tools/native-development-binding.mjs';
 import { createStore as createIrixiStore } from '../../../../app/core.mjs';
 
-const APP_ROOT = path.resolve(import.meta.dirname, '../../../../app');
+const APP_ROOT = path.resolve(import.meta.dirname, '..', 'sources', 'irixi-20261004', 'app');
 const REAL_P12 = path.resolve(import.meta.dirname, '..', 'project-intake-20261004', 'projects', 'article-learning-12');
 
 test('authority task history is bounded at 8 MiB without changing regular-file guards', async () => {
@@ -30,11 +30,13 @@ test('TaskStore guardedEffect serializes a bound side effect without a trailing 
   assert.equal(result, 'effect-complete'); assert.equal((await store.get('guarded-fixture')).marker, 'unchanged');
 });
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
+
+// Private installation/history replay is retained only in the development workspace.
 
 test('article text normalization preserves content and only normalizes transport newlines', () => {
   assert.equal(intakeTest.canonicalArticleText('\uFEFFA\r\nB'), 'A\nB\n');
@@ -83,7 +85,7 @@ test('complete review rejects framing above 2 KiB and native prompt above 144 Ki
   assert.throws(() => assertArticleNativePrompt('界'.repeat(49_152) + 'a'), /144 KiB/);
 });
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
 test('article project remains gated, then binds scope, candidate, review, and confirmation without a model', async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-article-controller-')));
@@ -217,6 +219,38 @@ test('article project remains gated, then binds scope, candidate, review, and co
   await assert.rejects(controller.openLearningBatch(before.taskId, goal.id, checked.candidate.candidateSha256, schemaAcceptance), /changed before enable/); assert.deepEqual(await fs.readFile(capabilityFile), interveningCapBytes);
   await fs.writeFile(path.join(tasks, before.taskId, 'task.json'), taskBeforeInterveningWrite); await fs.writeFile(capabilityFile, capBeforeInterveningWrite); await fs.rmdir(path.join(state, 'learning-06'));
   const schemaBatch = await controller.openLearningBatch(before.taskId, goal.id, checked.candidate.candidateSha256, schemaAcceptance); assert.equal(schemaBatch.ordinal, 6); assert.match(schemaBatch.ledgerFile, /learning-06\/model-ledger\.json$/);
+
+  // PRODUCT_MODE history must recover exact materials from the append-only audit
+  // even after the TaskStore's 500-event projection has rolled them out.
+  const productLearning = await createIntakeController({ tasksRoot: tasks, irixiAppRoot: APP_ROOT, taskId: before.taskId,
+    articleProjectFile: projectFile, articleCapabilityFile: capabilityFile, productMode: true });
+  await controller.store.mutate(before.taskId, (current) => {
+    while (current.events.length < 500) controller.helpers.event(current, 'task.state', 'history retention fixture filler', {});
+  });
+  const retained = await productLearning.registerMaterial({ sessionId: 'retained-history-session', label: 'Retained full text', articleText: 'Exact historical article text.' });
+  const retainedState = { record: { sessionId: 'retained-history-session', turns: [{ id: 'turn-1' }] }, cumulative: { completed: 1 } };
+  const retainedSave = await productLearning.saveProductClientState({ projectId: 'article-learning-12', sessionId: 'retained-history-session',
+    expectedGoalVersionId: goal.id, expectedCandidateSha256: checked.candidate.candidateSha256, expectedMaterialEventId: retained.materialEventId,
+    expectedRevision: 0, state: retainedState });
+  assert.equal(retainedSave.revision, 1);
+  await controller.store.mutate(before.taskId, (current) => {
+    for (let index = 0; index < 499; index++) controller.helpers.event(current, 'task.state', 'history retention fixture rollover', { index });
+  });
+  assert.equal((await controller.store.get(before.taskId)).events.some((entry) => entry.id === retained.materialEventId), false);
+  const retainedIndex = await productLearning.productClientState(null, { scope: 'project' });
+  const retainedRow = retainedIndex.items.find((entry) => entry.sessionId === 'retained-history-session');
+  assert.equal(retainedRow.label, 'Retained full text'); assert.equal(retainedRow.materialEventId, retained.materialEventId); assert.equal(retainedRow.current, true);
+  const retainedHistory = await productLearning.productClientState('retained-history-session', { historical: true });
+  assert.equal(retainedHistory.readOnly, true); assert.equal(retainedHistory.current, true);
+  assert.equal(retainedHistory.material.articleText, 'Exact historical article text.\n'); assert.equal(retainedHistory.materialEventId, retained.materialEventId);
+  assert.equal(retainedHistory.material.articleSha256, retained.articleSha256);
+  const retainedCurrent = await productLearning.productClientState('retained-history-session');
+  assert.equal(retainedCurrent.revision, 1); assert.equal(retainedCurrent.material.articleText, 'Exact historical article text.\n');
+  const retainedSave2 = await productLearning.saveProductClientState({ projectId: 'article-learning-12', sessionId: 'retained-history-session',
+    expectedGoalVersionId: goal.id, expectedCandidateSha256: checked.candidate.candidateSha256, expectedMaterialEventId: retained.materialEventId,
+    expectedRevision: 1, state: { ...retainedState, cumulative: { completed: 2 } } });
+  assert.equal(retainedSave2.revision, 2);
+
   await fs.writeFile(path.join(workspace, 'index.html'), '<!doctype html><title>tampered</title>\n');
   await assert.rejects(controller.openLearningBatch(before.taskId, goal.id, checked.candidate.candidateSha256), /changed after host capture/);
 });
@@ -279,41 +313,41 @@ test('controlled automatic-review dispatch failure preserves Developer bytes and
   const stopped = await controller.store.get(before.taskId); assert.equal(stopped.execution.stopReason, 'permanent_error'); assert.equal(stopped.artifacts.at(-1).autoReviewDispatch.failed, true); const proposal = (await controller.state(before.taskId)).repairProposal; assert.equal(proposal.reviewOnlyAvailable, true); const opened = await controller.openRepairBatch(before.taskId, { ...proposal, reviewOnly: true }); assert.equal(opened.maxNativeCalls, 1); assert.equal(opened.candidateSha256, checked.candidate.candidateSha256);
 });
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
-// Local-history replay requires excluded private records; retained in the local source snapshot.
+// Private installation/history replay is retained only in the development workspace.
 
 test('controlled fixture preserves a failed batch and explicitly opens a bound repair batch', async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-article-repair-')));

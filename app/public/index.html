@@ -38,6 +38,11 @@
               <div><span class="eyebrow">TASK LEDGER</span><h2>任务账本</h2></div>
               <button class="icon-button" type="button" id="new-task-button" data-open-dialog="task-dialog" aria-label="建立新任务">＋</button>
             </div>
+            <div id="native-task-filters" class="task-filters" hidden>
+              <label><span class="visually-hidden">按任务标题搜索</span><input id="native-task-search" type="search" placeholder="搜索历史任务" autocomplete="off"></label>
+              <label><span class="visually-hidden">按项目筛选</span><select id="native-task-project"><option value="">全部项目</option></select></label>
+              <p id="native-task-history-status" class="task-history-status" aria-live="polite"></p>
+            </div>
             <div id="task-list" class="task-list"></div>
             <button class="new-task-ribbon" type="button" data-open-dialog="task-dialog">建立一项新工作 <span aria-hidden="true">→</span></button>
           </aside>
@@ -103,6 +108,21 @@
       </div>
       <label>成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" rows="3" placeholder="包含明确结论&#10;能追溯到给定材料"></textarea></label>
       <label>工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" rows="3" placeholder="不自动发送或发布&#10;材料不足时标记待确认"></textarea></label>
+      <input type="hidden" name="functionId" value="">
+      <input type="hidden" name="projectRequestId" value="">
+      <input type="hidden" name="taskCreationRequestId" value="">
+      <p id="task-function-note" class="field-note" hidden></p>
+      <fieldset id="utility-project-picker" class="utility-project-picker" hidden aria-describedby="utility-project-help">
+        <legend>这个小工具放在哪个工程里</legend>
+        <p id="utility-project-help" class="field-note">可以选已有登记工程，也可以新建独立空白工程。新建只保存通用文件结构，不调用模型、不预写具体功能；工程保存后，任务仍由原生 Lead 规划、Developer 编码、Reviewer 独立审阅。</p>
+        <div class="project-choice-options">
+          <label><input type="radio" name="projectMode" value="existing" checked>选择已有工程</label>
+          <label><input type="radio" name="projectMode" value="new">新建空白工程</label>
+        </div>
+        <label id="utility-existing-project-row">已有登记工程<select name="existingProjectId"><option value="">正在读取登记项目…</option></select></label>
+        <label id="utility-new-project-row" hidden>新工程名称<input name="projectName" maxlength="80" placeholder="例如：发票字段核对工具" disabled></label>
+        <p id="utility-project-state" class="field-note" aria-live="polite">选择或新建工程后，下一步是保存目标并单独核对授权范围。</p>
+      </fieldset>
       <label class="checkbox-line"><input type="checkbox" name="memoryPolicy" value="workspace-confirmed"> 允许本任务搜索其他任务中已经由我确认的成果</label>
       <p class="form-disclosure">选择 Codex 后，运行时会把当前任务目标和你加入的材料发送给 Codex 服务；演示提供者不调用模型。</p>
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">建立任务</button></div>

@@ -1,0 +1,29 @@
+name: Bug or installation report
+description: Help reproduce a setup, office, or project-workflow problem.
+title: "[Bug] "
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: Environment / 运行环境
+      description: OS, Node.js version, and iRIXI commit or preview tag.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Include the entry command and provider; use synthetic material.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result / 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence / 脱敏截图或错误
+      description: Remove tokens, personal paths, task databases, and private source material.

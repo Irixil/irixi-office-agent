@@ -363,4 +363,6 @@ export interface CreateTeamOpts {
 export interface RunTaskOpts {
   repoPath?: string;
   phaseOverride?: string;
+  registeredLearningInference?: boolean;
+  registeredProductReview?: boolean;
 }

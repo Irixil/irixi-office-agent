@@ -1,27 +1,105 @@
-# iRIXI Personal Agent · 阶段源码候选
+# iRIXI Personal Agent
 
-iRIXI 用目标、成功条件和明确边界组织个人项目。办公室展示同一任务的成员与执行状态；
+### A personal AI agent in a living Victorian office.
 
-## 本源码包
+Turn a project goal into a plan, an agent team, a reviewed deliverable, and a place to continue next time.
 
-包含桌面源码、当前加载的静态美术、合成项目基线、两项目的既有适配源码和第三方许可。`native/upstream-mac-trial-20261004/sources/` 保存 OpenOffice 与 agent-office；相邻 `integration-slice-20261004/` 保存 Authority、Desktop 适配与启动入口。
+[![Early preview](https://img.shields.io/badge/status-early_preview-b68b4c)](STAGE_STATUS.md)
+[![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-43853d)](docs/getting-started.md)
+[![Desktop first](https://img.shields.io/badge/desktop-first-254b40)](docs/showcase.md)
 
-原始会话、任务数据库、材料记录、调用账、运行日志、实际运行授权、候选工作树、私密执行历史、依赖和编译产物均未打包。当前副本另做了路径和历史配置整理；它与原开发环境的原始字节快照有所不同。
+**[简体中文](README.zh-CN.md) · [See the office](#see-the-office) · [Get started](docs/getting-started.md) · [What works today](STAGE_STATUS.md) · [Contribute](CONTRIBUTING.md)**
 
-## 运行条件
+iRIXI is a visual personal AI assistant for people building and maintaining their own projects. An owl coordinates your work in a Victorian miniature office, while animal colleagues make project roles and activity visible. Underneath the scene, OpenOffice supplies native agent collaboration, model sessions, and managed worktrees.
 
-桌面源码要求 Node.js 24 或更新版本，依赖版本按锁文件。原生链还依赖两个工作区的依赖和编译输出，以及本机已有 Codex 运行时。当前整理未执行安装、构建、服务启动或真实模型测试，跨机器运行仍待验证。
+**Early preview.** Built and exercised on selected local projects. [See the current scope →](STAGE_STATUS.md)
 
-普通入口为 `npm start`；`npm run start:zero` 为禁止模型调用的开发入口，`npm run start:legacy` 为历史桌面后台。原生源码默认从随包的 `native/` 目录定位，也可用 `IRIXI_NATIVE_ROOT` 或 `--native-root` 指定已有的规范绝对路径。既有 Codex 可通过 `IRIXI_CODEX_PATH` 指定。
+## See the office
 
-可信项目目录、授权文件、固定检查、源码摘要与预算必须在新环境中重新建立；源码包没有携带原用户的运行授权。示例不能被视为实际批准。新候选仍需核对当前目标、输入和范围，独立审阅并明确确认后才可下载 patch。
+![iRIXI visual AI office with an owl coordinator and animal colleagues](docs/media/irixi-office.gif)
 
-## 历史绑定的隐私处理
+*An idle/rest recording from the running desktop interface. The map also has a walkable upstairs gallery.*
 
-原源码中的少量精确历史恢复数据移到不上传的 `historical-bindings.local.json`；所有版本、hash、预算、CAS 与证据检查函数保留。公开的 [示例配置](native/upstream-mac-trial-20261004/integration-slice-20261004/authority/historical-bindings.example.json) 使用占位值和空历史恢复表，默认不能恢复原私人运行。配置加载器只读取同目录、规范且有界的普通文件，格式错误会拒绝。
+## Why iRIXI?
 
-需要迁移自己已有的历史运行时，管理员应在本机提供与其真实证据相符的私密配置和记录，并继续执行原有精确校验。不要提交本地配置、运行证据或真实模型输出。当前通用原生产品入口与这些历史回放工具的适用范围分别记录；缺少历史配置不授予新的权限。
+Personal projects often span several conversations and several days. iRIXI is being built to keep the goal, changing requirements, work history, review, and final deliverable together.
 
-公开回归测试保留生成的合成 fixture、匿名路径拒绝样例和路径隐藏正则。需要真实旧会话字节的单独回放用例与一次性操作脚本未进入上传范围。全部原始文件仍保存在本地冻结副本中。
+| What you need | How iRIXI approaches it |
+| --- | --- |
+| Explain a project in ordinary language | Keep a goal, success conditions, boundaries, materials, and accepted instructions in one task record. |
+| Know who is doing what | Show the native team and its current state in an interactive office. |
+| Change your mind during development | Save the change and carry current requirements into the next planning and execution step. |
+| Inspect work before accepting it | Keep candidate files, checks, independent review, and your confirmation as separate steps. |
+| Come back later | Recover the saved project and its history through the ordinary project list. |
+| Keep control of execution | Use registered file scopes, bounded model calls and deadlines, and exact-version delivery. |
 
-实现说明见 [架构](docs/architecture/goal-first-agent.md) 与 [产品范围](docs/product/Irixi-PRD-v0.1.md)。来源、固定版本和署名见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## From a request to a deliverable
+
+```text
+Describe a goal → Plan with the Lead → Approve the plan
+       → Develop in managed worktrees → Independent review
+       → Confirm the specific version → Download → Continue later
+```
+
+Requirements can change along the way. Failed reviews and earlier versions stay in the project history. A new candidate needs its own review and confirmation.
+
+### An existing project, improved in place
+
+The latest local validation used an existing article-learning project. The request began with “download the full learning report,” then added a separate review list containing only weak or untested topics.
+
+- The native team planned, developed, and refined the change through independent review.
+- The confirmed version downloads the saved server record and provides both a full report and a separate review list.
+- Both Markdown downloads were opened and checked. Switching away, returning to the project, and refreshing preserved the restored session.
+
+This selected workflow was validated locally with human supervision. Generated candidate patches remain separate from the application source. [More examples →](docs/showcase.md)
+
+## Get started
+
+**Requirements:** Node.js 24+, npm, and a desktop browser. Development and interaction testing have primarily used macOS.
+
+### Explore the office with the demo provider
+
+```bash
+git clone https://github.com/Irixil/irixi-office-agent.git
+cd irixi-office-agent
+npm ci
+npm run start:legacy
+```
+
+Open [localhost:3847](http://127.0.0.1:3847), keep the **demo provider** selected, and create a task with synthetic material. This is the older desktop backend and is useful for exploring the office and task interface. It does not exercise the native multi-agent development chain.
+
+### Work on the native integration
+
+`npm start` launches the native product entry; `npm run start:zero` disables model execution for development checks. Native execution additionally needs the bundled upstream workspaces prepared, an existing Codex runtime, and a locally registered project scope. The public snapshot excludes the original user's runtime configuration and approvals.
+
+**The native preview is currently a developer setup, with fresh-machine execution unverified.** Read the [setup guide](docs/getting-started.md) before starting it.
+
+## Built around one project history
+
+- **Desktop:** JavaScript, Node.js, Phaser, and EasyStar.js.
+- **Native agents:** locally adapted [OpenOffice](https://github.com/longyangxi/OpenOffice) for team coordination, sessions, worktrees, and previews.
+- **Office interaction:** adapted scene and grid ideas from [agent-office](https://github.com/harishkotra/agent-office), with iRIXI artwork and interaction.
+- **Project continuity:** task records and local memory, plus an optional local XERJ index. This does not mean that every conversation is remembered automatically.
+- **Review and delivery:** checks bind to the current goal, inputs, scope, and candidate. Code changes are delivered as confirmed patches.
+
+See the [architecture](docs/architecture/goal-first-agent.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for ownership and integration boundaries.
+
+## Current focus
+
+- Make native setup and project registration reproducible on a fresh machine.
+- Make project history and cross-version continuation easier to use.
+- Expand article-writing and game workflows through real project use.
+
+Detailed status lives in [STAGE_STATUS.md](STAGE_STATUS.md); version changes live in [CHANGELOG.md](CHANGELOG.md).
+
+## Help shape the project
+
+Useful contributions include reproducible installation reports, project-continuity bugs, clearer documentation, and office interaction improvements. Start with the [contribution guide](CONTRIBUTING.md).
+
+**[Report a bug](https://github.com/Irixil/irixi-office-agent/issues/new?template=bug_report.yml) · [Suggest a use case](https://github.com/Irixil/irixi-office-agent/issues/new?template=feature_request.yml) · [Follow previews](https://github.com/Irixil/irixi-office-agent/releases)**
+
+If the direction is useful to you, a star helps others discover iRIXI. Share the repository with someone working on personal AI assistants, multi-agent workflows, or visual agent offices.
+
+## Licensing and credits
+
+Upstream code retains its original licenses, including MIT notices for OpenOffice, agent-office, Phaser, and EasyStar.js, and the font's OFL notice. A repository-wide license for original iRIXI code and artwork has not yet been declared. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

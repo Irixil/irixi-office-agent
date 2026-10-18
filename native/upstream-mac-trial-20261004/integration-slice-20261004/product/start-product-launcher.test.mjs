@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -12,9 +13,12 @@ import {
   classifyRegistryProjection,
   createOwnedChildSupervisor,
   findAgentOfficeRoomListing,
+  installSignalFailure,
   joinAgentOfficeRoom,
   resolveAgentOfficeUiRoot,
   resolveInitialRegistryBinding,
+  resolveProductPorts,
+  stopOwnedServicesAfterRoomLeave,
   waitForHttpReady,
 } from './start-product.mjs';
 import { desktopEntryReadyMode, resolveDesktopEntryAiEnabled } from './start-product-entry.mjs';
@@ -125,6 +129,61 @@ test('waits for and kills an owned descendant after its process-group leader exi
   assert.throws(() => process.kill(descendantPid, 0), (error) => error?.code === 'ESRCH');
 });
 
+test('stops owned services when Agent Office room leave never settles', async () => {
+  const order = [];
+  const result = await stopOwnedServicesAfterRoomLeave({ leave: () => new Promise(() => {}) }, {
+    async stop() { order.push('supervisor.stop'); return { stopped: true }; },
+  });
+  assert.deepEqual(order, ['supervisor.stop']);
+  assert.deepEqual(result, { stopped: true });
+});
+
+test('nested launcher shutdown survives a second SIGTERM during owned-service cleanup', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX signal behavior is required');
+  const source = fs.readFileSync(new URL('./start-product.mjs', import.meta.url), 'utf8');
+  const cleanup = source.indexOf('await stopOwnedServicesAfterRoomLeave(agentOfficeRoom, supervisor)');
+  const dispose = source.indexOf('signals.dispose()', cleanup);
+  assert.ok(cleanup >= 0 && dispose > cleanup, 'signal handlers must remain installed until owned-service cleanup completes');
+  const script = `
+    import { installSignalFailure, stopOwnedServicesAfterRoomLeave } from ${JSON.stringify(new URL('./start-product.mjs', import.meta.url).href)};
+    const signals = installSignalFailure();
+    console.log('ready');
+    signals.promise.catch(async () => {
+      console.log('shutdown-started');
+      await stopOwnedServicesAfterRoomLeave(null, { async stop() {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        console.log('cleanup-complete');
+        return { stopped: true };
+      } });
+      signals.dispose();
+      process.exit(0);
+    });
+    setInterval(() => {}, 1000);
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let output = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk) => { output += chunk; });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('signal test child did not become ready')), 3000);
+    child.stdout.on('data', () => {
+      if (output.includes('ready')) { clearTimeout(timer); resolve(); }
+    });
+    child.once('error', reject);
+  });
+  child.kill('SIGTERM');
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('launcher did not enter cleanup')), 3000);
+    child.stdout.on('data', () => {
+      if (output.includes('shutdown-started')) { clearTimeout(timer); resolve(); }
+    });
+  });
+  child.kill('SIGTERM');
+  const result = await new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  assert.deepEqual(result, { code: 0, signal: null }, output);
+  assert.match(output, /cleanup-complete/);
+});
+
 test('unexpected owned child exit rejects the launcher fatal boundary', async () => {
   const supervisor = createOwnedChildSupervisor({ termGraceMs: 100, killGraceMs: 100 });
   supervisor.start('controlled-failing-stub', process.execPath, ['-e', 'process.exit(7)'], process.cwd());
@@ -233,4 +292,13 @@ test('Desktop entry AI mode is explicit and defaults to zero-model', () => {
   assert.equal(resolveDesktopEntryAiEnabled(['--zero-model']), false);
   assert.equal(resolveDesktopEntryAiEnabled(['--enable-ai']), true);
   assert.throws(() => resolveDesktopEntryAiEnabled(['--enable-ai', '--zero-model']), /mutually exclusive/);
+});
+
+test('managed runtime ports keep defaults and accept only distinct non-privileged ports', () => {
+  assert.deepEqual(resolveProductPorts([]), { desktop: 3847, authority: 3869, openoffice: 9109, agentOffice: 3029, scene: 5189 });
+  assert.deepEqual(resolveProductPorts(['--desktop-port', '55423', '--authority-port', '31639', '--openoffice-port', '22797', '--agent-office-port', '31640', '--scene-port', '31641']), {
+    desktop: 55423, authority: 31639, openoffice: 22797, agentOffice: 31640, scene: 31641,
+  });
+  assert.throws(() => resolveProductPorts(['--authority-port', '80']), /--authority-port is invalid/);
+  assert.throws(() => resolveProductPorts(['--authority-port', '31639', '--openoffice-port', '31639']), /ports must be distinct/);
 });

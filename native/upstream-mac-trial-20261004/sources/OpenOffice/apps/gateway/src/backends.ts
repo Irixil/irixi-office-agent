@@ -1,11 +1,17 @@
 import { execSync } from "child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import type { AIBackend } from "@bit-office/orchestrator";
+import { fileURLToPath } from "node:url";
+import type { AIBackend, RegisteredLearningSchema } from "@bit-office/orchestrator";
 import { AI_EXECUTION_DISABLED, MAC_TRIAL_CONFIG, MAC_TRIAL_MODE } from "./config.js";
 
 const isRoot = process.getuid?.() === 0;
+const gatewayPackageDir = path.dirname(fileURLToPath(import.meta.url));
+const articleLearningSchemas = {
+  "article-learning-explain": path.resolve(gatewayPackageDir, "../schemas/article-learning-explain.json"),
+  "article-learning-assess": path.resolve(gatewayPackageDir, "../schemas/article-learning-assess.json"),
+} as const;
 
 /**
  * When running as root, --dangerously-skip-permissions is blocked by Claude Code.
@@ -85,6 +91,9 @@ const backends: AIBackend[] = [
     supportsNativeWorktree: false,
     supportsStructuredOutput: false,
     promptViaStdin: true,
+    outputSchemaUtf8Bytes(schema: RegisteredLearningSchema) {
+      return statSync(articleLearningSchemas[schema]).size;
+    },
     buildArgs(prompt, opts) {
       if (MAC_TRIAL_CONFIG && opts.model !== MAC_TRIAL_CONFIG.model) {
         throw new Error(`Mac trial requires explicit model ${MAC_TRIAL_CONFIG.model}`);
@@ -112,6 +121,7 @@ const backends: AIBackend[] = [
       if (opts.model) args.push("--model", opts.model);
       args.push(
         "exec",
+        ...(opts.outputSchema ? ["--output-schema", articleLearningSchemas[opts.outputSchema]] : []),
         "--sandbox", opts.readOnly ? "read-only" : "workspace-write",
         "--skip-git-repo-check",
         "-",

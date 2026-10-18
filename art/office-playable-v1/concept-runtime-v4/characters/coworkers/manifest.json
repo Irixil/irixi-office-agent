@@ -1,0 +1,50 @@
+{
+  "id": "irixi-office-coworkers-v4-2",
+  "revision": "coworker-v4-2",
+  "status": "integration-ready-art-validated-runtime-pending",
+  "stateOrder": ["idle", "working", "sleeping", "slack"],
+  "columnsPerState": 2,
+  "characters": {
+    "writer": {
+      "species": "mouse",
+      "manifest": "writer-mouse/manifest.json",
+      "frameSize": [176, 208],
+      "anchor": [88, 194],
+      "homeAnchor": [304, 390],
+      "poseClass": "seated-desk-bust"
+    },
+    "steward": {
+      "species": "mole",
+      "manifest": "steward-mole/manifest.json",
+      "frameSize": [176, 208],
+      "anchor": [88, 194],
+      "homeAnchor": [960, 310],
+      "poseClass": "standing-left-of-desk"
+    },
+    "researcher": {
+      "species": "hamster",
+      "manifest": "researcher-hamster/manifest.json",
+      "frameSize": [176, 208],
+      "anchor": [88, 194],
+      "homeAnchor": [240, 645],
+      "poseClass": "seated-desk-bust"
+    },
+    "reviewer": {
+      "species": "chinchilla",
+      "manifest": "reviewer-chinchilla/manifest.json",
+      "frameSize": [192, 208],
+      "anchor": [96, 194],
+      "homeAnchor": [1195, 545],
+      "poseClass": "seated-desk-bust"
+    },
+    "archivist": {
+      "species": "fancy-rat",
+      "manifest": "archivist-fancy-rat/manifest.json",
+      "frameSize": [192, 208],
+      "anchor": [96, 194],
+      "homeAnchor": [1180, 739],
+      "poseClass": "seated-desk-bust"
+    }
+  },
+  "runtimeContract": "Each per-character sheet is 2 columns by 4 rows. Read the row mapping and per-state fps/loop flags from that character's manifest. Desk-dock anchors are art-calibrated; Phaser scene verification is still required."
+}

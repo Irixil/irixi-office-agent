@@ -6,10 +6,27 @@ import type { GatewayEvent } from "@office/shared";
 import {
   assertProductProjection,
   assertProductWorkspace,
+  isNoobiBuiltPreviewAsset,
+  isAllowedAuthorityUrl,
   loadProductProjectRegistry,
   productProjectionMatches,
   productRegistrySha256,
 } from "./product-project-registry.js";
+
+const AUTHORITY_PROJECTION_TIMEOUT_MS = 8_000;
+const PRODUCT_NATIVE_CALL_ADMISSION_TIMEOUT_MS = 15_000;
+
+export async function authorizeProductWorktreeRebind(endpoint: string, evidence: unknown) {
+  const response = await fetch(new URL("/v1/product-worktree-rebind", endpoint), {
+    method: "POST", signal: AbortSignal.timeout(PRODUCT_NATIVE_CALL_ADMISSION_TIMEOUT_MS),
+    headers: { "content-type": "application/json" }, body: JSON.stringify(evidence),
+  });
+  const result = await response.json() as { authorized?: boolean; eventId?: string; error?: string };
+  if (!response.ok || result.authorized !== true || typeof result.eventId !== "string" || !result.eventId) {
+    throw new Error(typeof result.error === "string" ? result.error : "Irixi rejected managed worktree continuation");
+  }
+  return { authorized: true as const, eventId: result.eventId };
+}
 
 type Projection = {
   schemaVersion: 1;
@@ -34,8 +51,8 @@ type Projection = {
   productRegistry?: null | { registrySha256: string; current: boolean };
   artifact: null | { id: string; version: number; candidateSha256: string | null; diffSha256: string | null; patchSha256: string | null;
     hostCheck?: { passed: boolean } | null;
-    review?: { id: string; passed: boolean; nativeVerdict: string | null; scopeOutcome: string | null } | null;
-    confirmation?: { approvalId: string; artifactVersion: number; goalVersionId: string } | null;
+    review?: { id: string; passed: boolean; nativeVerdict: string | null; scopeOutcome: string | null; fullOutputSha256?: string | null } | null;
+    confirmation?: { approvalId: string; artifactVersion: number; goalVersionId: string; reviewAdjudication?: { reviewId: string; reviewFullOutputSha256: string; reason: string; decidedBy: string; decidedAt: string; authorizationSourceThreadId: string; authorizationText: string } | null } | null;
   };
 };
 
@@ -56,6 +73,31 @@ export type IrixiEventBinding = {
 };
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+function isValidLeadPlanText(text: unknown): text is string {
+  if (typeof text !== "string" || !text.trim() || text.includes("\u0000") || Buffer.byteLength(text) > 40_000) return false;
+  const markers = [...text.matchAll(/\[\/?PLAN\]/g)];
+  if (markers.length !== 2 || markers[0][0] !== "[PLAN]" || markers[1][0] !== "[/PLAN]") return false;
+  const opening = markers[0].index!;
+  const closing = markers[1].index!;
+  const lineStart = (index: number) => index === 0 || text[index - 1] === "\n";
+  const lineEnd = (index: number, length: number) => index + length === text.length || text[index + length] === "\n"
+    || (text[index + length] === "\r" && text[index + length + 1] === "\n");
+  if (!lineStart(opening) || !lineEnd(opening, 6) || !lineEnd(closing, 7)) return false;
+  const body = text.slice(opening + 6, closing).replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+  return Boolean(body.trim());
+}
+const PRODUCT_LEARNING_AUTHORITY_ROUTES = new Set([
+  "GET /v1/intake",
+  "GET /v1/learning/client-state",
+  "PUT /v1/learning/client-state",
+  "POST /v1/materials",
+  "POST /v1/learning/open-batch",
+  "GET /v1/inference",
+  "POST /v1/inference/reservations",
+  "POST /v1/inference/native-calls",
+  "POST /v1/inference/results",
+  "POST /v1/inference/failures",
+]);
 export type ProductApprovalContext = {
   taskId: string; goalVersionId: string; executionId: string; registrySha256: string;
   planSha256: string; executionPrompt: string; executionPromptSha256: string;
@@ -80,6 +122,7 @@ export function buildProductApprovedExecutionPrompt(context: ProductApprovalCont
     ].join("\n"),
     `Exact user-approved Lead plan:\n${approvedPlan}`,
     "The user explicitly approved this exact Lead plan for this registered task and project scope. Coordinate execution through registered team members. Writable work must remain in managed isolated worktrees and within the registered file list. Do not merge, publish, create another project directory, or expand scope.",
+    "The listed Lead, Senior Developer, and Reviewer are roles registered and managed by the external OpenOffice Orchestrator, not Codex /root/... subagents. Use the supplied OpenOffice roster as the delegation target list; do not use send_message, list_agents, followup_task, or spawn_agent to find or create these roles. As Lead, delegate only by emitting in the FINAL answer a line in the form @Exact Registered Name: complete assignment; the OpenOffice DelegationRouter schedules that assignment. Do not claim an OpenOffice role is missing because Codex's internal agent list does not contain it. If a requested target is absent from the supplied OpenOffice roster, do not invent or rename it; report that target as missing.",
     "The host has already admitted this current execution. Use the bound task, goal version, execution ID, and registry SHA above; historical round numbers do not create current run authority. Do not start another run or call a scheduler, reservation, or job-manager API.",
     "The host manages registered fixed checks and static preview. Complete only your assigned role work, report what you actually verified, and do not claim a host check or preview passed before its evidence is returned.",
     "Executable @delegations to registered members and each complete assignment body must appear in the FINAL answer; commentary is not executable and must not be claimed as delegated work. Lead/coordination roles must not write code or invoke tools themselves.",
@@ -297,6 +340,21 @@ export async function persistInferenceTerminalBeforePublish(options: {
   }
 }
 
+export async function persistInferenceStartFailureBeforePublish(options: {
+  integration: {
+    isInferenceTask(sourceTaskId: string): boolean;
+    recordInference(type: "TASK_DONE" | "TASK_FAILED", sourceTaskId: string, value: string): Promise<void>;
+  };
+  event: Extract<IntakeTerminalEvent, { type: "TASK_FAILED" }>;
+  buffer: (event: IntakeTerminalEvent) => void;
+  publish: (event: IntakeTerminalEvent) => void;
+}) {
+  if (options.integration.isInferenceTask(options.event.taskId)) return persistInferenceTerminalBeforePublish(options);
+  options.buffer(options.event);
+  options.publish(options.event);
+  return { persisted: false as const, event: options.event };
+}
+
 type IntegratedTerminalEvent = Extract<GatewayEvent, { type: "TASK_DONE" | "TASK_FAILED" }>;
 
 function boundedTerminalError(value: unknown): string | null {
@@ -431,24 +489,50 @@ export function createIrixiIntegration() {
     throw new Error("Product registry authority or task does not match the configured Irixi endpoint");
   }
   const authorityTaskId = expectedTaskId;
+  if (!isAllowedAuthorityUrl(rawUrl)) throw new Error("Irixi authority must use an explicit HTTP loopback origin on a non-privileged port");
   const endpoint = new URL(rawUrl);
-  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.port !== "3869" || endpoint.pathname !== "/") {
-    throw new Error("Irixi authority must use the fixed loopback endpoint http://127.0.0.1:3869/");
-  }
   const taskBindings = new Map<string, IrixiEventBinding>();
   const taskActors = new Map<string, "lead" | "developer" | "reviewer">();
+  type RegisteredProductReview = {
+    sourceTaskId: string; agentId: string; role: string; dispatchEventId: string; goalVersionId: string;
+    executionId: string; registrySha256: string; artifactId: string; artifactVersion: number;
+    candidateSha256: string; expectedReviewId: string | null; reviewRoundId: string | null;
+    prompt: string; promptSha256: string; binding: IrixiEventBinding;
+  };
+  const productReviewTasks = new Map<string, RegisteredProductReview>();
+  const canonicalReviewerRole = (role: unknown) => {
+    if (typeof role !== "string") return null;
+    const registered = initialProductRegistry?.native.allowedRoles.find((candidate) => candidate.toLowerCase() === role.toLowerCase());
+    return registered?.toLowerCase().includes("review") ? registered : null;
+  };
   const reviewContracts = new Map<string, NonNullable<Projection["confirmedContract"]>>();
   const intakeRuns = new Map<string, string>();
   const inferenceRuns = new Map<string, { prompt: string; promptSha256: string }>();
+  const projectProgressRuns = new Map<string, { reservationId: string; sessionId: string; batchId: string; prompt: string; promptSha256: string }>();
   type NativeRun = { attemptId: string; agentId: string; nativeWorkspace: string; binding: IrixiEventBinding; actor: "lead" | "developer" | "reviewer"; phase: string | null };
   const pendingNativeRuns = new Map<string, NativeRun>();
   const nativeRuns = new Map<string, NativeRun>();
 
   async function intakeRequest(pathname: string, init: RequestInit = {}) {
-    if (!intakeTaskId) throw new Error("Irixi project intake is not enabled");
-    const response = await fetch(new URL(pathname, endpoint), { signal: AbortSignal.timeout(3_000), ...init });
+    const url = new URL(pathname, endpoint);
+    const method = (init.method || "GET").toUpperCase();
+    const productLearningRoute = initialProductRegistry?.projectId === "article-learning-12"
+      && initialProductRegistry.taskId === authorityTaskId
+      && PRODUCT_LEARNING_AUTHORITY_ROUTES.has(`${method} ${url.pathname}`);
+    if (!intakeTaskId && !productLearningRoute) throw new Error("Irixi project intake is not enabled");
+    const response = await fetch(url, { signal: AbortSignal.timeout(3_000), ...init });
     const value = await response.json();
     if (!response.ok) throw Object.assign(new Error(typeof value?.error === "string" ? value.error : `Irixi intake rejected request (${response.status})`), { status: response.status });
+    return value;
+  }
+
+  async function projectProgressRequest(pathname: string, init: RequestInit = {}) {
+    if (initialProductRegistry?.projectId !== "project-progress-assistant" || initialProductRegistry.taskId !== authorityTaskId) {
+      throw new Error("Project progress assistant is not the registered current product");
+    }
+    const response = await fetch(new URL(pathname, endpoint), { signal: AbortSignal.timeout(8_000), ...init });
+    const value = await response.json();
+    if (!response.ok) throw Object.assign(new Error(typeof value?.error === "string" ? value.error : `Project progress authority rejected request (${response.status})`), { status: response.status });
     return value;
   }
 
@@ -472,7 +556,7 @@ export function createIrixiIntegration() {
       if (lastProjectedExecutionId) headers["x-irixi-execution-id"] = lastProjectedExecutionId;
       if (initialProductRegistrySha256) headers["x-irixi-registry-sha256"] = initialProductRegistrySha256;
       const response = await fetch(new URL(`/v1/authority?taskId=${encodeURIComponent(authorityTaskId)}`, endpoint), {
-        signal: AbortSignal.timeout(3_000), headers,
+        signal: AbortSignal.timeout(AUTHORITY_PROJECTION_TIMEOUT_MS), headers,
       });
       httpStatus = response.status;
       stage = "response_body";
@@ -621,6 +705,32 @@ export function createIrixiIntegration() {
       if (!response.ok) throw new Error(`Irixi rejected the product conversation (${response.status})`);
       return response.json();
     },
+    async readProjectProgress(sessionId: string) {
+      return projectProgressRequest(`/v1/project-progress/session?sessionId=${encodeURIComponent(sessionId)}`);
+    },
+    async openProjectProgressSession(input: Record<string, unknown>) {
+      return projectProgressRequest("/v1/project-progress/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+    },
+    async saveProjectProgressState(input: Record<string, unknown>) {
+      return projectProgressRequest("/v1/project-progress/session/state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+    },
+    async openProjectProgressBatch(input: Record<string, unknown>) {
+      return projectProgressRequest("/v1/project-progress/session/batch", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+    },
+    async reserveProjectProgressInference(input: Record<string, unknown>) {
+      const value = await projectProgressRequest("/v1/project-progress/inference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+      if (typeof value?.sourceTaskId !== "string" || typeof value?.reservationId !== "string"
+        || typeof value?.prompt !== "string" || typeof value?.promptSha256 !== "string"
+        || sha256(value.prompt) !== value.promptSha256 || typeof value?.sessionId !== "string" || typeof value?.batchId !== "string") {
+        throw new Error("Authority returned a malformed project progress reservation");
+      }
+      projectProgressRuns.set(value.sourceTaskId, { reservationId: value.reservationId, sessionId: value.sessionId,
+        batchId: value.batchId, prompt: value.prompt, promptSha256: value.promptSha256 });
+      return value;
+    },
+    async acceptProjectProgressProposal(input: Record<string, unknown>) {
+      return projectProgressRequest("/v1/project-progress/session/accept", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+    },
     async addProductMaterial(input: { expectedGoalVersionId: string; expectedExecutionId: string; expectedRegistrySha256: string; name: string; kind?: string; text: string }) {
       const response = await fetch(new URL("/v1/product-materials", endpoint), { method: "POST", signal: AbortSignal.timeout(3_000), headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
       if (!response.ok) throw new Error(`Irixi rejected the product material (${response.status})`);
@@ -654,8 +764,7 @@ export function createIrixiIntegration() {
       const value = await response.json();
       if (!response.ok || value?.taskId !== expectedTaskId || typeof value.goalVersionId !== "string"
         || typeof value.executionId !== "string" || typeof value.registrySha256 !== "string"
-        || typeof value.agentId !== "string" || typeof value.planText !== "string"
-        || !value.planText.startsWith("[PLAN]\n") || !value.planText.trimEnd().endsWith("[/PLAN]")
+        || typeof value.agentId !== "string" || !isValidLeadPlanText(value.planText)
         || sha256(value.planText) !== value.planSha256) {
         throw new Error(typeof value?.error === "string" ? value.error : "Irixi returned a malformed saved Lead plan");
       }
@@ -667,13 +776,78 @@ export function createIrixiIntegration() {
       if (!response.ok) throw new Error(`Irixi rejected the native agent roster (${response.status})`);
       return response.json();
     },
-    async productReviewRequest(input: { expectedGoalVersionId: string; expectedExecutionId: string; expectedRegistrySha256: string; expectedArtifactId: string; expectedArtifactVersion: number }) {
+    async openProductReviewRound(input: { expectedGoalVersionId: string; expectedExecutionId: string; expectedRegistrySha256: string;
+      expectedArtifactId: string; expectedArtifactVersion: number; expectedCandidateSha256: string; expectedReviewId: string | null }) {
+      const expectedReviewId = input.expectedReviewId ?? null;
+      const request = { ...input, expectedReviewId };
+      const current = await projection();
+      const response = await fetch(new URL("/v1/product-review-round", endpoint), { method: "POST", signal: AbortSignal.timeout(8_000), headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+      const value = await response.json();
+      if (!response.ok || typeof value?.reviewRoundId !== "string" || value?.taskId !== current.taskId
+        || value?.artifactId !== input.expectedArtifactId || value?.artifactVersion !== input.expectedArtifactVersion
+        || value?.candidateSha256 !== input.expectedCandidateSha256 || value?.expectedReviewId !== expectedReviewId
+        || value?.maxModelCalls !== 1 || value?.modelCalls !== 0 || !Number.isFinite(Date.parse(value?.deadlineAt || ""))) {
+        throw new Error(typeof value?.error === "string" ? value.error : "Irixi rejected the follow-up review round");
+      }
+      return value as { taskId: string; reviewRoundId: string; artifactId: string; artifactVersion: number;
+        candidateSha256: string; expectedReviewId: string | null; maxModelCalls: 1; modelCalls: 0; deadlineAt: string };
+    },
+    async productReviewRequest(input: { expectedGoalVersionId: string; expectedExecutionId: string; expectedRegistrySha256: string;
+      expectedArtifactId: string; expectedArtifactVersion: number; expectedCandidateSha256: string; expectedReviewId: string | null;
+      expectedReviewRoundId?: string; reviewEvidence?: string }) {
       const response = await fetch(new URL("/v1/product-review-request", endpoint), { method: "POST", signal: AbortSignal.timeout(8_000), headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
       const value = await response.json();
-      if (!response.ok || typeof value?.prompt !== "string" || sha256(value.prompt) !== value.promptSha256) {
+      if (!response.ok || typeof value?.prompt !== "string" || sha256(value.prompt) !== value.promptSha256
+        || value?.artifactId !== input.expectedArtifactId
+        || value?.artifactVersion !== input.expectedArtifactVersion || value?.candidateSha256 !== input.expectedCandidateSha256
+        || value?.expectedReviewId !== input.expectedReviewId || typeof value?.dispatchEventId !== "string"
+        || (input.expectedReviewRoundId && value?.reviewRoundId !== input.expectedReviewRoundId)) {
         throw new Error(typeof value?.error === "string" ? value.error : "Irixi rejected the product review request");
       }
-      return value as { taskId: string; artifactId: string; artifactVersion: number; candidateSha256: string; prompt: string; promptSha256: string };
+      return value as { taskId: string; artifactId: string; artifactVersion: number; candidateSha256: string;
+        expectedReviewId: string | null; reviewRoundId?: string | null; dispatchEventId: string; prompt: string; promptSha256: string };
+    },
+    async registerProductReviewTask(sourceTaskId: string, agentId: string, role: string, request: {
+      goalVersionId: string; executionId: string; registrySha256: string; artifactId: string; artifactVersion: number;
+      candidateSha256: string; expectedReviewId: string | null; reviewRoundId?: string | null;
+      dispatchEventId: string; prompt: string; promptSha256: string;
+    }) {
+      const registeredRole = canonicalReviewerRole(role);
+      if (!/^[A-Za-z0-9_-]{1,160}$/.test(sourceTaskId) || !/^[A-Za-z0-9_-]{1,160}$/.test(agentId)
+        || !registeredRole
+        || !/^event-[A-Za-z0-9_-]{1,160}$/.test(request.dispatchEventId)
+        || sha256(request.prompt) !== request.promptSha256 || !request.prompt.startsWith("IRIXI_PRODUCT_REVIEW_V1\n")) {
+        throw new Error("Product Reviewer dispatch identity is malformed");
+      }
+      const value = await projection();
+      const registry = loadProductProjectRegistry();
+      if (!registry || !value.current || value.taskId !== authorityTaskId || !value.execution?.id
+        || !value.artifact?.id || !value.artifact.candidateSha256 || !value.productRegistry?.current
+        || productRegistrySha256(registry) !== request.registrySha256
+        || value.productRegistry.registrySha256 !== request.registrySha256
+        || value.goalVersionId !== request.goalVersionId || value.execution.id !== request.executionId
+        || value.artifact.id !== request.artifactId || value.artifact.version !== request.artifactVersion
+        || value.artifact.candidateSha256 !== request.candidateSha256
+        || (value.artifact.review?.id || null) !== request.expectedReviewId) {
+        throw new Error("Product Reviewer dispatch binding is stale");
+      }
+      const registered: RegisteredProductReview = {
+        sourceTaskId, agentId, role: registeredRole, dispatchEventId: request.dispatchEventId,
+        goalVersionId: request.goalVersionId, executionId: request.executionId, registrySha256: request.registrySha256,
+        artifactId: request.artifactId, artifactVersion: request.artifactVersion,
+        candidateSha256: request.candidateSha256, expectedReviewId: request.expectedReviewId,
+        reviewRoundId: request.reviewRoundId || null, prompt: request.prompt, promptSha256: request.promptSha256,
+        binding: binding(value, sourceTaskId),
+      };
+      productReviewTasks.set(sourceTaskId, registered);
+      taskBindings.set(sourceTaskId, registered.binding);
+      taskActors.set(sourceTaskId, "reviewer");
+      return { sourceTaskId, dispatchEventId: registered.dispatchEventId, promptSha256: registered.promptSha256,
+        reviewRoundId: registered.reviewRoundId, binding: { ...registered.binding } };
+    },
+    isRegisteredProductReview(sourceTaskId: string, prompt: string) {
+      const registered = productReviewTasks.get(sourceTaskId);
+      return Boolean(registered && registered.prompt === prompt && registered.promptSha256 === sha256(prompt));
     },
     async productCandidate() {
       const value = await projection(true);
@@ -780,20 +954,37 @@ export function createIrixiIntegration() {
     isInferenceTask(sourceTaskId: string) {
       return inferenceRuns.has(sourceTaskId) || isRegisteredInferenceSource(articleProjectId, sourceTaskId);
     },
+    hasInferenceReservation(sourceTaskId: string) {
+      return inferenceRuns.has(sourceTaskId);
+    },
     async recordInference(type: "TASK_DONE" | "TASK_FAILED", sourceTaskId: string, value: string) {
       if (!(inferenceRuns.has(sourceTaskId) || isRegisteredInferenceSource(articleProjectId, sourceTaskId))) return;
       const pathname = type === "TASK_DONE" ? "/v1/inference/results" : "/v1/inference/failures";
       await intakeRequest(pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sourceTaskId, text: type === "TASK_DONE" ? value : undefined, resultSha256: type === "TASK_DONE" ? sha256(value) : undefined, errorSha256: type === "TASK_FAILED" ? sha256(value) : undefined }) });
       inferenceRuns.delete(sourceTaskId);
     },
-    async confirmCurrentArtifact(artifactId: string, version: number) {
+    async confirmCurrentArtifact(input: { artifactId: string; version: number; adjudicationReason?: string;
+      expectedReviewId?: string; expectedReviewFullOutputSha256?: string; expectedCandidateSha256?: string;
+      expectedTaskId?: string; expectedExecutionId?: string;
+      authorizationSourceThreadId?: string; authorizationText?: string }) {
       const value = await projection();
-      if (!value.artifact || value.artifact.id !== artifactId || value.artifact.version !== version) throw new Error("Irixi candidate version is stale");
+      if (!value.artifact || value.artifact.id !== input.artifactId || value.artifact.version !== input.version) throw new Error("Irixi candidate version is stale");
+      const adjudicating = typeof input.adjudicationReason === "string";
+      if (adjudicating && (value.artifact.review?.passed !== false || value.artifact.review.id !== input.expectedReviewId
+        || value.artifact.review.fullOutputSha256 !== input.expectedReviewFullOutputSha256
+        || value.artifact.candidateSha256 !== input.expectedCandidateSha256
+        || value.taskId !== input.expectedTaskId || value.execution?.id !== input.expectedExecutionId
+        || !input.authorizationSourceThreadId || !input.authorizationText)) throw new Error("Irixi review adjudication is stale");
       const registry = loadProductProjectRegistry();
       const response = await fetch(new URL("/v1/confirm", endpoint), {
         method: "POST", signal: AbortSignal.timeout(3_000), headers: { "content-type": "application/json" },
-        body: JSON.stringify({ artifactId, version,
-          ...(registry ? { expectedGoalVersionId: value.goalVersionId, expectedRegistrySha256: productRegistrySha256(registry) } : {}) }),
+        body: JSON.stringify({ artifactId: input.artifactId, version: input.version,
+          ...(registry ? { expectedGoalVersionId: value.goalVersionId, expectedRegistrySha256: productRegistrySha256(registry) } : {}),
+          ...(adjudicating ? { adjudicationReason: input.adjudicationReason,
+            expectedReviewId: input.expectedReviewId, expectedReviewFullOutputSha256: input.expectedReviewFullOutputSha256,
+            expectedCandidateSha256: input.expectedCandidateSha256,
+            expectedTaskId: input.expectedTaskId, expectedExecutionId: input.expectedExecutionId,
+            authorizationSourceThreadId: input.authorizationSourceThreadId, authorizationText: input.authorizationText } : {}) }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Irixi confirmation failed");
@@ -827,7 +1018,8 @@ export function createIrixiIntegration() {
           || request.artifactId !== value.artifact?.id || request.artifactVersion !== value.artifact?.version
           || request.candidateSha256 !== value.artifact?.candidateSha256
           || !productRegistry.capabilities.staticPreviewEntries.includes(request.entry)
-          || !productRegistry.capabilities.staticPreviewFiles.includes(request.file)) {
+          || (!productRegistry.capabilities.staticPreviewFiles.includes(request.file)
+            && !isNoobiBuiltPreviewAsset(productRegistry.projectId, request.file))) {
           throw new Error("Product preview binding is stale or outside registered files");
         }
         const response = await fetch(new URL("/v1/product-preview-authorize", endpoint), { method: "POST", signal: AbortSignal.timeout(3_000),
@@ -889,6 +1081,18 @@ export function createIrixiIntegration() {
     },
     async authorize(sourceTaskId: string, actor: "developer" | "reviewer", prompt?: string, actualDiff?: string, repoPath?: string) {
       if (!/^[A-Za-z0-9_-]{1,160}$/.test(sourceTaskId)) throw new Error("OpenOffice source task ID is invalid");
+      const projectProgress = projectProgressRuns.get(sourceTaskId);
+      if (projectProgress) {
+        const value = await projection();
+        const productRegistry = loadProductProjectRegistry();
+        if (!productRegistry || productRegistry.projectId !== "project-progress-assistant" || actor !== "reviewer"
+          || !String(prompt || "").includes(projectProgress.prompt)) throw new Error("Project progress conversation is not its exact reserved read-only Lead update");
+        assertProductProjection(productRegistry, value);
+        assertProductWorkspace(productRegistry, repoPath || productRegistry.workspace.path);
+        const current = binding(value, sourceTaskId);
+        taskBindings.set(sourceTaskId, current); taskActors.set(sourceTaskId, "lead");
+        return current;
+      }
       const productRegistry = loadProductProjectRegistry();
       const productLearningInference = Boolean(productRegistry && inferenceRuns.has(sourceTaskId));
       const productConversation = Boolean(productRegistry && (sourceTaskId.startsWith("product-conversation-") || productLearningInference));
@@ -952,6 +1156,13 @@ export function createIrixiIntegration() {
       assertProductProjection(registry, value);
       assertNativeWorkspace(registry.workspace.path, context.workspace, context.readOnly);
       const inference = inferenceRuns.get(context.taskId);
+      const projectProgress = projectProgressRuns.get(context.taskId);
+      if (projectProgress && (context.phase !== "conversation" || context.isTeamLead !== true || context.readOnly !== true
+        || context.role !== "Lead" || context.backend !== registry.native.backend || context.model !== registry.native.model
+        || !context.prompt.includes("IRIXI_PROJECT_PROGRESS_ASSISTANT_V1\n")
+        || !context.prompt.includes(projectProgress.prompt) || !context.promptBudget)) {
+        throw new Error("Project progress update did not enter its reserved read-only Lead conversation");
+      }
       if (inference) {
         if (!inference || !inference.prompt.startsWith(`${ARTICLE_INFERENCE_TAG}\n`)
           || !context.prompt.includes(inference.prompt)
@@ -986,6 +1197,20 @@ export function createIrixiIntegration() {
       if (!value.execution?.id) throw new Error("Irixi product execution is unavailable");
       const isConversation = context.phase === "conversation";
       const isReview = !isConversation && (context.phase === "review" || context.role.toLowerCase().includes("review"));
+      const registeredReview = productReviewTasks.get(context.taskId);
+      const canonicalContextReviewRole = registeredReview ? canonicalReviewerRole(context.role) : null;
+      if (isReview && registry && (!registeredReview || registeredReview.prompt !== context.prompt
+        || registeredReview.promptSha256 !== context.promptSha256 || registeredReview.agentId !== context.agentId
+        || registeredReview.role !== canonicalContextReviewRole || context.phase !== "review" || context.isTeamLead
+        || !context.readOnly || context.backend !== registry.native.backend || context.model !== registry.native.model
+        || registeredReview.goalVersionId !== value.goalVersionId || registeredReview.executionId !== value.execution?.id
+        || registeredReview.registrySha256 !== productRegistrySha256(registry)
+        || registeredReview.artifactId !== value.artifact?.id || registeredReview.artifactVersion !== value.artifact?.version
+        || registeredReview.candidateSha256 !== value.artifact?.candidateSha256)) {
+        throw new Error("Native Reviewer call no longer matches its exact Authority-issued dispatch");
+      }
+      const roundMatch = context.prompt.match(/^IRIXI_REVIEW_ROUND_ID: ([A-Za-z0-9_-]{1,160})$/m);
+      const reviewRoundId = roundMatch?.[1] || null;
       if (isReview) {
         const candidateSha256 = value.artifact?.candidateSha256;
         if (!candidateSha256 || !context.prompt.includes("IRIXI_PRODUCT_REVIEW_V1\n")
@@ -997,9 +1222,9 @@ export function createIrixiIntegration() {
         }
       } else {
         const registered = value.registeredExecution;
-        if (!registered || registered.goalVersionId !== value.goalVersionId
+        if (!projectProgress && (!registered || registered.goalVersionId !== value.goalVersionId
           || sha256(registered.prompt) !== registered.promptSha256
-          || !context.prompt.includes(registered.prompt)) {
+          || !context.prompt.includes(registered.prompt))) {
           throw new Error("Native product role input omitted the exact current registered execution request");
         }
         if (!isConversation && (!context.isTeamLead || context.phase === "execute")) {
@@ -1009,7 +1234,7 @@ export function createIrixiIntegration() {
             `GOAL_VERSION_ID: ${value.goalVersionId}`,
             `EXECUTION_ID: ${value.execution.id}`,
             `REGISTRY_SHA256: ${productRegistrySha256(registry)}`,
-            `REGISTERED_PROMPT_SHA256: ${registered.promptSha256}`,
+            `REGISTERED_PROMPT_SHA256: ${registered?.promptSha256 || ""}`,
           ].join("\n");
           if (!context.prompt.includes(approvedBinding)
             || !/APPROVED_PLAN_SHA256: [a-f0-9]{64}/.test(context.prompt)) {
@@ -1017,17 +1242,8 @@ export function createIrixiIntegration() {
           }
         }
       }
-      const preparedBaseline = await prepareNativeSourceBaseline(registry, context.workspace, context.readOnly, value.execution.id, async (evidence) => {
-        const response = await fetch(new URL("/v1/product-worktree-rebind", endpoint), {
-          method: "POST", signal: AbortSignal.timeout(3_000),
-          headers: { "content-type": "application/json" }, body: JSON.stringify(evidence),
-        });
-        const result = await response.json() as { authorized?: boolean; eventId?: string; error?: string };
-        if (!response.ok || result.authorized !== true || typeof result.eventId !== "string" || !result.eventId) {
-          throw new Error(typeof result.error === "string" ? result.error : "Irixi rejected managed worktree continuation");
-        }
-        return { authorized: true, eventId: result.eventId };
-      });
+      const preparedBaseline = await prepareNativeSourceBaseline(registry, context.workspace, context.readOnly, value.execution.id,
+        (evidence) => authorizeProductWorktreeRebind(endpoint.toString(), evidence));
       const current = binding(value, context.taskId);
       const nativeActor = context.isTeamLead ? "lead" : context.role.toLowerCase().includes("review") ? "reviewer" : "developer";
       const nativeRun: NativeRun = { attemptId: context.attemptId, agentId: context.agentId, nativeWorkspace: realpathSync(context.workspace),
@@ -1037,14 +1253,18 @@ export function createIrixiIntegration() {
       pendingNativeRuns.set(context.attemptId, nativeRun);
       const sourceTaskId = `${context.taskId}-${context.attemptId}`;
       const response = await fetch(new URL("/v1/product-native-calls", endpoint), {
-        method: "POST", signal: AbortSignal.timeout(3_000), headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourceTaskId, attemptId: context.attemptId, agentId: context.agentId, role: context.role,
+        method: "POST", signal: AbortSignal.timeout(PRODUCT_NATIVE_CALL_ADMISSION_TIMEOUT_MS), headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourceTaskId, attemptId: context.attemptId, agentId: context.agentId,
+          role: isReview && registeredReview ? registeredReview.role : context.role,
           backend: context.backend, model: context.model || registry.native.model,
           workspace: registry.workspace.path, nativeWorkspace: nativeRun.nativeWorkspace,
           baselineHead: preparedBaseline.baselineHead,
           worktreeRebindEventId: preparedBaseline.rebindEventId,
           promptSha256: context.promptSha256, teamId: context.teamId || null, phase: context.phase || null,
           isTeamLead: context.isTeamLead, readOnly: context.readOnly, promptBudget: context.promptBudget || null,
+          ...(projectProgress ? { projectProgressReservationId: projectProgress.reservationId,
+            projectProgressSourceTaskId: context.taskId, projectProgressPromptSha256: projectProgress.promptSha256 } : {}),
+          ...(isReview && reviewRoundId ? { reviewRoundId } : {}),
           productRegistrySha256: productRegistrySha256(registry) }),
       });
       const admission = await response.json() as { reservation?: { detail?: { deadlineAt?: string; phase?: string | null } }; error?: string };
@@ -1103,6 +1323,7 @@ export function createIrixiIntegration() {
       const attemptId = typeof detail.nativeAttemptId === "string" ? detail.nativeAttemptId : null;
       const nativeRun = attemptId ? nativeRuns.get(attemptId) || pendingNativeRuns.get(attemptId) : undefined;
       const recoveredPendingRun = Boolean(attemptId && nativeRun && pendingNativeRuns.has(attemptId) && !nativeRuns.has(attemptId));
+      const registeredReview = productReviewTasks.get(sourceTaskId);
       const prior = nativeRun?.binding || taskBindings.get(sourceTaskId);
       const terminal = type === "TASK_DONE" || type === "TASK_FAILED";
       const preparationFailure = Boolean(initialProductRegistry && type === "TASK_FAILED" && attemptId && !nativeRun
@@ -1118,10 +1339,27 @@ export function createIrixiIntegration() {
         if (!exactBinding || exactBinding.sourceTaskId !== sourceTaskId || exactBinding.taskId !== authorityTaskId) {
           throw new Error("Unreserved product failure has no exact preparation-time Authority binding");
         }
+        const currentRegistry = registeredReview ? loadProductProjectRegistry() : null;
+        if (registeredReview && (!currentRegistry || actor !== "reviewer" || detail.agentId !== registeredReview.agentId
+          || registeredReview.sourceTaskId !== sourceTaskId
+          || registeredReview.registrySha256 !== productRegistrySha256(currentRegistry)
+          || exactBinding.goalVersionId !== registeredReview.goalVersionId
+          || exactBinding.executionId !== registeredReview.executionId
+          || exactBinding.artifactId !== registeredReview.artifactId
+          || exactBinding.artifactVersion !== registeredReview.artifactVersion
+          || exactBinding.candidateSha256 !== registeredReview.candidateSha256)) {
+          throw new Error("Registered Reviewer preparation failure no longer matches its Authority-issued dispatch");
+        }
         const value = await projection();
         const projected = binding(value, sourceTaskId);
         const stable = ["taskId", "goalVersionId", "taskInputBindingSha256", "pipelineBindingSha256", "executionId", "workspaceScopeFingerprint", "sourceSnapshotSha256"] as const;
         if (stable.some((key) => exactBinding[key] !== projected[key])) throw new Error("Preparation-time Authority binding is stale");
+        if (registeredReview && (value.productRegistry?.registrySha256 !== registeredReview.registrySha256
+          || projected.artifactId !== registeredReview.artifactId || projected.artifactVersion !== registeredReview.artifactVersion
+          || projected.candidateSha256 !== registeredReview.candidateSha256
+          || (value.artifact?.review?.id || null) !== registeredReview.expectedReviewId)) {
+          throw new Error("Registered Reviewer preparation failure candidate or registry changed");
+        }
         current = exactBinding;
       } else if (!(terminal && nativeRun)) {
         const value = await projection();
@@ -1136,6 +1374,13 @@ export function createIrixiIntegration() {
         && Buffer.byteLength(resultText, "utf8") > 40_000) {
         throw new Error("Reviewer or conversation output exceeds the complete terminal transport limit");
       }
+      const reviewPreparationBinding = registeredReview ? {
+        phase: "review", reviewDispatchEventId: registeredReview.dispatchEventId,
+        reviewRegistrySha256: registeredReview.registrySha256, reviewPromptSha256: registeredReview.promptSha256,
+        reviewArtifactId: registeredReview.artifactId, reviewArtifactVersion: registeredReview.artifactVersion,
+        reviewCandidateSha256: registeredReview.candidateSha256, expectedReviewId: registeredReview.expectedReviewId,
+        reviewRoundId: registeredReview.reviewRoundId,
+      } : {};
       const payload = {
         type, actor, sourceTaskId, binding: current,
         sourceEventId: preparationFailure
@@ -1144,6 +1389,8 @@ export function createIrixiIntegration() {
         scopeOutcome: preparationFailure ? null : detail.scopeOutcome || null,
         resultSha256: resultText ? sha256(resultText) : detail.resultSha256 || null,
         ...(preparationFailure ? { preparationFailure: true, nativeAttemptId: attemptId, agentId: detail.agentId } : {}),
+        ...(preparationFailure ? { nativeWorkspace: null } : {}),
+        ...(preparationFailure ? reviewPreparationBinding : {}),
         ...(type === "TASK_DONE" && typeof detail.isFinalResult === "boolean" ? { isFinalResult: detail.isFinalResult } : {}),
         ...(type === "TASK_FAILED" && typeof detail.error === "string" ? { error: detail.error } : {}),
         ...(actor === "reviewer" && type === "TASK_DONE" && resultText ? { reviewText: resultText } : {}),
@@ -1175,6 +1422,7 @@ export function createIrixiIntegration() {
           const { nativeAttemptId: _attempt, agentId: _agent, nativeWorkspace: _workspace, ...unreservedPayload } = payload;
           receiptPayload = {
             ...unreservedPayload,
+            ...reviewPreparationBinding,
             sourceEventId: `${payload.sourceEventId}:preparation`,
             scopeOutcome: null,
             resultSha256: null,
@@ -1198,6 +1446,7 @@ export function createIrixiIntegration() {
       if (terminal && attemptId) {
         nativeRuns.delete(attemptId);
         pendingNativeRuns.delete(attemptId);
+        if (nativeRun?.phase === "conversation") projectProgressRuns.delete(sourceTaskId);
       }
       return recorded;
     },

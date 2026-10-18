@@ -1,0 +1,23 @@
+name: Use case or improvement
+description: Describe a real project you want your personal AI agent to help with.
+title: "[Use case] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Your project and the problem / 项目与问题
+      description: Who needs help, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: A useful result / 希望拿到的结果
+      description: What would you open, download, or verify when the work succeeds?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Constraints and examples / 边界与例子
+      description: Mention what should stay under your control. Use synthetic examples.

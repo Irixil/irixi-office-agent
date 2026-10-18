@@ -118,12 +118,19 @@ h1, h2, h3, p { margin-top: 0; }
 .icon-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #80663f; background: transparent; color: var(--forest); font: 500 23px/1 var(--sans); }
 .icon-button:hover { background: rgba(69,47,29,.08); }
 .task-list { flex: 1; overflow: auto; }
+.task-filters { padding: 11px 14px 8px; border-bottom: 1px solid rgba(72,50,31,.17); }
+.task-filters[hidden] { display: none; }
+.task-filters label { display: block; margin-bottom: 7px; }
+.task-filters input, .task-filters select { width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid rgba(72,50,31,.34); border-radius: 2px; color: var(--ink); background: rgba(255,255,255,.45); font: 500 11px/1.3 var(--sans); }
+.task-history-status { min-height: 12px; margin: 3px 0 0; color: var(--ink-soft); font: 500 9px/1.3 var(--sans); }
 .task-row { position: relative; display: block; width: 100%; padding: 15px 18px 14px 25px; text-align: left; border: 0; border-bottom: 1px solid rgba(72,50,31,.17); background: transparent; }
 .task-row::before { content: ""; position: absolute; left: 11px; top: 19px; width: 5px; height: 5px; border: 1px solid #816538; transform: rotate(45deg); }
 .task-row:hover { background: rgba(255,255,255,.2); }
+.task-row:disabled { cursor: not-allowed; opacity: .62; }
 .task-row.is-active { background: var(--paper-light); box-shadow: inset 4px 0 0 var(--burgundy); }
 .task-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .task-row span { display: flex; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--ink-soft); font: 600 10px/1.2 var(--sans); letter-spacing: .03em; }
+.task-row small { display: block; margin-top: 6px; overflow: hidden; color: var(--ink-soft); font: 500 9px/1.25 var(--sans); text-overflow: ellipsis; white-space: nowrap; }
 .empty-ledger { margin: 0; padding: 27px 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
 .new-task-ribbon { display: flex; justify-content: space-between; align-items: center; width: calc(100% - 28px); margin: 14px; padding: 13px 14px; border: 1px solid var(--forest); color: var(--forest); background: transparent; font: 700 12px/1 var(--sans); }
 .new-task-ribbon:hover { color: #fff; background: var(--forest); }
@@ -206,6 +213,26 @@ button.role-cell:hover, button.role-cell:focus-visible { background: rgba(198,15
 .record-status[data-tone="bad"] { color: var(--red); }
 .record-status[data-tone="active"] { color: #87601f; }
 .desk-stack { display: grid; gap: 24px; }
+.game-workshop { display: grid; gap: 22px; }
+.game-workshop .sheet-heading { align-items: center; }
+.game-workshop .sheet-heading > div:first-child { min-width: 0; }
+.game-workshop .sheet-heading h2 { margin-top: 3px; }
+.game-version-details { margin-top: 12px; color: var(--muted); font: 12px/1.5 var(--sans); }
+.game-version-details summary { width: fit-content; cursor: pointer; color: var(--ink-soft); }
+.game-version-details p { margin: 8px 0 0; overflow-wrap: anywhere; }
+.game-workspace-columns { display: grid; grid-template-columns: minmax(230px, .7fr) minmax(0, 1.3fr); gap: 22px; align-items: start; }
+.game-file-list, .game-file-preview { min-width: 0; }
+.game-file-list h3, .game-file-preview h3 { margin: 0 0 10px; font-size: 14px; }
+.game-file-list h3:not(:first-child) { margin-top: 22px; }
+.game-file-tree { margin: 0; padding-left: 16px; list-style: none; }
+.game-file-tree > li { margin: 2px 0; }
+.game-file-directory { display: block; padding: 5px 0; color: var(--ink-soft); font: 650 12px/1.4 var(--sans); }
+.game-file-button { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 8px; padding: 5px 7px; border: 0; border-left: 2px solid transparent; color: var(--ink); background: transparent; text-align: left; font: 12px/1.4 var(--sans); }
+.game-file-button:hover, .game-file-button.is-selected { border-left-color: var(--brass); background: rgba(201,173,112,.16); }
+.game-file-button small { color: var(--muted); white-space: nowrap; }
+.game-file-preview { min-height: 180px; padding: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.42); }
+.game-file-preview pre { max-height: 560px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.game-file-preview .field-note { margin: 0; }
 .inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .provider-line { display: grid; gap: 8px; }
 .provider-line label { font: 650 11px/1 var(--sans); color: var(--ink-soft); }
@@ -296,6 +323,13 @@ button.role-cell:hover, button.role-cell:focus-visible { background: rgba(198,15
 .dialog-close { margin-top: -5px; padding: 3px 8px; border: 0; color: var(--ink-soft); background: transparent; font: 28px/1 var(--serif); }
 label { display: grid; gap: 7px; font-weight: 650; font-size: 13px; }
 .field-note { color: var(--ink-soft); font: 500 11px/1.5 var(--sans); }
+.utility-project-picker { display: grid; gap: 12px; margin: 0; padding: 13px; border: 1px solid var(--line); background: rgba(255,255,255,.34); }
+.utility-project-picker legend { padding: 0 7px; font-size: 13px; font-weight: 750; }
+.utility-project-picker > .field-note { margin: 0; }
+.project-choice-options { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.project-choice-options label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
+.project-choice-options input { width: auto; }
+.utility-project-picker select:focus-visible, .utility-project-picker input:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 input, select, textarea { width: 100%; padding: 10px 11px; color: var(--ink); background: rgba(255,255,255,.42); border: 1px solid #9d865f; border-radius: 1px; }
 textarea { resize: vertical; line-height: 1.55; }
 .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
@@ -359,6 +393,7 @@ textarea { resize: vertical; line-height: 1.55; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 34px; }
   .desk-columns, .proof-grid { grid-template-columns: 1fr; }
+  .game-workspace-columns { grid-template-columns: 1fr; }
   .proof-grid { gap: 16px; }
   .artifact-paper { padding: 24px 18px; }
   .connection-row { grid-template-columns: 42px minmax(0,1fr); gap: 8px 12px; }

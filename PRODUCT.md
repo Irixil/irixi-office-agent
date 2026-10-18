@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-delegated: Node.js 24 standard library with native HTML, CSS, and JavaScript. The product runs locally without a package install or build step.
+Node.js 24, HTML, CSS, JavaScript, Phaser and EasyStar.js. Desktop dependencies use the lockfile. Native project execution additionally uses the bundled adapted OpenOffice and agent-office workspaces.
 
 ## Users
 
@@ -39,7 +39,7 @@ Irixi combines a real goal-and-artifact workbench with a Victorian office that p
 - Task, goal, materials, work items, artifact versions, reviews, approvals, events, and recovery state persist locally.
 - The model provider is replaceable. Codex CLI is the first real provider; a deterministic demo provider is visibly labelled and exists for repeatable tests.
 - Read-only research may proceed inside the task's selected scope. Export, sending, publishing, calendar creation, deletion, payment, and permission changes require exact user confirmation.
-- The local usable version must not depend on copying the reference projects' runtimes or assets.
+- The native product integrates the adapted upstream runtimes, retains their licenses, and uses iRIXI office artwork.
 
 ## Brand Commitments
 
@@ -49,14 +49,15 @@ Irixi combines a real goal-and-artifact workbench with a Victorian office that p
 - Supporting colleagues are distinct small animals; they do not inherit Irixi's owl anatomy or signature accessory combination.
 - The interface must remain a serious tool even when the office is delightful.
 
-## Evidence on Hand
+## Current references
 
-- Product intent: `docs/sdlc/intent.md`
-- Product requirements and decisions: `docs/product/Irixi-PRD-v0.1.md`
-- Goal-first architecture: `docs/architecture/goal-first-agent.md`
-- Original character and office concepts: `art/concepts/`
-- Locked cast rules: `art/production-guides/cast-lock.md`
-- No validated production application, real user task results, or production deployment exists yet.
+- [Preview status](STAGE_STATUS.md)
+- [Project examples](docs/showcase.md)
+- [Product scope](docs/product/Irixi-PRD-v0.1.md)
+- [Architecture](docs/architecture/goal-first-agent.md)
+- [Third-party attribution](THIRD_PARTY_NOTICES.md)
+
+Selected local workflows have been exercised with human supervision. Fresh-machine native setup remains a development focus.
 
 ## Product Principles
 

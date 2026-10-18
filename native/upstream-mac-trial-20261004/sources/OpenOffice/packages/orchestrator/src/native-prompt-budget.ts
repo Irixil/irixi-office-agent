@@ -28,6 +28,8 @@ export interface NativePromptModelLimits {
 export interface NativePromptReserves {
   outputTokens: number;
   protocolTokens: number;
+  /** Fixed output-schema UTF-8 bytes, charged against the existing input budget. */
+  outputSchemaUtf8Bytes?: number;
 }
 
 export interface NativePromptBudgetRequest {
@@ -46,6 +48,8 @@ export interface NativePromptBudgetSnapshot {
   effectiveContextTokens: number;
   outputReserveTokens: number;
   protocolReserveTokens: number;
+  /** Present only when an output schema is attached to this invocation. */
+  outputSchemaUtf8Bytes?: number;
   availablePromptTokens: number;
   promptUtf8Bytes: number;
   promptTokenUpperBound: number;
@@ -117,10 +121,11 @@ export function prepareNativePrompt(request: NativePromptBudgetRequest): NativeP
   }
 
   const { contextWindowTokens, effectiveContextPercent } = request.limits;
-  const { outputTokens, protocolTokens } = request.reserves;
+  const { outputTokens, protocolTokens, outputSchemaUtf8Bytes = 0 } = request.reserves;
   if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= 0
     || !Number.isFinite(effectiveContextPercent) || effectiveContextPercent <= 0 || effectiveContextPercent > 100
-    || !isNonNegativeSafeInteger(outputTokens) || !isNonNegativeSafeInteger(protocolTokens)) {
+    || !isNonNegativeSafeInteger(outputTokens) || !isNonNegativeSafeInteger(protocolTokens)
+    || !isNonNegativeSafeInteger(outputSchemaUtf8Bytes)) {
     return invalid("INVALID_BUDGET", "Native prompt model limits or reserves are invalid.");
   }
 
@@ -192,17 +197,18 @@ export function prepareNativePrompt(request: NativePromptBudgetRequest): NativeP
     effectiveContextTokens,
     outputReserveTokens: outputTokens,
     protocolReserveTokens: protocolTokens,
+    ...(outputSchemaUtf8Bytes > 0 ? { outputSchemaUtf8Bytes } : {}),
     availablePromptTokens,
     promptUtf8Bytes,
     promptTokenUpperBound: promptUtf8Bytes,
     estimator: "utf8_bytes_upper_bound",
   };
-  if (budget.promptTokenUpperBound > availablePromptTokens) {
+  if (budget.promptTokenUpperBound + outputSchemaUtf8Bytes > availablePromptTokens) {
     return {
       ok: false,
       reason: {
         code: "PROMPT_BUDGET_EXCEEDED",
-        message: "Native prompt exceeds the conservative input budget; it was not sliced or submitted.",
+        message: "Native prompt and attached structured-output schema exceed the conservative input budget; neither was submitted.",
       },
       keptBlockIds: keptBlocks.map((item) => item.id),
       removedExactDuplicates,

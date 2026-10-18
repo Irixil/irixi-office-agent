@@ -4,7 +4,8 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createAuthorityReader, fingerprint, projectTaskBoard, sha256 } from './authority-core.mjs';
+import { pathToFileURL } from 'node:url';
+import { createAuthorityReader, fingerprint, isValidChangedFilePath, isValidLeadPlanText, projectTaskBoard, sha256 } from './authority-core.mjs';
 import { createIntakeController } from './intake-controller.mjs';
 import { articleDiscussionBlock, describeArticleDiscussion } from './model-availability.mjs';
 import { createIntegrationController } from './task-controller.mjs';
@@ -55,11 +56,29 @@ if (ARTICLE_INTAKE_MODE || REAL_ARTICLE_MODE) {
     || !STATE_ROOT.startsWith(`${ARTICLE_PROJECT_ROOT}${path.sep}`)) throw new Error('Article discussion state must stay inside its isolated project root');
 }
 
-const reader = await createAuthorityReader({ tasksRoot: TASKS_ROOT, taskId: TASK_ID, irixiAppRoot: IRIXI_APP_ROOT });
+const memoryModule = PRODUCT_MODE ? await import(pathToFileURL(path.join(IRIXI_APP_ROOT, 'memory.mjs')).href) : null;
+const configuredXerjUrl = new URL(process.env.IRIXI_XERJ_URL || 'http://127.0.0.1:19200');
+if (configuredXerjUrl.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(configuredXerjUrl.hostname)
+  || configuredXerjUrl.username || configuredXerjUrl.password || configuredXerjUrl.pathname !== '/' || configuredXerjUrl.search || configuredXerjUrl.hash) {
+  throw new Error('IRIXI_XERJ_URL must be a plain loopback HTTP origin.');
+}
+const memoryIndex = memoryModule ? memoryModule.createXerjMemoryIndex({ projectRoot: path.resolve(IRIXI_APP_ROOT, '..'), baseUrl: configuredXerjUrl.href }) : null;
+const reader = await createAuthorityReader({ tasksRoot: TASKS_ROOT, taskId: TASK_ID, irixiAppRoot: IRIXI_APP_ROOT, memoryIndex, authorityPort: PORT });
+let noobiGameWorkspaceAdapterPromise = null;
+async function noobiGameWorkspaceAdapter() {
+  if (!noobiGameWorkspaceAdapterPromise) {
+    noobiGameWorkspaceAdapterPromise = (async () => {
+      const { createNoobiProjectAdapter, NOOBI_PROJECT_STORE_FILE } = await import('../product/noobi-project-adapter.mjs');
+      return createNoobiProjectAdapter({ storageFile: NOOBI_PROJECT_STORE_FILE, authorityReader: { read: () => reader.read() } });
+    })().catch((error) => { noobiGameWorkspaceAdapterPromise = null; throw error; });
+  }
+  return noobiGameWorkspaceAdapterPromise;
+}
 const articleController = REAL_ARTICLE_MODE ? await createArticleProjectController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, projectFile: ARTICLE_PROJECT_FILE, capabilityFile: ARTICLE_CAPABILITY_FILE }) : null;
 const controller = PRODUCT_MODE ? null : ARTICLE_INTAKE_MODE || REAL_ARTICLE_MODE ? articleController : await createIntegrationController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, toyRoot: TOY_ROOT });
 const intake = !PRODUCT_MODE && INTAKE_TASK_ID ? await createIntakeController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, taskId: INTAKE_TASK_ID, articleProjectFile: ARTICLE_PROJECT_FILE, articleCapabilityFile: ARTICLE_CAPABILITY_FILE }) : null;
-const productLearning = PRODUCT_MODE ? await createIntakeController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, taskId: TASK_ID, productMode: true }) : null;
+const productLearning = PRODUCT_MODE ? await createIntakeController({ tasksRoot: TASKS_ROOT, irixiAppRoot: IRIXI_APP_ROOT, taskId: TASK_ID,
+  productMode: true, memoryModule, memoryIndex }) : null;
 
 async function readCapabilityFile() {
   const file = path.resolve(INTAKE_BATCH_STATUS_FILE);
@@ -353,7 +372,7 @@ async function appendObservation(input) {
     if ([hasPlan, hasExecutionResult, hasConversation].filter(Boolean).length !== 1) throw Object.assign(new Error('Lead terminal must contain exactly one phase-bound result'), { status: 400 });
     const text = hasPlan ? input.leadPlanText : hasExecutionResult ? input.leadResultText : input.conversationText;
     if (!text.trim() || Buffer.byteLength(text) > 40_000) throw Object.assign(new Error('Lead result text is missing or too large'), { status: 400 });
-    if (hasPlan && (!text.startsWith('[PLAN]\n') || !text.trimEnd().endsWith('[/PLAN]'))) {
+    if (hasPlan && !isValidLeadPlanText(text)) {
       throw Object.assign(new Error('Lead plan text is missing or invalid'), { status: 400 });
     }
     if (input.resultSha256 !== sha256(text)) throw Object.assign(new Error('Lead result text does not match its digest'), { status: 400 });
@@ -375,6 +394,15 @@ async function appendObservation(input) {
     nativeAttemptId: typeof input.nativeAttemptId === 'string' ? input.nativeAttemptId : null,
     agentId: typeof input.agentId === 'string' ? input.agentId : null,
     nativeWorkspace: typeof input.nativeWorkspace === 'string' ? input.nativeWorkspace : null,
+    ...(input.phase !== undefined ? { phase: input.phase } : {}),
+    ...(input.reviewDispatchEventId !== undefined ? { reviewDispatchEventId: input.reviewDispatchEventId } : {}),
+    ...(input.reviewRegistrySha256 !== undefined ? { reviewRegistrySha256: input.reviewRegistrySha256 } : {}),
+    ...(input.reviewPromptSha256 !== undefined ? { reviewPromptSha256: input.reviewPromptSha256 } : {}),
+    ...(input.reviewArtifactId !== undefined ? { reviewArtifactId: input.reviewArtifactId } : {}),
+    ...(input.reviewArtifactVersion !== undefined ? { reviewArtifactVersion: input.reviewArtifactVersion } : {}),
+    ...(input.reviewCandidateSha256 !== undefined ? { reviewCandidateSha256: input.reviewCandidateSha256 } : {}),
+    ...(input.expectedReviewId !== undefined ? { expectedReviewId: input.expectedReviewId } : {}),
+    ...(input.reviewRoundId !== undefined ? { reviewRoundId: input.reviewRoundId } : {}),
     reviewText: typeof input.reviewText === 'string' ? input.reviewText : null,
     leadPlanText: typeof input.leadPlanText === 'string' ? input.leadPlanText : null,
     leadResultText: typeof input.leadResultText === 'string' ? input.leadResultText : null,
@@ -382,13 +410,27 @@ async function appendObservation(input) {
     isFinalResult: input.isFinalResult === true,
     error: typeof input.error === 'string' ? input.error : null,
   };
-  if (recordBody.changedFiles && (recordBody.changedFiles.length < 1 || recordBody.changedFiles.length > 8 || recordBody.changedFiles.some((file) => typeof file !== 'string' || !/^(?!\.)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(file)))) throw Object.assign(new Error('changedFiles is invalid'), { status: 400 });
+  if (recordBody.changedFiles && (recordBody.changedFiles.length < 1 || recordBody.changedFiles.length > 8 || recordBody.changedFiles.some((file) => !isValidChangedFilePath(file)))) throw Object.assign(new Error('changedFiles is invalid'), { status: 400 });
   for (const key of ['resultSha256', 'checkId']) {
     if (recordBody[key] !== null && (typeof recordBody[key] !== 'string' || Buffer.byteLength(recordBody[key]) > 200)) throw Object.assign(new Error(`${key} is invalid`), { status: 400 });
   }
   if (recordBody.error !== null && (input.type !== 'TASK_FAILED' || !recordBody.error
     || /[\u0000-\u001f\u007f]/.test(recordBody.error) || Buffer.byteLength(recordBody.error, 'utf8') > 1_000)) {
     throw Object.assign(new Error('error is invalid'), { status: 400 });
+  }
+  const reviewPreparationFailure = input.type === 'TASK_FAILED' && input.actor === 'reviewer'
+    && input.sourceEventId === `${input.sourceTaskId}:${input.nativeAttemptId}:TASK_FAILED:preparation`;
+  if (reviewPreparationFailure && (recordBody.phase !== 'review'
+    || !Object.hasOwn(input, 'expectedReviewId') || !Object.hasOwn(input, 'reviewRoundId')
+    || !/^[A-Za-z0-9_.:-]{1,240}$/.test(recordBody.reviewDispatchEventId || '')
+    || !/^[a-f0-9]{64}$/.test(recordBody.reviewRegistrySha256 || '')
+    || !/^[a-f0-9]{64}$/.test(recordBody.reviewPromptSha256 || '')
+    || !/^[A-Za-z0-9_-]{1,160}$/.test(recordBody.reviewArtifactId || '')
+    || !Number.isInteger(recordBody.reviewArtifactVersion) || recordBody.reviewArtifactVersion < 1
+    || !/^[a-f0-9]{64}$/.test(recordBody.reviewCandidateSha256 || '')
+    || (recordBody.expectedReviewId !== null && !/^[A-Za-z0-9_.:-]{1,240}$/.test(recordBody.expectedReviewId))
+    || (recordBody.reviewRoundId !== null && !/^[A-Za-z0-9_.:-]{1,240}$/.test(recordBody.reviewRoundId)))) {
+    throw Object.assign(new Error('Reviewer preparation failure binding is invalid'), { status: 400 });
   }
   recordBody.observationFingerprint = fingerprint(recordBody);
   const stored = await reader.appendObservation(recordBody);
@@ -410,7 +452,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/') return page(res);
     if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, mode: PRODUCT_MODE ? 'irixi-native-product-authority-v1' : 'irixi-authority-read-through-v1', modelCalls: 0 });
     if (req.method === 'GET' && url.pathname === '/v1/intake') {
-      if (!intake) return send(res, 404, { error: 'Project intake is not enabled' });
+      if (!intake && !productLearning) return send(res, 404, { error: 'Project intake is not enabled' });
       return send(res, 200, await intakeState());
     }
     if (req.method === 'GET' && url.pathname === '/v1/inference') {
@@ -492,6 +534,14 @@ const server = http.createServer(async (req, res) => {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
       return send(res, 201, await reader.addProductInstruction(await body(req)));
     }
+    if (req.method === 'POST' && url.pathname === '/v1/product-memory/save') {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
+      return send(res, 201, await reader.saveProductMemory(await body(req)));
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/product-memory/change') {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
+      return send(res, 200, await reader.changeProductMemory(await body(req)));
+    }
     if (req.method === 'POST' && url.pathname === '/v1/product-worktree-rebind') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
       return send(res, 201, await reader.authorizeProductWorktreeRebind(await body(req)));
@@ -499,6 +549,31 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/v1/product-conversation') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
       return send(res, 201, await reader.addProductConversation(await body(req)));
+    }
+    if (url.pathname.startsWith('/v1/project-progress/')) {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Project progress is not enabled' });
+      if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || '')) && req.method !== 'GET') {
+        return send(res, 415, { error: 'Content-Type must be application/json' });
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/project-progress/session') {
+        return send(res, 200, await reader.readProjectProgress(url.searchParams.get('sessionId')));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/project-progress/session') {
+        return send(res, 201, await reader.openProjectProgressSession(await body(req)));
+      }
+      if (req.method === 'PUT' && url.pathname === '/v1/project-progress/session/state') {
+        return send(res, 200, await reader.saveProjectProgressState(await body(req)));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/project-progress/session/batch') {
+        return send(res, 201, await reader.openProjectProgressBatch(await body(req)));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/project-progress/inference') {
+        return send(res, 201, await reader.reserveProjectProgressInference(await body(req)));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/project-progress/session/accept') {
+        return send(res, 200, await reader.acceptProjectProgressProposal(await body(req)));
+      }
+      return send(res, 404, { error: 'Unknown project progress route' });
     }
     if (req.method === 'POST' && url.pathname === '/v1/product-materials') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
@@ -524,6 +599,10 @@ const server = http.createServer(async (req, res) => {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
       return send(res, 200, await reader.productReviewRequest(await body(req)));
     }
+    if (req.method === 'POST' && url.pathname === '/v1/product-review-round') {
+      if (!PRODUCT_MODE) return send(res, 404, { error: 'Product authority is not enabled' });
+      return send(res, 201, await reader.openProductReviewRound(await body(req)));
+    }
     if (req.method === 'GET' && url.pathname === '/v1/product-lead-plan') {
       if (!PRODUCT_MODE || url.searchParams.get('taskId') !== TASK_ID) return send(res, 404, { error: 'Current Lead plan is unavailable' });
       const value = await reader.productLeadPlan();
@@ -532,6 +611,26 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/v1/product-candidate') {
       if (!PRODUCT_MODE || url.searchParams.get('taskId') !== TASK_ID) return send(res, 404, { error: 'Product candidate is unavailable' });
       return send(res, 200, await reader.productCandidate());
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/product-game-workspace') {
+      if (!PRODUCT_MODE || url.searchParams.get('taskId') !== TASK_ID) return send(res, 404, { error: 'Game workspace is unavailable' });
+      const projectId = url.searchParams.get('projectId');
+      const view = url.searchParams.get('view');
+      const relativePath = url.searchParams.get('path');
+      if (!projectId || !['source', 'candidate'].includes(view) || (relativePath !== null && Buffer.byteLength(relativePath) > 1024)) {
+        return send(res, 400, { error: 'A registered project, source or candidate view, and bounded relative path are required' });
+      }
+      try {
+        const adapter = await noobiGameWorkspaceAdapter();
+        if (relativePath !== null) {
+          return send(res, 200, await adapter.readGameWorkspaceFile({ taskId: TASK_ID, projectId, view, relativePath }));
+        }
+        return send(res, 200, await adapter.gameWorkspaceView({ taskId: TASK_ID, projectId }));
+      } catch (error) {
+        return send(res, 409, { error: error?.code === 'NOOBI_WORKSPACE_CHANGED'
+          ? '工作树已变化，不能作为此候选展示；请刷新当前候选。'
+          : '当前 Noobi 项目、OpenOffice 任务与执行绑定无法通过核对；未返回文件内容。' });
+      }
     }
     if (req.method === 'POST' && url.pathname === '/v1/product-preview-authorize') {
       if (!PRODUCT_MODE) return send(res, 404, { error: 'Product preview is unavailable' });
@@ -682,7 +781,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (req.method === 'PUT' && url.pathname === '/v1/learning/client-state') {
-      if (productLearning) return send(res, 200, await productLearning.saveProductClientState(await body(req)));
+      if (productLearning) return send(res, 200, await productLearning.saveProductClientState(await body(req, 320 * 1024)));
       if (!REAL_ARTICLE_MODE || !articleController) return send(res, 404, { error: 'Article client state is not enabled' });
       if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return send(res, 415, { error: 'Content-Type must be application/json' });
       return send(res, 200, await articleController.saveClientState(TASK_ID, await body(req)));
@@ -691,6 +790,9 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     const status = Number(error?.status) || 409;
     const message = error instanceof Error ? error.message : 'Request failed';
+    if (req.method === 'GET' && requestPathname === '/v1/authority') {
+      return send(res, status, { taskId: TASK_ID, error: message });
+    }
     if (req.method === 'POST' && ['/v1/product-goal', '/v1/product-instructions', '/v1/product-materials', '/v1/product-conversation'].includes(requestPathname)) {
       const code = typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(error.code) ? error.code : null;
       return send(res, status, { ...(code ? { code } : {}), error: boundedProductInputError(message) });

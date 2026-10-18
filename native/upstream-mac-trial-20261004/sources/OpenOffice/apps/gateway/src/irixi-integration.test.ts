@@ -6,7 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildProductApprovedExecutionPrompt, createIrixiIntegration, INTEGRATED_DEVELOPER_TAG, integratedAutoReviewTransition, integratedTerminalReceiptMatches, isRegisteredInferenceSource, persistIntegratedTerminalBeforePublish, persistIntakeTerminalBeforePublish, prepareNativeSourceBaseline, PROJECT_INTAKE_TAG } from "./irixi-integration.js";
+import { ARTICLE_INFERENCE_TAG, authorizeProductWorktreeRebind, buildProductApprovedExecutionPrompt, createIrixiIntegration, INTEGRATED_DEVELOPER_TAG, integratedAutoReviewTransition, integratedTerminalReceiptMatches, isRegisteredInferenceSource, persistInferenceStartFailureBeforePublish, persistIntegratedTerminalBeforePublish, persistIntakeTerminalBeforePublish, prepareNativeSourceBaseline, PROJECT_INTAKE_TAG } from "./irixi-integration.js";
+import { productRegistrySha256 } from "./product-project-registry.js";
 
 test("unwraps automatic review only from the real observation response envelope", () => {
   const autoReview = { dispatchEventId: "dispatch-1", executionId: "run-1", candidateSha256: "a".repeat(64), sourceTaskId: "developer-1", changedFiles: ["index.html"], entryFile: "index.html" };
@@ -38,6 +39,10 @@ test("approved product execution prompt carries the exact registered request, bi
   assert.ok(prompt.includes("The host has already admitted this current execution."));
   assert.ok(prompt.includes("historical round numbers do not create current run authority."));
   assert.ok(prompt.includes("The host manages registered fixed checks and static preview."));
+  assert.ok(prompt.includes("roles registered and managed by the external OpenOffice Orchestrator, not Codex /root/... subagents."));
+  assert.ok(prompt.includes("do not use send_message, list_agents, followup_task, or spawn_agent to find or create these roles."));
+  assert.ok(prompt.includes("@Exact Registered Name: complete assignment; the OpenOffice DelegationRouter schedules that assignment."));
+  assert.ok(prompt.includes("Do not claim an OpenOffice role is missing because Codex's internal agent list does not contain it."));
   assert.ok(prompt.includes("Executable @delegations to registered members and each complete assignment body must appear in the FINAL answer; commentary is not executable and must not be claimed as delegated work."));
   assert.ok(prompt.includes("Lead/coordination roles must not write code or invoke tools themselves."));
   assert.throws(() => buildProductApprovedExecutionPrompt(context, "different plan"), /approved plan digest is invalid/);
@@ -135,6 +140,35 @@ test("rebinds the same managed worktree only after Authority approves its curren
   });
   assert.equal(current.rebindEventId, "event-rebind-1");
   assert.equal(authorizations, 2);
+});
+
+test("worktree rebind accepts one delayed Authority receipt within native admission timeout", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = AbortSignal.timeout;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: originalTimeout });
+  });
+  let timeoutMs = 0;
+  let posts = 0;
+  Object.defineProperty(AbortSignal, "timeout", {
+    configurable: true,
+    value: (milliseconds: number) => { timeoutMs = milliseconds; return originalTimeout(milliseconds); },
+  });
+  globalThis.fetch = async (_input, init) => {
+    posts += 1;
+    assert.equal(timeoutMs, 15_000);
+    assert.ok(init?.signal instanceof AbortSignal);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 3_150);
+      init.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal?.reason); }, { once: true });
+    });
+    return Response.json({ authorized: true, eventId: "rebind-delayed-receipt" }, { status: 201 });
+  };
+  const result = await authorizeProductWorktreeRebind("http://127.0.0.1:3869/", { currentExecutionId: "run-current" });
+  assert.deepEqual(result, { authorized: true, eventId: "rebind-delayed-receipt" });
+  assert.equal(timeoutMs, 15_000);
+  assert.equal(posts, 1, "a delayed success is one reservation, not a retry signal");
 });
 
 function projection(prompt: string, current = true) {
@@ -241,6 +275,56 @@ test("product binding watch reads the authority snapshot without depending on ta
   }
 });
 
+test("product binding projection tolerates a 3.25-second Authority read with its bounded timeout", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = AbortSignal.timeout;
+  const originalUrl = process.env.IRIXI_AUTHORITY_URL;
+  const originalTask = process.env.IRIXI_AUTHORITY_TASK_ID;
+  const originalRegistry = process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+  const originalProject = process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  const current = projection("accepted prompt");
+  let useLegacyTimeout = true;
+  const requestedTimeouts: number[] = [];
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
+  process.env.IRIXI_AUTHORITY_TASK_ID = current.taskId;
+  delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+  delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  Object.defineProperty(AbortSignal, "timeout", {
+    configurable: true,
+    value: (milliseconds: number) => {
+      requestedTimeouts.push(milliseconds);
+      return originalTimeout(useLegacyTimeout ? 3_000 : milliseconds);
+    },
+  });
+  globalThis.fetch = async (input, init) => {
+    assert.equal(new URL(String(input)).pathname, "/v1/authority");
+    await new Promise<void>((resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) return reject(new Error("Authority projection timeout signal is missing"));
+      const timer = setTimeout(resolve, 3_250);
+      signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+    });
+    return Response.json({ projection: current });
+  };
+  try {
+    const bridge = createIrixiIntegration();
+    assert.ok(bridge);
+    await assert.rejects(bridge.productBindingProjection(), (error: unknown) => error instanceof Error && error.name === "TimeoutError");
+    useLegacyTimeout = false;
+    const state = await bridge.productBindingProjection();
+    assert.equal(state.taskId, current.taskId);
+    assert.equal(state.current, true);
+    assert.deepEqual(requestedTimeouts, [8_000, 8_000]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: originalTimeout });
+    if (originalUrl === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = originalUrl;
+    if (originalTask === undefined) delete process.env.IRIXI_AUTHORITY_TASK_ID; else process.env.IRIXI_AUTHORITY_TASK_ID = originalTask;
+    if (originalRegistry === undefined) delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE; else process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE = originalRegistry;
+    if (originalProject === undefined) delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID; else process.env.OPEN_OFFICE_IRIXI_PROJECT_ID = originalProject;
+  }
+});
+
 test("preserves a bounded Authority rejection status and body without accepting a stale projection", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.IRIXI_AUTHORITY_URL;
@@ -273,14 +357,23 @@ test("audits Authority projection timeouts with correlated metadata only", async
   const originalRegistry = process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
   const originalProject = process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
   const originalWarn = console.warn;
+  const originalTimeout = AbortSignal.timeout;
   const current = projection("private prompt marker");
   const auditLines: string[] = [];
   let calls = 0;
+  let timeoutMs = 0;
   let timeoutHeaders: Headers | null = null;
   process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
   process.env.IRIXI_AUTHORITY_TASK_ID = current.taskId;
   delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
   delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  Object.defineProperty(AbortSignal, "timeout", {
+    configurable: true,
+    value: (milliseconds: number) => {
+      timeoutMs = milliseconds;
+      return AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+    },
+  });
   globalThis.fetch = async (_input, init) => {
     calls += 1;
     if (calls === 1) return Response.json({ projection: current });
@@ -299,6 +392,7 @@ test("audits Authority projection timeouts with correlated metadata only", async
     await bridge.productBindingProjection();
     await assert.rejects(bridge.productBindingProjection(), (error: unknown) => error instanceof Error && error.name === "TimeoutError");
     assert.equal(calls, 2);
+    assert.equal(timeoutMs, 8_000);
     assert.ok(timeoutHeaders);
     assert.match(timeoutHeaders.get("x-irixi-projection-id") || "", /^[a-f0-9-]{36}$/i);
     assert.equal(timeoutHeaders.get("x-irixi-execution-id"), current.execution?.id);
@@ -316,6 +410,7 @@ test("audits Authority projection timeouts with correlated metadata only", async
     assert.equal(line.includes("private prompt marker"), false);
   } finally {
     globalThis.fetch = originalFetch;
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: originalTimeout });
     console.warn = originalWarn;
     if (originalUrl === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = originalUrl;
     if (originalTask === undefined) delete process.env.IRIXI_AUTHORITY_TASK_ID; else process.env.IRIXI_AUTHORITY_TASK_ID = originalTask;
@@ -335,8 +430,18 @@ test("product review prompt preparation tolerates bounded authority reads over t
   delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
   delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
   const prompt = "Verified readonly review prompt";
+  const expectedCandidateSha256 = H("a");
+  const expectedReviewId = "review-previous";
+  const expectedReviewRoundId = "review-round-1";
+  const reviewEvidence = "核对 mastered 门槛。";
+  const dispatchEventId = "event-review-dispatch";
   globalThis.fetch = async (input, init) => {
     assert.equal(new URL(String(input)).pathname, "/v1/product-review-request");
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      expectedGoalVersionId: "goal-current", expectedExecutionId: "run-current", expectedRegistrySha256: H("b"),
+      expectedArtifactId: "artifact-review-timeout", expectedArtifactVersion: 1,
+      expectedCandidateSha256, expectedReviewId, expectedReviewRoundId, reviewEvidence,
+    });
     await new Promise<void>((resolve, reject) => {
       const signal = init?.signal;
       if (!signal) return reject(new Error("review request timeout signal is missing"));
@@ -344,15 +449,57 @@ test("product review prompt preparation tolerates bounded authority reads over t
       signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
     });
     return Response.json({ taskId: "task-review-timeout", artifactId: "artifact-review-timeout", artifactVersion: 1,
-      candidateSha256: H("a"), prompt, promptSha256: digest(prompt) });
+      candidateSha256: expectedCandidateSha256, expectedReviewId, reviewRoundId: expectedReviewRoundId,
+      dispatchEventId, prompt, promptSha256: digest(prompt) });
   };
   try {
     const bridge = createIrixiIntegration();
     assert.ok(bridge);
     const request = await bridge.productReviewRequest({ expectedGoalVersionId: "goal-current", expectedExecutionId: "run-current",
-      expectedRegistrySha256: H("b"), expectedArtifactId: "artifact-review-timeout", expectedArtifactVersion: 1 });
+      expectedRegistrySha256: H("b"), expectedArtifactId: "artifact-review-timeout", expectedArtifactVersion: 1,
+      expectedCandidateSha256, expectedReviewId, expectedReviewRoundId, reviewEvidence });
     assert.equal(request.prompt, prompt);
     assert.equal(request.artifactVersion, 1);
+    assert.equal(request.expectedReviewId, expectedReviewId);
+    assert.equal(request.reviewRoundId, expectedReviewRoundId);
+    assert.equal(request.dispatchEventId, dispatchEventId);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = originalUrl;
+    if (originalTask === undefined) delete process.env.IRIXI_AUTHORITY_TASK_ID; else process.env.IRIXI_AUTHORITY_TASK_ID = originalTask;
+    if (originalRegistry === undefined) delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE; else process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE = originalRegistry;
+    if (originalProject === undefined) delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID; else process.env.OPEN_OFFICE_IRIXI_PROJECT_ID = originalProject;
+  }
+});
+
+test("open review round preserves a null prior review ID across its Authority request and response", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.IRIXI_AUTHORITY_URL;
+  const originalTask = process.env.IRIXI_AUTHORITY_TASK_ID;
+  const originalRegistry = process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+  const originalProject = process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  const current = projection("accepted prompt", false);
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
+  process.env.IRIXI_AUTHORITY_TASK_ID = current.taskId;
+  delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+  delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/authority") return Response.json({ projection: current });
+    assert.equal(url.pathname, "/v1/product-review-round");
+    assert.equal(JSON.parse(String(init?.body)).expectedReviewId, null);
+    return Response.json({ taskId: current.taskId, reviewRoundId: "round-no-review", artifactId: "artifact-current",
+      artifactVersion: 41, candidateSha256: H("a"), expectedReviewId: null, maxModelCalls: 1, modelCalls: 0,
+      deadlineAt: new Date(Date.now() + 60_000).toISOString() }, { status: 201 });
+  };
+  try {
+    const bridge = createIrixiIntegration();
+    assert.ok(bridge);
+    const round = await bridge.openProductReviewRound({ expectedGoalVersionId: "goal-current", expectedExecutionId: "run-current",
+      expectedRegistrySha256: H("b"), expectedArtifactId: "artifact-current", expectedArtifactVersion: 41,
+      expectedCandidateSha256: H("a"), expectedReviewId: null });
+    assert.equal(round.expectedReviewId, null);
+    assert.equal(round.reviewRoundId, "round-no-review");
   } finally {
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = originalUrl;
@@ -458,7 +605,7 @@ test("CONTROLLED: intake completion is not visible before the authority persists
 });
 
 test("CONTROLLED: unreserved native failure requires and preserves its exact preparation-time binding", async (t) => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "native-preparation-receipt-"));
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "native-preparation-receipt-")));
   const previous = {
     url: process.env.IRIXI_AUTHORITY_URL, task: process.env.IRIXI_AUTHORITY_TASK_ID,
     registry: process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE, project: process.env.OPEN_OFFICE_IRIXI_PROJECT_ID,
@@ -475,20 +622,29 @@ test("CONTROLLED: unreserved native failure requires and preserves its exact pre
   const source = path.join(root, "index.html");
   const bytes = Buffer.from("<main>registered</main>\n");
   writeFileSync(source, bytes, { mode: 0o644 });
+  const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  git("init", "-q"); git("config", "user.name", "Preparation receipt test"); git("config", "user.email", "preparation-receipt@example.invalid");
+  git("add", "--", "index.html"); git("commit", "-qm", "registered source");
+  const sourceHead = git("rev-parse", "HEAD");
+  const sourceManifest = [{ path: "index.html", bytes: bytes.length, sha256: digest(bytes.toString("utf8")), mode: lstatSync(source).mode & 0o777 }];
+  const sourceSnapshotSha256 = digest(canonical({ sourceHead, sourceManifest }));
   const registryFile = path.join(root, "registry.json");
   writeFileSync(registryFile, JSON.stringify({
     schemaVersion: 1, projectId: "article-learning-12", taskId: "task-public-toy", goalVersionId: "goal-current",
-    taskInputBindingSha256: H("3"), pipelineBindingSha256: H("4"), authorityUrl: "http://127.0.0.1:3869/",
-    workspace: { path: root, scopeFingerprint: H("6"), sourceSnapshotSha256: H("7"), sourceHead: "a".repeat(40),
-      sourceManifest: [{ path: "index.html", bytes: bytes.length, sha256: digest(bytes.toString("utf8")), mode: 0o644 }],
+    taskInputBindingSha256: H("3"), pipelineBindingSha256: H("4"), authorityUrl: "http://127.0.0.1:31639/",
+    workspace: { path: root, scopeFingerprint: H("6"), sourceSnapshotSha256, sourceHead,
+      sourceManifest,
       allowedWritePaths: ["index.html"], checks: ["node-syntax-v1"] },
     native: { backend: "codex", model: "gpt-5.6-sol", allowedRoles: ["Lead", "Senior Developer", "Reviewer"], maxModelCalls: 8, maxDurationMs: 1_200_000,
       promptBudget: { contextWindowTokens: 272_000, effectiveContextPercent: 95, outputTokens: 24_576, protocolTokens: 8_192 } },
     capabilities: { team: true, worktree: true, staticPreviewEntries: [], staticPreviewFiles: [], autoMerge: false, manualMerge: false, commandPreview: false },
   }), { mode: 0o600 });
+  const registeredRegistry = JSON.parse(readFileSync(registryFile, "utf8"));
+  const registeredRegistrySha256 = productRegistrySha256(registeredRegistry);
   const prompt = "registered execution request";
-  let current = { ...projection(prompt), taskId: "task-public-toy" };
-  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
+  let current: any = { ...projection(prompt), taskId: "task-public-toy",
+    workspace: { current: true, scopeFingerprint: H("6"), sourceSnapshotSha256 } };
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:31639/";
   process.env.IRIXI_AUTHORITY_TASK_ID = current.taskId;
   process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE = registryFile;
   process.env.OPEN_OFFICE_IRIXI_PROJECT_ID = "article-learning-12";
@@ -497,15 +653,46 @@ test("CONTROLLED: unreserved native failure requires and preserves its exact pre
     const url = new URL(String(input));
     if (url.pathname === "/v1/authority") return Response.json({ projection: current });
     if (url.pathname === "/v1/reservations") return Response.json({ reservation: { ok: true } }, { status: 201 });
+    if (url.pathname === "/v1/product-review-request") {
+      const reviewPrompt = `IRIXI_PRODUCT_REVIEW_V1\n\nIRIXI_REVIEW_ROUND_ID: review-round-no-review\n\nGoal: ${current.goalStatement}\n\nCandidate SHA-256: ${current.artifact.candidateSha256}\n\nSuccess criteria:\n- Check the exact candidate\n\nBoundaries:\n- Read-only\n\nComplete candidate file contents:\nindex.html\n\nPatch:\n- registered diff`;
+      return Response.json({ taskId: current.taskId, artifactId: current.artifact.id, artifactVersion: current.artifact.version,
+        candidateSha256: current.artifact.candidateSha256, expectedReviewId: null, reviewRoundId: "review-round-no-review",
+        dispatchEventId: "event-review-dispatch", prompt: reviewPrompt, promptSha256: digest(reviewPrompt) }, { status: 201 });
+    }
+    if (url.pathname === "/v1/product-native-calls") {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.phase, "review");
+      assert.equal(body.reviewRoundId, "review-round-no-review");
+      assert.equal(body.role, "Reviewer");
+      return Response.json({ error: "Product terminal event has no matching native process reservation" }, { status: 409 });
+    }
     if (url.pathname === "/v1/observations") {
-      submitted = JSON.parse(String(init?.body));
+      const received = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      submitted = received;
+      if (received.actor === "reviewer" && received.preparationFailure !== true) {
+        return Response.json({ error: "Product terminal event has no matching native process reservation" }, { status: 409 });
+      }
+      if (received.actor === "reviewer" && received.preparationFailure === true) {
+        assert.equal(received.phase, "review");
+        assert.equal(received.reviewDispatchEventId, "event-review-dispatch");
+        assert.equal(received.reviewRegistrySha256, registeredRegistrySha256);
+        assert.equal(received.reviewPromptSha256, digest(`IRIXI_PRODUCT_REVIEW_V1\n\nIRIXI_REVIEW_ROUND_ID: review-round-no-review\n\nGoal: ${current.goalStatement}\n\nCandidate SHA-256: ${current.artifact.candidateSha256}\n\nSuccess criteria:\n- Check the exact candidate\n\nBoundaries:\n- Read-only\n\nComplete candidate file contents:\nindex.html\n\nPatch:\n- registered diff`));
+        assert.equal(received.reviewArtifactId, "artifact-current");
+        assert.equal(received.reviewArtifactVersion, 41);
+        assert.equal(received.reviewCandidateSha256, candidateSha256);
+        assert.equal(received.expectedReviewId, null);
+        assert.equal(received.reviewRoundId, "review-round-no-review");
+      }
       return Response.json({ observation: { record: {
-        ...submitted, preparationFailure: true, nativeRole: "Senior Developer",
+        ...received, preparationFailure: true, nativeRole: "Senior Developer",
         reservationStatus: "not_created", modelCallCreated: false,
       }, created: true } }, { status: 201 });
     }
     throw new Error(`unexpected controlled URL ${url.pathname}`);
   };
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
+  assert.throws(() => createIrixiIntegration(), /Product registry authority or task does not match/);
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:31639/";
   const bridge = createIrixiIntegration();
   assert.ok(bridge);
   const sourceTaskId = "worker-preparation";
@@ -542,6 +729,63 @@ test("CONTROLLED: unreserved native failure requires and preserves its exact pre
   assert.equal(received.scopeOutcome, null);
   assert.equal(received.resultSha256, null);
   assert.deepEqual(received.binding, binding);
+
+  const candidateSha256 = H("a");
+  current = { ...current, productRegistry: { current: true, registrySha256: registeredRegistrySha256 },
+    artifact: { id: "artifact-current", version: 41, candidateSha256, review: null } };
+  const reviewRequest = await bridge.productReviewRequest({ expectedGoalVersionId: current.goalVersionId,
+    expectedExecutionId: current.execution.id, expectedRegistrySha256: registeredRegistrySha256,
+    expectedArtifactId: "artifact-current", expectedArtifactVersion: 41, expectedCandidateSha256: candidateSha256,
+    expectedReviewId: null, expectedReviewRoundId: "review-round-no-review" });
+  const reviewTaskId = "product-review-current";
+  const reviewRegistrationInput = {
+    goalVersionId: current.goalVersionId, executionId: current.execution.id, registrySha256: registeredRegistrySha256,
+    artifactId: reviewRequest.artifactId, artifactVersion: reviewRequest.artifactVersion,
+    candidateSha256: reviewRequest.candidateSha256, expectedReviewId: null,
+    reviewRoundId: reviewRequest.reviewRoundId,
+    dispatchEventId: reviewRequest.dispatchEventId, prompt: reviewRequest.prompt, promptSha256: reviewRequest.promptSha256,
+  };
+  await assert.rejects(() => bridge.registerProductReviewTask(`${reviewTaskId}-unknown`, "product-reviewer", "reviewer-intern", reviewRegistrationInput),
+    /Product Reviewer dispatch identity is malformed/);
+  await assert.rejects(() => bridge.registerProductReviewTask(`${reviewTaskId}-wrong-role`, "product-reviewer", "Senior Developer", reviewRegistrationInput),
+    /Product Reviewer dispatch identity is malformed/);
+  const reviewRegistration = await bridge.registerProductReviewTask(reviewTaskId, "product-reviewer", "reviewer", reviewRegistrationInput);
+  assert.equal(bridge.isRegisteredProductReview(reviewTaskId, reviewRequest.prompt), true);
+  const reviewFailureEvent = { type: "TASK_FAILED" as const, agentId: "product-reviewer", taskId: reviewTaskId,
+    nativeAttemptId: "attempt-review-preflight", irixiAuthority: reviewRegistration.binding,
+    error: "Native prompt exceeded the input budget before model submission." };
+  const reviewFailure = await persistIntegratedTerminalBeforePublish({ integration: bridge, event: reviewFailureEvent,
+    actor: "reviewer", buffer() {}, publish() {} });
+  assert.equal(reviewFailure.persisted, true);
+  const reviewerFailurePayload = submitted as unknown as Record<string, unknown>;
+  assert.equal(reviewerFailurePayload.actor, "reviewer");
+  assert.equal(reviewerFailurePayload.preparationFailure, true);
+  assert.equal(reviewerFailurePayload.modelCallCreated, undefined);
+  assert.equal(reviewerFailurePayload.nativeWorkspace, null);
+  assert.equal(reviewerFailurePayload.reviewRegistrySha256, registeredRegistrySha256);
+  assert.equal(reviewerFailurePayload.reviewDispatchEventId, "event-review-dispatch");
+  assert.equal(reviewerFailurePayload.reviewCandidateSha256, candidateSha256);
+  assert.equal(reviewerFailurePayload.error, reviewFailureEvent.error);
+
+  const reviewPrompt = reviewRequest.prompt;
+  const reviewAttemptId = "attempt-review-no-reservation";
+  await assert.rejects(() => bridge.authorizeNativeCall({
+    attemptId: reviewAttemptId, taskId: reviewTaskId, agentId: "product-reviewer", role: "reviewer",
+    backend: "codex", model: "gpt-5.6-sol", workspace: root, prompt: reviewPrompt,
+    promptSha256: digest(reviewPrompt), teamId: "synthetic-team", phase: "review", isTeamLead: false, readOnly: true,
+  }), /Product terminal event has no matching native process reservation/);
+  const failedAdmission = await persistIntegratedTerminalBeforePublish({
+    integration: bridge,
+    event: { type: "TASK_FAILED", agentId: "product-reviewer", taskId: reviewTaskId,
+      nativeAttemptId: reviewAttemptId, irixiAuthority: reviewRegistration.binding,
+      error: "Product terminal event has no matching native process reservation" },
+    actor: "reviewer", buffer() {}, publish() {},
+  });
+  assert.equal(failedAdmission.persisted, true);
+  assert.equal((submitted as any).error, "Product terminal event has no matching native process reservation");
+  assert.equal((submitted as any).preparationFailure, true);
+  assert.equal((submitted as any).modelCallCreated, undefined);
+  assert.equal((submitted as any).reviewRoundId, "review-round-no-review");
 
   const staleChild = "late-old-worker";
   const staleBinding = bridge.inheritTaskBinding(parentTaskId, staleChild);
@@ -616,9 +860,11 @@ test("CONTROLLED: lost native admission receipts settle the exact reservation wi
       promptUtf8Bytes, promptTokenUpperBound: promptUtf8Bytes, estimator: "utf8_bytes_upper_bound" as const },
   };
   let reservationPosts = 0;
+  let slowReservationPosts = 0;
   let createdReservations = 0;
   let firstReservationBody: Record<string, unknown> | null = null;
   let submittedTerminal: Record<string, unknown> | null = null;
+  let admissionMode: "slow_success" | "lost_receipt" = "slow_success";
   const bridge = createIrixiIntegration();
   assert.ok(bridge);
   globalThis.fetch = async (input, init) => {
@@ -626,6 +872,23 @@ test("CONTROLLED: lost native admission receipts settle the exact reservation wi
     if (url.pathname === "/v1/authority") return Response.json({ projection: current });
     if (url.pathname === "/v1/product-native-calls") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (admissionMode === "slow_success") {
+        slowReservationPosts += 1;
+        const signal = init?.signal;
+        assert.ok(signal instanceof AbortSignal);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, 3_100);
+          const onAbort = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        return Response.json({ reservation: { detail: { deadlineAt: new Date(Date.now() + 60_000).toISOString(), phase: "create" } } }, { status: 201 });
+      }
       reservationPosts += 1;
       if (firstReservationBody === null) {
         firstReservationBody = body;
@@ -639,6 +902,11 @@ test("CONTROLLED: lost native admission receipts settle the exact reservation wi
     }
     throw new Error(`unexpected controlled URL ${url.pathname}`);
   };
+
+  const slowAdmission = await bridge.authorizeNativeCall({ ...context, attemptId: "attempt-slow-admission" });
+  assert.ok(slowAdmission && slowAdmission.timeoutMs > 0);
+  assert.equal(slowReservationPosts, 1, "a successful delayed admission must not dispatch a duplicate reservation");
+  admissionMode = "lost_receipt";
 
   await assert.rejects(() => bridge.authorizeNativeCall(context), /fetch failed/);
   assert.equal(bridge.bindingFor(taskId, attemptId)?.taskId, taskId);
@@ -763,6 +1031,34 @@ test("CONTROLLED: readonly Lead plan persists as Lead evidence without Developer
   assert.equal(Object.hasOwn(leadDetail, "entryFile"), false);
 });
 
+test("CONTROLLED: saved Lead plan reader preserves surrounding prose and rejects malformed plan blocks", async (t) => {
+  const previous = { url: process.env.IRIXI_AUTHORITY_URL, task: process.env.IRIXI_AUTHORITY_TASK_ID, fetch: globalThis.fetch };
+  t.after(() => {
+    globalThis.fetch = previous.fetch;
+    if (previous.url === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = previous.url;
+    if (previous.task === undefined) delete process.env.IRIXI_AUTHORITY_TASK_ID; else process.env.IRIXI_AUTHORITY_TASK_ID = previous.task;
+  });
+  const planText = `**Conclusion:** Create a reusable weekly summary template that helps you capture completed work, outcomes, blockers, and next week’s priorities.\nThis plan follows the task’s concise English instruction over the saved Chinese preference. It preserves the stated goal and boundaries: planning only, no implementation, and no changes to tasks A, B, or C.\n[PLAN]\n- **Purpose:** Make weekly reporting quick, consistent, and useful for personal reflection or sharing.\n- **Sections:** Week and focus; key work completed; outcomes or evidence; blockers and lessons; next week’s priorities; support needed.\n- **Format:** A one-page template with short prompts and space for bullets, designed to be easy to reuse each week.\n- **Check:** Confirm that a completed example can distinguish activity from outcomes and makes next actions clear.\n[/PLAN]`;
+  const taskId = "saved-plan-reader-task";
+  process.env.IRIXI_AUTHORITY_URL = "http://127.0.0.1:3869/";
+  process.env.IRIXI_AUTHORITY_TASK_ID = taskId;
+  let body = { taskId, goalVersionId: "goal-current", executionId: "run-current", registrySha256: H("r"),
+    agentId: "product-lead", sourceTaskId: "lead-source", attemptId: "lead-attempt", planText, planSha256: digest(planText) };
+  globalThis.fetch = async () => Response.json(body);
+  const bridge = createIrixiIntegration();
+  assert.ok(bridge);
+  const saved = await bridge.productLeadPlan();
+  assert.equal(saved?.planText, planText);
+  assert.equal(saved?.planSha256, digest(planText));
+  const r5PlanText = "[PLAN]\nPreserve the original task scope and report the observed result.未验证。[/PLAN]";
+  body = { ...body, planText: r5PlanText, planSha256: digest(r5PlanText) };
+  const r5Saved = await bridge.productLeadPlan();
+  assert.equal(r5Saved?.planText, r5PlanText);
+  assert.equal(r5Saved?.planSha256, digest(r5PlanText));
+  body = { ...body, planText: "[PLAN] inline\nempty boundary\n[/PLAN]", planSha256: digest("[PLAN] inline\nempty boundary\n[/PLAN]") };
+  await assert.rejects(bridge.productLeadPlan(), /malformed saved Lead plan/);
+});
+
 test("CONTROLLED: terminal receipt requires the exact event, attempt, binding, and result hash", () => {
   const expected = {
     type: "TASK_DONE", actor: "lead", sourceTaskId: "lead-current", sourceEventId: "lead-current:attempt-current:TASK_DONE",
@@ -859,4 +1155,162 @@ test("CONTROLLED: timed-out terminal write retries once with the identical idemp
   assert.equal(result.persisted, true);
   assert.equal(attempts, 2);
   assert.deepEqual(order, ["record:TASK_DONE", "record:TASK_DONE", "buffer", "publish"]);
+});
+
+test("product learning uses its registered task without enabling legacy project intake", async () => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "product-learning-registry-")));
+  const workspace = path.join(root, "workspace");
+  mkdirSync(workspace);
+  const html = "<!doctype html><main>fixture</main>\n";
+  writeFileSync(path.join(workspace, "index.html"), html);
+  const registryFile = path.join(root, "registry.json");
+  const registry = {
+    schemaVersion: 1,
+    projectId: "article-learning-12",
+    taskId: "task-product-learning-test",
+    goalVersionId: "goal-current",
+    taskInputBindingSha256: H("a"),
+    pipelineBindingSha256: H("b"),
+    authorityUrl: "http://127.0.0.1:3869/",
+    workspace: {
+      path: workspace,
+      scopeFingerprint: H("c"),
+      sourceSnapshotSha256: H("d"),
+      sourceHead: "e".repeat(40),
+      sourceManifest: [{ path: "index.html", bytes: Buffer.byteLength(html), sha256: digest(html), mode: 0o644 }],
+      allowedWritePaths: ["index.html"],
+      checks: ["node-syntax-v1"],
+    },
+    native: {
+      backend: "codex", model: "gpt-6-luna", allowedRoles: ["Lead"], maxModelCalls: 8, maxDurationMs: 1_200_000,
+      promptBudget: { contextWindowTokens: 128_000, effectiveContextPercent: 95, outputTokens: 8_192, protocolTokens: 4_096 },
+    },
+    capabilities: {
+      team: false, worktree: false, staticPreviewEntries: ["index.html"], staticPreviewFiles: ["index.html"],
+      autoMerge: false, manualMerge: false, commandPreview: false,
+    },
+  };
+  writeFileSync(registryFile, JSON.stringify(registry));
+
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.IRIXI_AUTHORITY_URL;
+  const originalTask = process.env.IRIXI_AUTHORITY_TASK_ID;
+  const originalIntake = process.env.IRIXI_INTAKE_TASK_ID;
+  const originalRegistry = process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+  const originalProject = process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+  const originalConfig = process.env.OPEN_OFFICE_CONFIG_DIR;
+  const requests: string[] = [];
+  const sourceTaskId = "learning-76b58201-26d0-4471-b5fa-b84ff1a6c7ae";
+  const reservedPrompt = `${ARTICLE_INFERENCE_TAG}\nRegistered synthetic learning request.`;
+  let current = {
+    ...projection("registered product execution"),
+    taskId: registry.taskId,
+    taskInputBindingSha256: registry.taskInputBindingSha256,
+    pipelineBindingSha256: registry.pipelineBindingSha256,
+    workspace: { current: true, scopeFingerprint: registry.workspace.scopeFingerprint, sourceSnapshotSha256: registry.workspace.sourceSnapshotSha256 },
+  };
+  const order: string[] = [];
+  try {
+    process.env.IRIXI_AUTHORITY_URL = registry.authorityUrl;
+    process.env.IRIXI_AUTHORITY_TASK_ID = registry.taskId;
+    process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE = registryFile;
+    process.env.OPEN_OFFICE_IRIXI_PROJECT_ID = registry.projectId;
+    process.env.OPEN_OFFICE_CONFIG_DIR = path.join(root, "openoffice-config");
+    mkdirSync(process.env.OPEN_OFFICE_CONFIG_DIR);
+    delete process.env.IRIXI_INTAKE_TASK_ID;
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push(`${String(init?.method || "GET").toUpperCase()} ${url.pathname}`);
+      if (url.pathname === "/v1/authority") return Response.json({ projection: current });
+      if (url.pathname === "/v1/inference/reservations") return Response.json({
+        sourceTaskId, prompt: reservedPrompt, promptSha256: digest(reservedPrompt), turnId: "turn-registered", remaining: 7,
+      }, { status: 201 });
+      if (url.pathname === "/v1/inference/failures") {
+        order.push("persist");
+        return Response.json({ ok: true }, { status: 201 });
+      }
+      return Response.json({ ok: true }, { status: url.pathname === "/v1/materials" ? 201 : 200 });
+    };
+
+    const { irixiPublicIntegration: bridge } = await import("./ws-server.js");
+    assert.ok(bridge);
+    await bridge.publicIntake();
+    await bridge.clientState({ scope: "project" });
+    await bridge.registerLearningMaterial({ sessionId: "session-current", label: "Fixture", articleText: "Synthetic test text." });
+    await bridge.openLearningBatch({ expectedGoalVersionId: registry.goalVersionId, expectedCandidateSha256: H("f") });
+    assert.deepEqual(requests.slice(0, 4), [
+      "GET /v1/intake", "GET /v1/learning/client-state", "POST /v1/materials", "POST /v1/learning/open-batch",
+    ]);
+
+    const reservation = await bridge.beginInference({
+      sessionId: "session-current", turnId: "turn-registered", kind: "explain", articleSha256: H("e"), payload: { answer: "synthetic" },
+    });
+    assert.equal(bridge.hasInferenceReservation(sourceTaskId), true);
+    assert.equal(bridge.hasInferenceReservation("learning-arbitrary"), false);
+    const conversationPrompt = `IRIXI_PRODUCT_CONVERSATION_V1\nRead-only learning call.\n\n${reservation.prompt}`;
+    const duplicateInstance = createIrixiIntegration();
+    assert.ok(duplicateInstance);
+    await assert.rejects(
+      duplicateInstance.authorize(sourceTaskId, "reviewer", conversationPrompt, undefined, workspace),
+      /Irixi has no current host-verified candidate for review/,
+      "the old split-instance wiring loses the registered inference context",
+    );
+    await assert.rejects(
+      bridge.authorize(sourceTaskId, "reviewer", undefined, undefined, workspace),
+      /Learning inference must use the registered read-only conversation phase/,
+      "a registered inference still rejects a missing conversation prompt",
+    );
+    await bridge.authorize(sourceTaskId, "reviewer", conversationPrompt, undefined, workspace);
+    await assert.rejects(
+      bridge.authorize("learning-arbitrary", "reviewer", conversationPrompt, undefined, workspace),
+      /Irixi has no current host-verified candidate for review/,
+      "unregistered learning-like IDs do not gain conversation authorization",
+    );
+
+    const failed = { type: "TASK_FAILED" as const, agentId: "product-lead", taskId: sourceTaskId, error: "authorization failed" };
+    const persisted = await persistInferenceStartFailureBeforePublish({
+      integration: bridge, event: failed,
+      buffer() { order.push("buffer"); }, publish() { order.push("publish"); },
+    });
+    assert.equal(persisted.persisted, true);
+    assert.equal(bridge.hasInferenceReservation(sourceTaskId), false, "terminal persistence consumes the exact in-memory reservation");
+    assert.deepEqual(order, ["persist", "buffer", "publish"], "reserved inference failures settle before notification");
+    assert.ok(requests.includes("POST /v1/inference/failures"));
+    const beforeUnregisteredFailure = requests.length;
+    const unregisteredFailure = { ...failed, taskId: "unregistered-task" };
+    const unregistered = await persistInferenceStartFailureBeforePublish({
+      integration: bridge, event: unregisteredFailure,
+      buffer() { order.push("buffer-unregistered"); }, publish() { order.push("publish-unregistered"); },
+    });
+    assert.equal(unregistered.persisted, false);
+    assert.equal(requests.length, beforeUnregisteredFailure, "unregistered task failures do not reach the inference receipt route");
+    assert.deepEqual(order.slice(-2), ["buffer-unregistered", "publish-unregistered"]);
+
+    await assert.rejects(bridge.setIntakeDiscussionEnabled(true), /Irixi project intake is not enabled/);
+    await assert.rejects(bridge.authorizeIntake("legacy-intake-task", `${PROJECT_INTAKE_TAG}\nRead-only discussion`), /not the registered/);
+    await assert.rejects(bridge.coordinateSealedInferenceResult({
+      expectedGoalVersionId: registry.goalVersionId, expectedCandidateSha256: H("f"), expectedTurnId: "turn-current",
+      sourceTaskId: "source-current", expectedSessionId: "session-current", expectedMaterialEventId: "event-material",
+      expectedArticleSha256: H("a"), expectedPromptSha256: H("b"), expectedLedgerSha256: H("c"),
+      expectedStdoutSha256: H("d"), expectedOriginalTransportTextSha256: H("e"),
+      hostProofFile: "proof.json", hostProofSha256: H("f"),
+    }), /Irixi project intake is not enabled/);
+    assert.ok(requests.length > 4, "registered product inference uses only its exact current Authority routes");
+
+    delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE;
+    delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID;
+    const legacy = createIrixiIntegration();
+    assert.ok(legacy);
+    await assert.rejects(legacy.publicIntake(), /Irixi project intake is not enabled/);
+    assert.ok(requests.includes("POST /v1/inference/failures"), "terminal receipt remains in the existing Authority route");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.IRIXI_AUTHORITY_URL; else process.env.IRIXI_AUTHORITY_URL = originalUrl;
+    if (originalTask === undefined) delete process.env.IRIXI_AUTHORITY_TASK_ID; else process.env.IRIXI_AUTHORITY_TASK_ID = originalTask;
+    if (originalIntake === undefined) delete process.env.IRIXI_INTAKE_TASK_ID; else process.env.IRIXI_INTAKE_TASK_ID = originalIntake;
+    if (originalRegistry === undefined) delete process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE; else process.env.OPEN_OFFICE_PRODUCT_REGISTRY_FILE = originalRegistry;
+    if (originalProject === undefined) delete process.env.OPEN_OFFICE_IRIXI_PROJECT_ID; else process.env.OPEN_OFFICE_IRIXI_PROJECT_ID = originalProject;
+    if (originalConfig === undefined) delete process.env.OPEN_OFFICE_CONFIG_DIR; else process.env.OPEN_OFFICE_CONFIG_DIR = originalConfig;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

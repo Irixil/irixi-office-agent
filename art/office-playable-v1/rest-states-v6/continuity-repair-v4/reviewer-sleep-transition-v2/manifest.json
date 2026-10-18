@@ -1,0 +1,64 @@
+{
+  "id": "reviewer-sleep-transition-v2",
+  "status": "local-runtime-candidate-awaiting-coordinator-review",
+  "supersedes": "../reviewer-sleep-transition-v1/manifest.json",
+  "role": "reviewer",
+  "frameSize": [192, 208],
+  "anchor": [96, 194],
+  "spritesheet": "spritesheet.png",
+  "frameCount": 3,
+  "sourceFrameIndices": [0, 1, 3],
+  "sourceFrames": [
+    "../reviewer-sleep-transition-v1/fullframe/reviewer-sleep-transition_00.png",
+    "../reviewer-sleep-transition-v1/fullframe/reviewer-sleep-transition_01.png",
+    "../reviewer-sleep-transition-v1/fullframe/reviewer-sleep-transition_03.png"
+  ],
+  "animations": {
+    "idle-to-sleep": {
+      "frameIndices": [0, 1, 2],
+      "frameDurationsMs": [100, 180, 260],
+      "returnTo": "sleeping",
+      "endpointFrames": [0, 2]
+    },
+    "sleep-to-idle": {
+      "frameIndices": [2, 1, 0],
+      "frameDurationsMs": [260, 180, 100],
+      "returnTo": "idle",
+      "endpointFrames": [2, 0]
+    }
+  },
+  "excludedSourceFrame": {
+    "index": 2,
+    "source": "../reviewer-sleep-transition-v1/fullframe/reviewer-sleep-transition_02.png",
+    "sha256": "b5da86d997f19f15a320de4f936e3d888ac8785101d6dd5fe71208f2f0b9315c",
+    "reason": "head dipped below the fixed sleep endpoint and rebounded upward at the endpoint; retained in v1 as rejected evidence, omitted from the runtime sheet"
+  },
+  "endpointSources": {
+    "idle": {
+      "source": "../../reviewer/idle/fullframe/reviewer-idle_00.png",
+      "sha256": "ba2cc5d94d50c0c1ee643a2b1434925b9901be24df3eb82e2f11ca2508e315b3"
+    },
+    "sleeping": {
+      "source": "../../reviewer/sleeping/fullframe/reviewer-sleeping_00.png",
+      "sha256": "968d3f98336c697a4c89bd9487e0000074fc63f046f4727245077f5b38f84188"
+    }
+  },
+  "loopHandoff": {
+    "sleepingLoopStartsAtSourceFrame": 3,
+    "wakeTransitionStartsAtSourceFrame": 3,
+    "wakeTransitionReturnsToIdle": true,
+    "v6SleepingLoopPreserved": true
+  },
+  "transform": {
+    "source": "v1 fixed-canvas frames",
+    "scaleOrStretchApplied": false,
+    "repackedSourceOrder": [0, 1, 3]
+  },
+  "localRuntimeOnly": true,
+  "unverified": [
+    "live browser playback and desk-layer occlusion",
+    "coordinator visual approval",
+    "user visual acceptance"
+  ],
+  "validation": "validation.json"
+}

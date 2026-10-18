@@ -82,7 +82,6 @@ function invalidateExecution(task, reason) {
     task.execution.updatedAt = now();
     task.executionHistory.push(structuredClone(task.execution));
   }
-  task.executionHistory = task.executionHistory.slice(-20);
   task.execution = null;
 }
 

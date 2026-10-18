@@ -189,6 +189,20 @@ test('同错达到尝试上限与永久错误不再重试，不同错误仍交�
   assert.equal(permanent.retryable, false);
 });
 
+test('starting a new execution retains history older than twenty runs', () => {
+  const task = createTask({ goal: '保留全部执行历史' });
+  buildPlan(task);
+  task.executionHistory = Array.from({ length: 25 }, (_, i) => ({ id: `prior-run-${i}` }));
+  task.execution = { id: 'current-run', phase: 'failed', stopReason: 'native_process_failed', modelCalls: [{ id: 'current-call' }] };
+
+  startExecution(task, activeGoal(task).id);
+
+  assert.equal(task.executionHistory.length, 26);
+  assert.equal(task.executionHistory[0].id, 'prior-run-0');
+  assert.equal(task.executionHistory.at(-1).id, 'current-run');
+  assert.deepEqual(task.executionHistory.at(-1).modelCalls, [{ id: 'current-call' }]);
+});
+
 test('永久错误、同错耗尽与项目事务终止的进度不承诺直接恢复', () => {
   const task = createTask({ goal: '验证终止后的下一步' });
   buildPlan(task);

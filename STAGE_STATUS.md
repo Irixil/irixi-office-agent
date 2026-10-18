@@ -1,11 +1,30 @@
-# 阶段状态 · 2026-10-13
+# Preview status · 2026-10-18 source snapshot
 
-本源码候选来自当日冻结的实际桌面与外置原生适配源码，包含当时已有的未提交改动，随后仅在独立副本整理公开范围。原开发仍在进行，后续改动不自动包含在本包中。
+Published as the 2026-10-19 early preview. iRIXI is being developed and exercised on selected local projects with human supervision.
 
-R44/v15 已经完成同版原生角色协作、宿主检查、独立审阅、具体确认和真实 patch 下载。已下载 patch 未应用回正式业务源码；候选的运行态工作树和补丁未在此包中冒充正式源。
+## Available in this source preview
 
-真实学习流程、所选筛选变更和最终用户验收仍未完整通过。确认后的预览与执行预算到期后的成果视图曾有实际连接缺口，本体源码已有针对性修改，但本次打包未重新加载或验证运行效果。
+- A visual Victorian office with an owl coordinator, animal colleagues, keyboard and click-to-walk movement, colleague conversation, and a connected upstairs gallery.
+- OpenOffice native planning, team development, managed worktrees, independent review, exact-version confirmation, and patch delivery.
+- Persistent project goals, materials, accepted requirement changes, candidate history, and recovery paths.
+- Local task memory and an optional XERJ index.
 
-本阶段源码准备与 GitHub 更新仅涉及独立目录中的文件复制、隐私整理、基本静态核验和 Git 操作。未运行模型、启动开发服务、执行重型测试或部署，原开发目录与运行中的工作未受此更新影响。
+## Selected project validation
 
-用户已明确授权将此阶段版本以普通新提交更新 Irixil/irixi-office-agent 的 main，保留 Git 历史。该授权和源码更新不代表完成完整 Personal Agent、真实学习、最终用户验收或跨机器运行验证。
+The existing article-learning project was continued from a download request, through Lead planning and an additional review-list requirement, to native development, independent review and refinement, explicit confirmation, and patch download.
+
+The confirmed v45 preview provided full-report and review-list Markdown downloads from the saved server record. Both downloads were opened and checked. Normal project switching, history recovery, report saving, and refresh preserved the restored session. Earlier selected task-list and read-only progress-assistant examples also have bounded delivery and use evidence.
+
+These are selected local validations. Human supervision and platform assistance were part of the process. Generated candidate patches remain separate from the formal example baseline, and their original runtime worktrees are not included in this public snapshot.
+
+## Next development areas
+
+Fresh-machine native setup, simpler project registration, smoother project continuation, and additional article-writing and game workflows are the next areas of work. See the [setup guide](docs/getting-started.md) for current prerequisites.
+
+## Source and publication
+
+This update includes current desktop code, selected runtime artwork, adapted upstream sources, and integration adapters. It retains existing exact-version, budget, review, confirmation, and historical-recovery guards.
+
+Private tasks, credentials, runtime approvals, personal catalogues, model-call records, generated worktrees, dependencies, and compiled outputs are excluded. Historical examples use disabled placeholders. The optional Noobi integration requires its external checkout; this public preview keeps its fixed-root guard with a disabled placeholder.
+
+See [CHANGELOG.md](CHANGELOG.md) for publication checks and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source ownership and licenses.

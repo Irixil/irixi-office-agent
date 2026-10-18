@@ -102,6 +102,51 @@ test("accepts the exact conservative boundary and rejects one byte above it", ()
   }
 });
 
+test("registered review prompt fits directly while the generic reviewer wrapper exceeds the recorded budget", () => {
+  const exactRegisteredReview = "x".repeat(225_340);
+  const direct = prepareNativePrompt(request({
+    blocks: [{ id: "registered-review", purpose: "complete Authority-issued review", content: exactRegisteredReview }],
+    separator: "",
+  }));
+  assert.equal(direct.ok, true);
+  if (direct.ok) assert.equal(direct.budget.promptUtf8Bytes, 225_340);
+
+  const wrapped = prepareNativePrompt(request({
+    blocks: [{ id: "wrapped-review", purpose: "reviewer template plus registered review",
+      content: `${"w".repeat(820)}${exactRegisteredReview}` }],
+    separator: "",
+  }));
+  assert.equal(wrapped.ok, false);
+  if (!wrapped.ok) {
+    assert.equal(wrapped.reason.code, "PROMPT_BUDGET_EXCEEDED");
+    assert.equal(wrapped.budget?.promptUtf8Bytes, 226_160);
+    assert.equal(wrapped.budget?.availablePromptTokens, 225_632);
+  }
+});
+
+test("charges fixed output-schema bytes against the existing input budget without changing reserves", () => {
+  const counted = prepareNativePrompt(request({
+    limits: { modelId: "gpt-5.6-sol", contextWindowTokens: 32, effectiveContextPercent: 100 },
+    reserves: { outputTokens: 8, protocolTokens: 8, outputSchemaUtf8Bytes: 7 },
+    blocks: [{ id: "prompt", purpose: "goal", content: "x".repeat(9) }],
+  }));
+  assert.equal(counted.ok, true);
+  if (counted.ok) {
+    assert.equal(counted.budget.protocolReserveTokens, 8);
+    assert.equal(counted.budget.availablePromptTokens, 16);
+    assert.equal(counted.budget.promptTokenUpperBound, 9);
+    assert.equal(counted.budget.outputSchemaUtf8Bytes, 7);
+  }
+
+  const overBudget = prepareNativePrompt(request({
+    limits: { modelId: "gpt-5.6-sol", contextWindowTokens: 32, effectiveContextPercent: 100 },
+    reserves: { outputTokens: 8, protocolTokens: 8, outputSchemaUtf8Bytes: 7 },
+    blocks: [{ id: "prompt", purpose: "goal", content: "x".repeat(10) }],
+  }));
+  assert.equal(overBudget.ok, false);
+  if (!overBudget.ok) assert.equal(overBudget.reason.code, "PROMPT_BUDGET_EXCEEDED");
+});
+
 test("fails closed when limits are for another model", () => {
   const result = prepareNativePrompt(request({ executionModelId: "gpt-6-luna" }));
   assert.equal(result.ok, false);

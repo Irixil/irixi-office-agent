@@ -60,6 +60,14 @@ test('只有实际工作角色显示正在工作，失败与待确认不会被�
   assert.deepEqual(coworkerRuntimeState(waiting, 'writer', { activeConversationRole: 'researcher' }), { active: false, status: 'done', localEligible: true, activitySource: 'local' });
 });
 
+test('原生办公室职能只按明确functionId显示整体任务状态', () => {
+  const utility = { nativeProduct: true, functionId: 'utility', status: 'running', activeRole: 'reviewer', workItems: [{ role: 'reviewer', status: 'running' }] };
+  assert.deepEqual(coworkerRuntimeState(utility, 'writer'), { active: true, status: 'active', localEligible: false, activitySource: 'task' });
+  assert.deepEqual(coworkerRuntimeState(utility, 'reviewer'), { active: false, status: 'idle', localEligible: true, activitySource: 'local' });
+  assert.deepEqual(coworkerRuntimeState(utility, 'researcher', { learningAvailable: true }), { active: false, status: 'learning_available', localEligible: true, activitySource: 'local' });
+  assert.deepEqual(coworkerRuntimeState({ ...utility, functionId: null }, 'reviewer'), { active: false, status: 'idle', localEligible: true, activitySource: 'local' });
+});
+
 test('同一动态角色优先运行中的手动复核，完成后取最新复核而不是旧待排项', () => {
   const agent = { id: 'agent-auditor', roleKey: 'auditor', stationRole: 'reviewer' };
   const task = {

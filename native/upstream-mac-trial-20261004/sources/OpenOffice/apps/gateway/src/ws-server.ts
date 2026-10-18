@@ -14,9 +14,9 @@ import { writePortLock } from "./runtime-state.js";
 import { nanoid } from "nanoid";
 import { createHash } from "node:crypto";
 import { createIrixiIntegration } from "./irixi-integration.js";
-import { beginProductPreview, clearProductPreview, finishProductPreview, getProductPreviewContext, loadProductProjectRegistry, productPreviewMatches, productProjectRegistryEnabled } from "./product-project-registry.js";
+import { beginProductPreview, clearProductPreview, finishProductPreview, getProductPreviewContext, loadProductProjectRegistry, productPreviewContentType, productPreviewMatches, productProjectRegistryEnabled } from "./product-project-registry.js";
 import { readSmallJson } from "./json-body.js";
-import { clientStateErrorStatus } from "./client-state-http.js";
+import { clientStateBodyLimit, clientStateErrorStatus } from "./client-state-http.js";
 import { prepareNativePrompt } from "../../../packages/orchestrator/src/native-prompt-budget.js";
 
 /**
@@ -43,6 +43,51 @@ export function shouldStartFreshProductPlan(state: any): boolean {
     && state?.native?.plan == null
     && Array.isArray(state?.native?.sessions)
     && state.native.sessions.length === 0;
+}
+
+export function projectProgressBindingMatches(submitted: Record<string, unknown>, binding: Record<string, unknown>): boolean {
+  return ["expectedGoalVersionId", "expectedExecutionId", "expectedRegistrySha256", "expectedArtifactId",
+    "expectedArtifactVersion", "expectedCandidateSha256"].every((field) => submitted[field] === binding[field]);
+}
+
+export function productReviewRoundBindingMatches(input: Record<string, unknown>, artifact: any, canOpen: boolean): boolean {
+  return Boolean(artifact && input.expectedArtifactId === artifact.id
+    && input.expectedArtifactVersion === artifact.version
+    && input.expectedCandidateSha256 === artifact.candidateSha256
+    && input.expectedReviewId === (artifact.review?.id || null)
+    && canOpen === true);
+}
+
+type SavedProductLeadPlan = { taskId: string; goalVersionId: string; executionId: string; registrySha256: string;
+  agentId: string; planText: string; planSha256: string };
+
+export function matchesPersistedProductLeadPlan(state: any, runtimeView: ProductRuntimeView, savedPlan: SavedProductLeadPlan | null): boolean {
+  return state?.current === true
+    && state?.product?.bindingCurrent === true
+    && Boolean(state?.native?.runAgentId)
+    && runtimeView.leadAgentId === state.native.runAgentId
+    && typeof runtimeView.plan?.text === "string"
+    && Boolean(runtimeView.plan.text.trim())
+    && /^[a-f0-9]{64}$/.test(runtimeView.plan.sha256 || "")
+    && savedPlan !== null
+    && savedPlan.taskId === state.taskId
+    && savedPlan.goalVersionId === state.goalVersionId
+    && savedPlan.executionId === state.execution?.id
+    && savedPlan.registrySha256 === state.product.registrySha256
+    && savedPlan.agentId === state.native.runAgentId
+    && savedPlan.planText === runtimeView.plan.text
+    && savedPlan.planSha256 === runtimeView.plan.sha256;
+}
+
+export function hasCurrentProductPlanAwaitingApproval(state: any, runtimeView: ProductRuntimeView, savedPlan: SavedProductLeadPlan | null): boolean {
+  const executionCanApprove = (state?.execution?.phase === "executing" && !state?.execution?.stopReason)
+    || (Boolean(state?.execution?.stopReason)
+      && state?.native?.actions?.resumeReason === "saved_lead_plan_same_execution_budget_and_deadline");
+  return state?.current === true
+    && state?.product?.bindingCurrent === true
+    && executionCanApprove
+    && runtimeView.phase === "design"
+    && matchesPersistedProductLeadPlan(state, runtimeView, savedPlan);
 }
 
 export function setProductRuntimeViewProvider(provider: (() => ProductRuntimeView) | null) {
@@ -83,7 +128,7 @@ function addSessionToken(token: string, role: UserRole) {
 // Pending WS connections awaiting AUTH
 const pendingAuth = new Set<WebSocket>();
 const AUTH_TIMEOUT_MS = 5000;
-const irixiPublicIntegration = createIrixiIntegration();
+export const irixiPublicIntegration = createIrixiIntegration();
 
 function isSameOriginRequest(req: IncomingMessage): boolean {
   if (!req.headers.origin) return true;
@@ -134,7 +179,8 @@ export const wsChannel: Channel = {
     return new Promise((promiseResolve) => {
       const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         const productHttpPath = req.url === "/api/irixi-authority" || req.url === "/api/product-state"
-          || req.url?.startsWith("/api/product/") || req.url?.startsWith("/api/irixi-authority/");
+          || req.url?.startsWith("/api/product/") || req.url?.startsWith("/api/irixi-authority/")
+          || req.url?.startsWith("/api/project-progress/");
         // Product authority state and actions are local same-origin
         // capabilities. Legacy endpoints keep their existing CORS behavior.
         if (!productHttpPath) res.setHeader("Access-Control-Allow-Origin", "*");
@@ -157,16 +203,24 @@ export const wsChannel: Channel = {
           try {
             const authority = await irixiPublicIntegration.publicProjection();
             const runtimeView = productRuntimeViewProvider?.() || { phase: null, leadAgentId: null };
+            let savedPlan = null;
+            let planReadFailed = false;
+            try { savedPlan = await irixiPublicIntegration.productLeadPlan(); } catch { planReadFailed = true; /* A runtime-only plan remains visible but cannot be approved. */ }
+            const pendingPlanApproval = hasCurrentProductPlanAwaitingApproval(authority, runtimeView, savedPlan);
             const publicAuthority: any = {
               ...authority,
               mode: AI_EXECUTION_DISABLED ? "zero_model_development" : "native_product",
               aiEnabled: !AI_EXECUTION_DISABLED,
               native: authority.native ? { ...authority.native, aiEnabled: !AI_EXECUTION_DISABLED, phase: runtimeView.phase,
-                plan: runtimeView.plan || null, actions: {
+                plan: runtimeView.plan || null,
+                planApprovalStatus: pendingPlanApproval ? "saved" : planReadFailed ? "unavailable"
+                  : runtimeView.phase === "design" && runtimeView.plan && !savedPlan ? "not_persisted"
+                    : runtimeView.plan && savedPlan && !matchesPersistedProductLeadPlan(authority, runtimeView, savedPlan) ? "mismatch" : "not_ready",
+                actions: {
                 ...authority.native.actions,
                 phase: runtimeView.phase,
                 aiEnabled: !AI_EXECUTION_DISABLED,
-                canRun: !AI_EXECUTION_DISABLED && authority.native.actions?.canRun === true,
+                canRun: !AI_EXECUTION_DISABLED && authority.native.actions?.canRun === true && !pendingPlanApproval,
                 canReview: !AI_EXECUTION_DISABLED && authority.native.actions?.canReview === true,
                 canResume: !AI_EXECUTION_DISABLED && authority.native.actions?.canResume === true,
                 canContinue: !AI_EXECUTION_DISABLED && authority.native.actions?.canResume === true,
@@ -174,13 +228,17 @@ export const wsChannel: Channel = {
                 canGoal: authority.product?.bindingCurrent === true,
                 canInstructions: authority.product?.bindingCurrent === true,
                 canMaterials: authority.product?.bindingCurrent === true,
-                canApprovePlan: !AI_EXECUTION_DISABLED && runtimeView.phase === "design"
-                  && runtimeView.leadAgentId === authority.native.runAgentId && Boolean(runtimeView.plan),
+                canApprovePlan: !AI_EXECUTION_DISABLED && pendingPlanApproval,
                 blockedReason: AI_EXECUTION_DISABLED ? "zero_model_development_mode" : null,
               } } : null,
             };
             const previewContext = getProductPreviewContext();
             const previewMatches = productPreviewMatches(previewContext, authority);
+            const registeredProject = loadProductProjectRegistry();
+            const toolZipAvailable = registeredProject !== null
+              && registeredProject.projectId === authority.product?.projectId
+              && registeredProject.projectId.startsWith("tool-")
+              && registeredProject.capabilities.staticPreviewEntries.includes("index.html");
             if (previewContext && !previewMatches) clearProductPreview();
             publicAuthority.preview = previewMatches ? {
               status: previewContext.status, taskId: previewContext.taskId, goalVersionId: previewContext.goalVersionId,
@@ -200,6 +258,7 @@ export const wsChannel: Channel = {
               candidate: "/api/product/candidate",
               confirm: "/api/irixi-authority/confirm",
               patch: "/api/irixi-authority/patch",
+              ...(toolZipAvailable ? { zip: "/api/irixi-authority/zip" } : {}),
             } }));
           } catch {
             res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -221,6 +280,92 @@ export const wsChannel: Channel = {
           } catch (error) {
             res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
             res.end(JSON.stringify({ error: error instanceof Error ? error.message : "Current product candidate is unavailable" }));
+          }
+          return;
+        }
+
+        const projectProgressBinding = async () => {
+          if (!productProjectRegistryEnabled() || !irixiPublicIntegration || isTunnelRequest(req) || !isSameOriginRequest(req)) {
+            throw new Error("Project progress API is unavailable");
+          }
+          const state = await irixiPublicIntegration.publicProjection();
+          if (state.product?.projectId !== "project-progress-assistant" || !state.current || !state.product?.bindingCurrent
+            || !state.artifact?.confirmation || state.artifact.review?.passed !== true || !state.artifact.candidateSha256) {
+            throw new Error("Project progress requires the current independently reviewed and confirmed candidate");
+          }
+          return { state, binding: {
+            expectedGoalVersionId: state.goalVersionId,
+            expectedExecutionId: state.execution?.id,
+            expectedRegistrySha256: state.product.registrySha256,
+            expectedArtifactId: state.artifact.id,
+            expectedArtifactVersion: state.artifact.version,
+            expectedCandidateSha256: state.artifact.candidateSha256,
+          } };
+        };
+        const assertProjectProgressSubmittedBinding = (submitted: Record<string, unknown>, binding: Record<string, unknown>) => {
+          if (!projectProgressBindingMatches(submitted, binding)) {
+            throw new Error("Project progress request binding does not match the page's current confirmed candidate");
+          }
+        };
+        if (req.url?.startsWith("/api/project-progress/")) {
+          try {
+            if (req.method === "GET" && req.url.startsWith("/api/project-progress/session?")) {
+              const query = new URL(req.url, "http://127.0.0.1").searchParams;
+              const sessionId = query.get("sessionId") || "";
+              const { binding } = await projectProgressBinding();
+              assertProjectProgressSubmittedBinding(Object.fromEntries([
+                ["expectedGoalVersionId", query.get("expectedGoalVersionId")],
+                ["expectedExecutionId", query.get("expectedExecutionId")],
+                ["expectedRegistrySha256", query.get("expectedRegistrySha256")],
+                ["expectedArtifactId", query.get("expectedArtifactId")],
+                ["expectedArtifactVersion", Number(query.get("expectedArtifactVersion"))],
+                ["expectedCandidateSha256", query.get("expectedCandidateSha256")],
+              ]), binding);
+              const value = await irixiPublicIntegration?.readProjectProgress(sessionId);
+              res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return;
+            }
+            if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] || ""))) throw new Error("Content-Type must be application/json");
+            const input = await readSmallJson(req, 64 * 1024) as Record<string, unknown>;
+            const { state, binding } = await projectProgressBinding();
+            assertProjectProgressSubmittedBinding(input, binding);
+            if (req.method === "POST" && req.url === "/api/project-progress/session") {
+              const value = await irixiPublicIntegration!.openProjectProgressSession({ ...binding, sessionId: input.sessionId, state: input.state });
+              res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return;
+            }
+            if (req.method === "PUT" && req.url === "/api/project-progress/session/state") {
+              const value = await irixiPublicIntegration!.saveProjectProgressState({ ...binding, sessionId: input.sessionId,
+                expectedRevision: input.expectedRevision, state: input.state });
+              res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return;
+            }
+            if (req.method === "POST" && req.url === "/api/project-progress/session/batch") {
+              const value = await irixiPublicIntegration!.openProjectProgressBatch({ ...binding, sessionId: input.sessionId });
+              res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return;
+            }
+            if (req.method === "POST" && req.url === "/api/project-progress/inference") {
+              if (AI_EXECUTION_DISABLED) throw new Error("Native AI execution is disabled; no model was started");
+              const agentId = state.native?.runAgentId;
+              if (!agentId || !onCommand || typeof input.update !== "string") throw new Error("Current registered Lead or update is unavailable");
+              const reservation = await irixiPublicIntegration!.reserveProjectProgressInference({ ...binding,
+                sessionId: input.sessionId, batchId: input.batchId, expectedRevision: input.expectedRevision, update: input.update });
+              const prompt = ["IRIXI_PRODUCT_CONVERSATION_V1", "IRIXI_PROJECT_PROGRESS_ASSISTANT_V1",
+                "Answer only as a read-only project progress assistant. Never use tools or modify files. Return exactly the JSON object requested below.",
+                reservation.prompt].join("\n\n");
+              onCommand!(CommandSchema.parse({ type: "RUN_TASK", agentId, taskId: reservation.sourceTaskId, prompt }),
+                { role: "owner", clientId: `project-progress:${nanoid(8)}` });
+              res.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+              res.end(JSON.stringify({ accepted: true, sessionId: reservation.sessionId, sourceTaskId: reservation.sourceTaskId,
+                reservationId: reservation.reservationId, batchId: reservation.batchId })); return;
+            }
+            if (req.method === "POST" && req.url === "/api/project-progress/session/accept") {
+              const value = await irixiPublicIntegration!.acceptProjectProgressProposal({ ...binding, sessionId: input.sessionId,
+                sourceTaskId: input.sourceTaskId, expectedRevision: input.expectedRevision,
+                expectedProposalSha256: input.expectedProposalSha256 });
+              res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return;
+            }
+            res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify({ error: "Unknown project progress route" }));
+          } catch (error) {
+            res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify({ error: error instanceof Error ? error.message : "Project progress request failed" }));
           }
           return;
         }
@@ -251,6 +396,12 @@ export const wsChannel: Channel = {
             let command: Command;
             if (input.action === "run") {
               if (AI_EXECUTION_DISABLED) throw new Error("Native AI execution is disabled in the zero-model development launcher");
+              const runtimeView = productRuntimeViewProvider?.() || { phase: null, leadAgentId: null };
+              let savedPlan = null;
+              try { savedPlan = await irixiPublicIntegration.productLeadPlan(); } catch { /* Missing/invalid persistence cannot grant approval or block recovery. */ }
+              if (hasCurrentProductPlanAwaitingApproval(state, runtimeView, savedPlan)) {
+                throw new Error("The current Lead plan is awaiting explicit approval; another run is not allowed");
+              }
               const runAgentId = state.native?.runAgentId;
               if (!runAgentId || !state.registeredExecution?.promptSha256 || state.native?.actions?.canRun !== true) throw new Error("Current registered execution or native Lead is unavailable");
               const execution = await irixiPublicIntegration.executionPrompt();
@@ -311,7 +462,8 @@ export const wsChannel: Channel = {
               return;
             } else if (input.action === "revise") {
               const artifact = state.artifact;
-              if (!artifact || input.expectedArtifactId !== artifact.id || input.expectedArtifactVersion !== artifact.version
+              if (!artifact || typeof artifact.candidateSha256 !== "string" || !artifact.candidateSha256
+                || input.expectedArtifactId !== artifact.id || input.expectedArtifactVersion !== artifact.version
                 || state.native?.actions?.canRevise !== true) throw new Error("Revision request candidate version is not current or is already confirmed");
               if (typeof input.reason !== "string" || !input.reason.trim() || input.reason !== input.reason.trim() || input.reason.length > 2_000) {
                 throw new Error("Revision reason must be exact non-empty text within 2000 characters");
@@ -334,11 +486,45 @@ export const wsChannel: Channel = {
               if (!runAgentId) throw new Error("Current native Lead is unavailable");
               const execution = await irixiPublicIntegration.executionPrompt();
               command = CommandSchema.parse({ type: "RUN_TASK", agentId: runAgentId, taskId: `product-resume-${nanoid(16)}`, prompt: execution.prompt });
+            } else if (input.action === "open_review_round") {
+              const artifact = state.artifact;
+              const expectedReviewId = artifact?.review?.id || null;
+              if (!productReviewRoundBindingMatches(input, artifact, state.native?.actions?.canOpenReviewRound === true)) {
+                throw new Error("Follow-up review round candidate binding is not current");
+              }
+              if (!artifact) throw new Error("Follow-up review round candidate is unavailable");
+              const round = await irixiPublicIntegration.openProductReviewRound({
+                expectedGoalVersionId: state.goalVersionId,
+                expectedExecutionId: state.execution.id,
+                expectedRegistrySha256: state.product.registrySha256,
+                expectedArtifactId: artifact.id,
+                expectedArtifactVersion: artifact.version,
+                expectedCandidateSha256: artifact.candidateSha256 as string,
+                expectedReviewId,
+              });
+              if (round.taskId !== state.taskId || round.artifactId !== artifact.id || round.artifactVersion !== artifact.version
+                || round.candidateSha256 !== artifact.candidateSha256 || round.expectedReviewId !== expectedReviewId
+                || round.maxModelCalls !== 1 || round.modelCalls !== 0) {
+                throw new Error("Authority returned a follow-up review round for a different candidate");
+              }
+              res.writeHead(201, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+              res.end(JSON.stringify({ ...round, accepted: true, action: "open_review_round" }));
+              return;
             } else if (input.action === "review") {
               if (AI_EXECUTION_DISABLED) throw new Error("Native AI execution is disabled in the zero-model development launcher");
               const artifact = state.artifact;
-              if (!artifact || input.expectedArtifactId !== artifact.id || input.expectedArtifactVersion !== artifact.version) {
+              if (!artifact || input.expectedArtifactId !== artifact.id || input.expectedArtifactVersion !== artifact.version
+                || input.expectedCandidateSha256 !== artifact.candidateSha256
+                || input.expectedReviewId !== (artifact.review?.id || null)
+                || state.native?.actions?.canReview !== true) {
                 throw new Error("Review candidate version is not current");
+              }
+              const reviewEvidence = input.reviewEvidence;
+              if (reviewEvidence !== undefined && (typeof reviewEvidence !== "string" || !reviewEvidence
+                || reviewEvidence !== reviewEvidence.trim() || Buffer.byteLength(reviewEvidence, "utf8") > 512
+                || typeof input.expectedReviewRoundId !== "string" || state.native?.reviewRound?.status !== "open"
+                || input.expectedReviewRoundId !== state.native.reviewRound.id)) {
+                throw new Error("Review evidence requires the current open review round and must be at most 512 UTF-8 bytes");
               }
               const reviewer = state.team.agents.find((entry: any) => String(entry.role || entry.roleKey || "").toLowerCase().includes("review"));
               if (!reviewer?.id) throw new Error("No registered independent Reviewer is available");
@@ -348,14 +534,34 @@ export const wsChannel: Channel = {
                 expectedRegistrySha256: state.product.registrySha256,
                 expectedArtifactId: artifact.id,
                 expectedArtifactVersion: artifact.version,
+                expectedCandidateSha256: artifact.candidateSha256 as string,
+                expectedReviewId: artifact.review?.id || null,
+                ...(typeof input.expectedReviewRoundId === "string" ? { expectedReviewRoundId: input.expectedReviewRoundId } : {}),
+                ...(typeof reviewEvidence === "string" ? { reviewEvidence } : {}),
               });
-              command = CommandSchema.parse({ type: "RUN_TASK", agentId: reviewer.id, taskId: `product-review-${nanoid(16)}`, prompt: review.prompt });
+              if (review.taskId !== state.taskId || review.artifactId !== artifact.id || review.artifactVersion !== artifact.version
+                || review.candidateSha256 !== artifact.candidateSha256 || review.expectedReviewId !== (artifact.review?.id || null)
+                || (input.expectedReviewRoundId && review.reviewRoundId !== input.expectedReviewRoundId)
+                || typeof review.dispatchEventId !== "string" || !review.dispatchEventId) {
+                throw new Error("Authority returned a review request for a different candidate or review revision");
+              }
+              const reviewTaskId = `product-review-${nanoid(16)}`;
+              await irixiPublicIntegration.registerProductReviewTask(reviewTaskId, reviewer.id, reviewer.role, {
+                goalVersionId: state.goalVersionId, executionId: state.execution.id,
+                registrySha256: state.product.registrySha256, artifactId: artifact.id,
+                artifactVersion: artifact.version, candidateSha256: artifact.candidateSha256,
+                expectedReviewId: artifact.review?.id || null, reviewRoundId: review.reviewRoundId || null,
+                dispatchEventId: review.dispatchEventId, prompt: review.prompt, promptSha256: review.promptSha256,
+              });
+              command = CommandSchema.parse({ type: "RUN_TASK", agentId: reviewer.id, taskId: reviewTaskId, prompt: review.prompt });
             } else if (input.action === "approve_plan") {
               if (AI_EXECUTION_DISABLED) throw new Error("Native AI execution is disabled in the zero-model development launcher");
               const runtimeView = productRuntimeViewProvider?.() || { phase: null, leadAgentId: null };
-              if (runtimeView.phase !== "design" || !runtimeView.leadAgentId
-                || runtimeView.leadAgentId !== state.native?.runAgentId || !runtimeView.plan
-                || input.expectedPlanSha256 !== runtimeView.plan.sha256) {
+              let savedPlan = null;
+              try { savedPlan = await irixiPublicIntegration.productLeadPlan(); } catch { /* Fail closed while retaining the in-memory raw plan. */ }
+              const plan = runtimeView.plan;
+              if (!hasCurrentProductPlanAwaitingApproval(state, runtimeView, savedPlan)
+                || !plan || input.expectedPlanSha256 !== plan.sha256) {
                 throw new Error("The current Lead has no plan awaiting explicit approval");
               }
               if (state.execution?.stopReason) {
@@ -367,7 +573,7 @@ export const wsChannel: Channel = {
                 await irixiPublicIntegration.recoverProductLeadPlan({ expectedGoalVersionId: state.goalVersionId,
                   expectedExecutionId: state.execution.id, expectedRegistrySha256: state.product.registrySha256,
                   expectedSourceTaskId: failedLeadSession.sourceTaskId, expectedNativeAttemptId: failedLeadSession.attemptId,
-                  expectedPlanSha256: runtimeView.plan.sha256, planText: runtimeView.plan.text });
+                  expectedPlanSha256: plan.sha256, planText: plan.text });
               }
               if (!state.execution?.id || !state.product?.registrySha256 || !state.registeredExecution?.promptSha256) {
                 throw new Error("Current execution binding is unavailable for plan approval");
@@ -379,7 +585,7 @@ export const wsChannel: Channel = {
               command = CommandSchema.parse({ type: "APPROVE_PLAN", agentId: runtimeView.leadAgentId,
                 productApprovalContext: {
                   taskId, goalVersionId: state.goalVersionId, executionId: state.execution.id,
-                  registrySha256: state.product.registrySha256, planSha256: runtimeView.plan.sha256,
+                  registrySha256: state.product.registrySha256, planSha256: plan.sha256,
                   executionPrompt: execution.prompt, executionPromptSha256: execution.promptSha256,
                 } });
             } else if (input.action === "preview") {
@@ -406,7 +612,7 @@ export const wsChannel: Channel = {
               beginProductPreview({ ...binding, root: authorized.root, entryAbsolute: authorized.entry, status: "pending" });
               productPreviewToken = binding.token;
             } else {
-              throw new Error("Supported actions are run, approve_plan, pause, cancel, goal, instructions, chat, materials, continue, review, revise, and preview");
+              throw new Error("Supported actions are run, approve_plan, pause, cancel, goal, instructions, chat, materials, continue, open_review_round, review, revise, and preview");
             }
             onCommand(command, { role: "owner", clientId: `product-http:${nanoid(8)}` });
             res.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -427,7 +633,7 @@ export const wsChannel: Channel = {
           try {
             if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] || ""))) throw new Error("Content-Type must be application/json");
             const input = await readSmallJson(req);
-            const value = await irixiPublicIntegration.confirmCurrentArtifact(input.artifactId, input.version);
+            const value = await irixiPublicIntegration.confirmCurrentArtifact(input);
             res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value));
           } catch (error) {
             res.writeHead(409, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify({ error: error instanceof Error ? error.message : "Irixi confirmation failed" }));
@@ -514,9 +720,10 @@ export const wsChannel: Channel = {
           }
           try {
             const url = new URL(req.url, "http://127.0.0.1");
+            const productMode = productProjectRegistryEnabled();
             const value = req.method === "GET"
               ? await irixiPublicIntegration.clientState({ sessionId: url.searchParams.get("sessionId") || undefined, scope: url.searchParams.get("scope") === "project" ? "project" : undefined, historical: url.searchParams.get("historical") === "true" })
-              : await irixiPublicIntegration.saveClientState(await readSmallJson(req, 64 * 1024));
+              : await irixiPublicIntegration.saveClientState(await readSmallJson(req, clientStateBodyLimit(productMode), { drainOnLimit: productMode }));
             res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value));
           } catch (error) {
             res.writeHead(clientStateErrorStatus(error), { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify({ error: error instanceof Error ? error.message : "Client-state request failed" }));
@@ -807,10 +1014,7 @@ export const wsChannel: Channel = {
                 || createHash("sha256").update(bytes).digest("hex") !== authorized.fileSha256) {
                 throw new Error("Preview file changed after authorization");
               }
-              const ext = extname(absolute).toLowerCase();
-              const contentType = ext === ".html" || ext === ".htm" ? "text/html; charset=utf-8"
-                : ext === ".css" ? "text/css; charset=utf-8"
-                  : ext === ".js" || ext === ".mjs" ? "application/javascript; charset=utf-8" : "application/octet-stream";
+              const contentType = productPreviewContentType(absolute);
               res.writeHead(200, { "Content-Type": contentType, "Content-Length": String(bytes.length),
                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
                 "Content-Security-Policy": "default-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'" });

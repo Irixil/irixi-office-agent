@@ -307,6 +307,19 @@ test('输入失效仍取消并归档真正在途的执行', () => {
   }
 });
 
+test('input invalidation retains execution history older than twenty runs', () => {
+  const task = createTask({ title: 'history', goal: 'preserve runs' });
+  task.executionHistory = Array.from({ length: 25 }, (_, i) => ({ id: `prior-run-${i}` }));
+  task.execution = { id: 'current-run', phase: 'failed', stopReason: 'native_process_failed', modelCalls: [{ id: 'call-1' }] };
+
+  invalidateCurrentWork(task, 'material_changed', 'material changed');
+
+  assert.equal(task.executionHistory.length, 26);
+  assert.equal(task.executionHistory[0].id, 'prior-run-0');
+  assert.equal(task.executionHistory.at(-1).id, 'current-run');
+  assert.deepEqual(task.executionHistory.at(-1).modelCalls, [{ id: 'call-1' }]);
+});
+
 test('旧 grant 不能靠新 candidate binding 隐式升级后继续使用工具', async (t) => {
   const { taskDir, task, host, store } = await setupWithOverride();
   t.after(() => fs.rm(taskDir, { recursive: true, force: true }));
