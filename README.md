@@ -101,5 +101,3 @@ Useful contributions include reproducible installation reports, project-continui
 If the direction is useful to you, a star helps others discover iRIXI. Share the repository with someone working on personal AI assistants, multi-agent workflows, or visual agent offices.
 
 ## Licensing and credits
-
-Upstream code retains its original licenses, including MIT notices for OpenOffice, agent-office, Phaser, and EasyStar.js, and the font's OFL notice. A repository-wide license for original iRIXI code and artwork has not yet been declared. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
