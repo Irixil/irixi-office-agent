@@ -100,4 +100,3 @@ Useful contributions include reproducible installation reports, project-continui
 
 If the direction is useful to you, a star helps others discover iRIXI. Share the repository with someone working on personal AI assistants, multi-agent workflows, or visual agent offices.
 
-## Licensing and credits
