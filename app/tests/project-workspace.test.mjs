@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { addSuggestion, createTask, invalidateCurrentWork, publicTask } from '../core.mjs';
-import { __test, createProjectWorkspaceHost, projectArtifactIsCurrent, projectTaskBinding } from '../project-workspace.mjs';
+import { __test, createProjectWorkspaceHost, projectArtifactIsCurrent, projectTaskBinding, runRegisteredJsonFunctionCheck } from '../project-workspace.mjs';
 import { registeredRepository, validateProjectScopeResult } from '../project-scope.mjs';
 
 const safeCapability = {
@@ -416,6 +416,26 @@ test('通用范围以全量 CAS 原子发布多文件并逐项运行 syntax 与 
   const diff = await host.runTool(store, task.id, 'work-generic', { tool: 'workspace.diff', args: { expectedCandidateSha256: written.candidateSha256 } });
   assert.deepEqual(diff.changes.map((entry) => entry.path), ['app/alpha.mjs', 'app/beta.mjs']);
   assert.equal(diff.sourceIntegrity.allUnchanged, true);
+});
+
+test('原生可复用 JSON 函数检查使用只读 sandbox，允许 globalThis 并由宿主逐用例比较结果', { timeout: 30_000 }, async (t) => {
+  const candidateRoot = await fs.realpath(await fs.mkdtemp(tempPrefix));
+  t.after(() => fs.rm(candidateRoot, { recursive: true, force: true }));
+  await fs.writeFile(path.join(candidateRoot, 'core.js'), 'export function checkValue(value) { return { value, ambient: typeof globalThis }; }\n');
+  const result = await runRegisteredJsonFunctionCheck({ candidateRoot, modulePath: 'core.js', namedExport: 'checkValue', cases: [
+    { id: 'grounded-value', args: [{ ok: true }], expected: { value: { ok: true }, ambient: 'object' } },
+    { id: 'wrong-expectation', args: [2], expected: { value: 3, ambient: 'object' } },
+  ] });
+  assert.equal(result.passed, false);
+  assert.equal(result.moduleStable, true);
+  assert.equal(result.casePassed, 1);
+  assert.deepEqual(result.caseResults.map(({ caseId, passed, protocolCode }) => ({ caseId, passed, protocolCode })), [
+    { caseId: 'grounded-value', passed: true, protocolCode: null },
+    { caseId: 'wrong-expectation', passed: false, protocolCode: 'expected_mismatch' },
+  ]);
+  assert.equal(result.inputSummary.module.path, 'core.js');
+  assert.equal(result.inputSummary.runtime.wrapperSha256.length, 64);
+  assert.equal(result.caseResults.every((entry) => typeof entry.profileSha256 === 'string'), true);
 });
 
 test('候选写入逐段拒绝 symlink 与 hardlink，外部 canary 不变', async (t) => {

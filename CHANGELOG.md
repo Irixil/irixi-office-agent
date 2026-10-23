@@ -1,5 +1,12 @@
 # Changelog
 
+## preview-2026-10-23
+
+- Set OmO 5.1.40 as the documented current harness and add its native RPC and controlled Desktop Codex CLI integration source.
+- Refresh the project-chat UI and its supporting project-scope modules.
+- Keep the OpenOffice route as an explicitly historical compatibility/demo path; omit local runtimes, credentials, task records, and approvals.
+- Fresh-machine OmO setup and end-to-end delivery remain unverified.
+
 ## preview-2026-10-19
 
 A source preview of iRIXI Personal Agent, based on the 2026-10-18 development snapshot.

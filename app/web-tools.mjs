@@ -13,6 +13,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { resolveCodexRuntime } from './codex-runtime.mjs';
+
 const DEFAULT_MAX_BYTES = 1_500_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 4;
@@ -447,10 +449,13 @@ function terminateProcessGroup(child) {
 function createCodexSearchRunner({
   spawnProcess = spawn,
   terminate = terminateProcessGroup,
-  codexPath = process.env.IRIXI_CODEX_PATH || path.join(os.homedir(), '.local', 'bin', 'codex'),
+  codexPath,
+  runtime = resolveCodexRuntime(),
+  env = process.env,
   cwd = os.tmpdir(),
   now = () => new Date().toISOString(),
 } = {}) {
+  const selectedCodexPath = codexPath === undefined ? runtime.executable : codexPath;
   return function runCodexSearch(query, { signal, maxResults = 5, timeoutMs = CODEX_SEARCH_TIMEOUT_MS } = {}) {
     const boundedTimeout = integerOption(timeoutMs, CODEX_SEARCH_TIMEOUT_MS, 10, CODEX_SEARCH_TIMEOUT_MS, 'searchTimeoutMs');
     const resultLimit = integerOption(maxResults, 5, 1, 5, 'maxResults');
@@ -470,6 +475,9 @@ function createCodexSearchRunner({
       'If the search has no source URLs, return no_results with an empty results array.',
       'Final output must be only compact JSON with keys status, query, results, limitations.',
     ].join('\n');
+    if (typeof selectedCodexPath !== 'string' || !selectedCodexPath) {
+      return Promise.reject(new PublicWebError('search_unavailable', runtime.executableError || 'Codex Desktop 运行时路径不可用；未尝试其他 CLI。'));
+    }
     return new Promise((resolve, reject) => {
       let child;
       let settled = false;
@@ -496,9 +504,9 @@ function createCodexSearchRunner({
       const abort = () => stop(new PublicWebError('aborted', '公开网页搜索已取消。'));
       if (signal?.aborted) return finish(new PublicWebError('aborted', '公开网页搜索已取消。'));
       try {
-        child = spawnProcess(codexPath, args, {
+        child = spawnProcess(selectedCodexPath, args, {
           cwd, detached: process.platform !== 'win32', shell: false,
-          stdio: ['pipe', 'pipe', 'pipe'], env: process.env,
+          stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, CODEX_HOME: runtime.codexHome },
         });
       } catch (error) {
         return finish(new PublicWebError('search_unavailable', `无法启动托管搜索：${error.message}`));

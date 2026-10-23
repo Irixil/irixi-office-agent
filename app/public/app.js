@@ -1,6 +1,7 @@
 import { synchronizedUrl } from './navigation-state.js';
+import { attachProjectMapHotspot } from './native-project-hotspot.js';
 import { materialDecisionExpectation, planInputsChanged, projectWorkspaceAttachExpectation, shouldPollTask } from './task-input-state.js';
-import { canCreateNativeTask, canReviewNativeCandidate, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeExecutionRoleFallback, nativeFunctionChatContext, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, renderNativeMarkup, renderTaskListMarkup } from './native-product-state.js';
+import { canCreateNativeTask, canReviewNativeCandidate, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeCoworkerTask, nativeExecutionRoleFallback, nativeExecutionStatusLabel, nativeGoalVersionStamp, nativeFunctionChatContext, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, nativeReviewDisposition, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, renderNativeMarkup, renderTaskListMarkup } from './native-product-state.js';
 
 const initialQuery = new URLSearchParams(window.location.search);
 let requestedTaskId = initialQuery.get('task');
@@ -11,6 +12,15 @@ const state = {
   nativeTaskHistory: { tasks: [], activeTaskId: null, activeTaskRevision: null, loading: false, selecting: false, error: null },
   nativeTaskFilter: { query: '', projectId: '' },
   nativeTaskHistoryLoadedAt: 0,
+  registeredProjects: [],
+  projectChatTaskId: null,
+  projectChatProjectId: '',
+  projectChatFunctionId: null,
+  projectChatCoworker: null,
+  projectChatSelectionPending: false,
+  projectInstructionInputBinding: null,
+  projectChatExpanded: false,
+  projectSidebarOpen: false,
   task: null,
   view: ['office', 'desk', 'review', 'connections'].includes(requestedView) ? requestedView : 'office',
   selectedArtifactId: null,
@@ -36,9 +46,12 @@ const state = {
   nativeCandidateLoading: false,
   nativeCandidateError: null,
   nativeReviewPending: null,
+  nativeReviewRequest: null,
   nativeReviewRoundPending: null,
   nativeMemoryDraft: null,
   nativeReviewEvidenceDraft: null,
+  nativeChatRequestId: null,
+  nativeChatRequestText: null,
   nativeReviewAdjudicationDraft: null,
   learningEntryPending: false,
   gameWorkshopTaskId: null,
@@ -406,7 +419,10 @@ async function requestNativePrepareRun() {
   if (!['ready_to_run', 'runtime_unavailable'].includes(product?.setupStatus) || !product.canPrepareRun || !scope?.current || !scope.scopeFingerprint || !nativeSetupBound(product)) {
     throw new Error('当前项目范围还不能准备原生后台。');
   }
-  await postNativeAction('prepare_run', { expectedScopeFingerprint: scope.scopeFingerprint });
+  const continuationChoice = document.querySelector('[data-auto-review-continuation]');
+  const input = { expectedScopeFingerprint: scope.scopeFingerprint };
+  if (continuationChoice) input.autoReviewContinuation = continuationChoice.checked;
+  await postNativeAction('prepare_run', input);
   announce(reconnecting ? '已按同一执行账恢复原生后台；没有启动模型工作。' : '原生后台已按当前目标与授权范围准备完成；这一步没有启动模型执行。');
   return true;
 }
@@ -421,14 +437,48 @@ async function requestNativeRestoreCurrentResult() {
   return true;
 }
 
-async function requestNativeCancel() {
+async function requestNativeCancel(expectedBinding = null) {
+  const product = state.nativeProduct;
+  const round = product?.native?.reviewRound;
+  if (['open', 'running'].includes(round?.status)) {
+    const binding = nativeReviewBinding(product);
+    if (!product?.current || product.native?.actions?.canCancel !== true || !binding
+      || expectedBinding && expectedBinding !== binding) throw new Error('当前审阅轮已变化或没有可核对的取消资格。');
+    if (!window.confirm('停止这个审阅轮吗？\n\n只会取消当前后续审阅轮。原执行账、旧报告和候选不会更改。')) return false;
+    const requestBinding = `${binding}:${round.id}`;
+    if (state.nativeReviewCancelRequest?.binding !== requestBinding) {
+      state.nativeReviewCancelRequest = { binding: requestBinding,
+        requestId: globalThis.crypto?.randomUUID?.() || `cancel-review-${Date.now()}-${Math.random().toString(16).slice(2)}` };
+    }
+    await postNativeAction('cancel', { requestId: state.nativeReviewCancelRequest.requestId });
+    state.nativeReviewCancelRequest = null;
+    announce('本次后续审阅轮已取消；原执行账与旧审阅记录保持不变。');
+    return true;
+  }
   throw new Error('后台尚未提供可核对的取消目标，办公室不会从工作项 ID 猜测原生任务。');
 }
 
 async function requestNativeContinue() {
-  if (!state.nativeProduct?.native?.actions.canContinue || !state.nativeProduct?.current) throw new Error('后台没有确认当前任务可以继续。');
+  const product = state.nativeProduct;
+  const artifact = product?.artifact;
+  const actions = product?.native?.actions;
+  const legacyResume = actions?.canResume === true;
+  const revisionId = actions?.revisionId;
+  if (!product?.current || !nativeActionBound(product)
+    || (legacyResume ? actions?.canContinue !== true : actions?.canContinue !== true || !artifact?.id || !revisionId)) {
+    throw new Error('后台没有确认当前退回候选可以继续。');
+  }
   if (!window.confirm('按当前目标继续这项原生任务吗？\n\n后台仍会核对目标版本、产品绑定和预算。')) return false;
-  await postNativeAction('continue');
+  if (legacyResume) await postNativeAction('continue');
+  else await postNativeAction('continue', {
+      revisionId,
+      expectedExecutionId: product.execution.id,
+      expectedRegistrySha256: product.product.registrySha256,
+      expectedScopeFingerprint: product.product.workspaceScopeFingerprint,
+      expectedArtifactId: artifact.id,
+      expectedArtifactVersion: artifact.version,
+      expectedCandidateSha256: artifact.candidateSha256,
+    });
   announce('继续请求已写入当前任务；可执行步骤会按真实状态出现。');
   return true;
 }
@@ -461,6 +511,281 @@ async function loadNativeTaskHistory({ silent = true } = {}) {
     history.loading = false;
     state.nativeTaskHistoryLoadedAt = Date.now();
     renderTaskList();
+  }
+}
+
+async function loadRegisteredProjects() {
+  try {
+    const result = await api('/api/product/projects');
+    state.registeredProjects = Array.isArray(result.projects) ? result.projects : [];
+  } catch (error) {
+    state.registeredProjects = [];
+    state.projectListError = error.message;
+  }
+}
+
+function projectTaskBinding(product) {
+  const artifact = product?.artifact;
+  return JSON.stringify([product?.taskId, product?.goalVersionId, product?.product?.projectId,
+    product?.registry?.scopeFingerprint || product?.setup?.selectedScope?.scopeFingerprint || null,
+    product?.execution?.id || product?.inputMutationBinding?.executionId || null,
+    product?.product?.registrySha256 || product?.registry?.registrySha256 || product?.inputMutationBinding?.registrySha256 || null,
+    artifact?.id || null, artifact?.version ?? null, artifact?.candidateSha256 || null, artifact?.diffSha256 || null]);
+}
+
+function projectInstructionDraftKey(product) {
+  return `irixi.project-instruction-draft.v1:${projectTaskBinding(product)}`;
+}
+
+function nativeInstructionDraftKey(product) {
+  return `${projectInstructionDraftKey(product)}:suggestion`;
+}
+
+function nativeInstructionDraftKeyForBinding(binding) {
+  return `irixi.project-instruction-draft.v1:${binding}:suggestion`;
+}
+
+function newRequestId(prefix = 'instruction') {
+  return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function projectRecordStatus(value) {
+  return ({ running: '进行中', in_progress: '进行中', completed: '已完成', waiting_user: '等待你决定',
+    failed: '未完成', blocked: '遇到问题', cancelled: '已取消', saved: '已保存' })[value] || '状态待更新';
+}
+
+function renderProjectChat() {
+  const projectList = $('#project-list');
+  const recentList = $('#recent-list');
+  const selectedId = state.projectChatTaskId || null;
+  const history = state.nativeTaskHistory.tasks;
+  const registered = state.registeredProjects;
+  const projectRows = new Map(registered.map((project) => [project.projectId, { ...project, registered: true }]));
+  for (const item of history) {
+    const id = item.projectId || 'unassigned';
+    if (!projectRows.has(id)) projectRows.set(id, { projectId: id, label: id === 'unassigned' ? '其他历史任务' : item.projectLabel || '历史项目', registered: false });
+  }
+  projectList.innerHTML = projectRows.size ? [...projectRows.values()].map((project) => `<button class="sidebar-item" type="button" data-project-chat-project="${esc(project.projectId)}" aria-current="${state.projectChatProjectId === project.projectId}"><strong>${esc(project.label || project.name || project.projectId)}</strong><small>${project.registered ? '项目' : '历史'}</small></button>`).join('') : `<p class="recent-empty">${esc(state.projectListError || '暂时没有登记项目。')}</p>`;
+  const visibleTasks = history.filter((item) => (!state.projectChatProjectId || (item.projectId || 'unassigned') === state.projectChatProjectId)
+    && (!state.projectChatFunctionId || item.functionId === state.projectChatFunctionId))
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  recentList.innerHTML = visibleTasks.length ? visibleTasks.map((task) => `<button class="sidebar-item" type="button" data-project-chat-task="${esc(task.id)}" aria-current="${task.id === selectedId}"><strong>${esc(task.title || '未命名任务')}</strong><small>${esc(task.deliveryStatusLabel || task.status || '进度待更新')}</small></button>`).join('') : '<p class="recent-empty">这个项目还没有任务记录。</p>';
+  const product = state.nativeProduct;
+  const task = history.find((item) => item.id === selectedId);
+  const content = $('#project-chat-history');
+  const form = $('#project-instructions-form');
+  const text = $('#project-instructions-text');
+  const submit = form.querySelector('[type="submit"]');
+  const panel = $('#project-dialogue-panel');
+  if (!selectedId || !task || !product || product.taskId !== selectedId || panel.hidden) {
+    if (state.projectChatFunctionId && state.projectChatCoworker) {
+      const title = taskFunctionCopy(state.projectChatFunctionId)?.title || ({ learning: '文章学习', archive: '档案记忆', coordination: '协调' }[state.projectChatFunctionId] || '同事');
+      const coworkerName = state.projectChatCoworker.name || ROLE_LABEL[state.projectChatCoworker.officeRole] || '办公室同事';
+      $('#project-dialogue-title').textContent = `${ROLE_LABEL[state.projectChatCoworker.officeRole] || coworkerName} · ${title}`;
+      $('#project-dialogue-status').textContent = '选择该职能对应的项目任务；不会切换到其他职能的任务。';
+      content.innerHTML = `<p class="recent-empty">${esc(coworkerName)}负责${esc(title)}。目前没有已登记的对应任务。点上方“切换项目”查找此职能的已有任务；若没有匹配任务，请先通过任务入口建立对应任务。</p>`;
+    } else if (!selectedId) content.innerHTML = '<p class="recent-empty">选择左侧项目的任务，打开原来的对话。</p>';
+    text.disabled = true; submit.disabled = true;
+    $('#project-instructions-status').textContent = state.projectChatFunctionId ? '当前没有对应任务，暂不能保存。' : '保存后不会立即执行。';
+    return;
+  }
+  const project = registered.find((item) => item.projectId === task.projectId);
+  $('#project-dialogue-title').textContent = project?.label || task.projectLabel || '项目对话';
+  $('#project-dialogue-status').textContent = task.deliveryStatusLabel || '进度正在更新。';
+  const conversations = (product.conversations || []).map((item) => ({ ...item, recordKind: 'conversation' }));
+  const currentProjectId = product.product?.projectId || product.registry?.projectId || product.setup?.selectedScope?.projectId || null;
+  const currentScope = product.product?.workspaceScopeFingerprint || product.registry?.scopeFingerprint || product.setup?.selectedScope?.scopeFingerprint || null;
+  const planInstructionIds = new Set(product.native?.plan?.instructionIds || product.execution?.plan?.instructionIds || []);
+  const instructions = (product.instructions || []).map((item) => {
+    const binding = item.binding;
+    const sameProject = binding?.projectId === currentProjectId;
+    const sameScope = binding?.scopeFingerprint === currentScope;
+    const label = planInstructionIds.has(item.id) ? '已纳入计划'
+      : !sameProject || !sameScope
+        ? `已保存要求 · ${!sameProject ? (registered.find((entry) => entry.projectId === binding?.projectId)?.label || '先前项目') : '先前范围'}`
+        : binding?.executionId === (product.execution?.id || product.inputMutationBinding?.executionId || null)
+          ? '已保存，尚未执行' : '已保存要求';
+    return { ...item, recordKind: 'instruction', instructionLabel: label };
+  });
+  const chatItems = [...conversations, ...instructions].sort((a, b) => String(a.at || a.createdAt || '').localeCompare(String(b.at || b.createdAt || '')));
+  const conversationMarkup = chatItems.length ? chatItems.map((item) => {
+    const isInstruction = item.recordKind === 'instruction';
+    const isUser = isInstruction || item.actor === 'user' || item.speaker === 'user';
+    const failed = item.status === 'failed';
+    const speaker = isInstruction ? `你 · ${item.instructionLabel}` : isUser ? '你' : failed ? '同事 · 本次没有收到回复' : '同事';
+    return `<article class="message ${isUser ? 'user' : ''}"><span class="message-meta">${esc(speaker)}${item.at || item.createdAt ? ` · ${esc(item.at || item.createdAt)}` : ''}</span><div class="message-bubble">${esc(item.text || (failed ? '本次没有收到回复。' : ''))}</div></article>`;
+  }).join('') : '<p class="empty-ledger">该任务没有保存的对话消息。不会用状态事件生成虚构对话。</p>';
+  content.innerHTML = chatItems.length ? conversationMarkup : '<p class="recent-empty">以前没有保存逐句对话。你可以查看项目记录，并在这里交代下一步。</p>';
+  const calls = product.execution?.modelCalls || [];
+  const workItems = product.workItems || [];
+  const versionRecord = task.currentVersionLabel && task.currentVersionLabel !== '尚未生成候选版本'
+    ? `历史记录：${task.currentVersionLabel}` : '尚无候选成果。';
+  const resultRecord = product.artifact
+    ? `版本 ${esc(product.artifact.version)} · ${product.artifact.confirmation ? '已交付' : product.artifact.review?.passed ? '审阅通过，待确认' : '尚未交付'}`
+    : product.currentResultRecovery ? '此前已确认的成果可恢复。' : esc(versionRecord);
+  const checkRecord = product.artifact?.hostCheck
+    ? product.artifact.hostCheck.passed ? '已通过。' : '未全部通过。'
+    : task.currentVersionLabel && task.currentVersionLabel !== '尚未生成候选版本' ? '检查详情请在任务书桌查看。' : '尚无检查结果。';
+  const record = `<span class="project-status">${esc(task.deliveryStatusLabel || task.status || '进度待更新')}</span><dl class="project-report"><div><dt>目标</dt><dd>${esc(product.goalStatement || '尚无已保存目标。')}</dd></div><div><dt>完成标准</dt><dd>${esc(Array.isArray(product.successCriteria) ? product.successCriteria.join('；') : product.successCriteria || '尚未设置。')}</dd></div><div><dt>下一步</dt><dd>${esc(product.nextStep || '等待新的任务状态。')}</dd></div><div><dt>执行</dt><dd>${calls.length ? calls.map((item) => esc(projectRecordStatus(item.status))).join('；') : '还没有执行记录。'}</dd></div><div><dt>计划</dt><dd>${esc(product.native?.plan?.text || product.execution?.plan?.text || '尚无已保存计划。')}</dd></div><div><dt>成果</dt><dd>${resultRecord}</dd></div><div><dt>检查</dt><dd>${checkRecord}</dd></div><div><dt>任务步骤</dt><dd>${workItems.length ? workItems.map((item) => esc(`${item.title || item.role || '工作项'}：${projectRecordStatus(item.status)}`)).join('；') : '尚未安排工作步骤。'}</dd></div></dl>`;
+  $('#project-record-content').innerHTML = record;
+  const binding = projectTaskBinding(product);
+  const bindingChanged = state.projectInstructionInputBinding !== binding;
+  state.projectInstructionInputBinding = binding;
+  const canSave = !state.projectChatSelectionPending && product.authorityCurrent && product.links?.actions && product.native?.actions?.canInstructions === true;
+  text.disabled = !canSave;
+  submit.disabled = !canSave;
+  $('#project-instructions-status').textContent = state.projectChatSelectionPending ? '正在切换任务，暂不能保存。' : canSave ? '保存后不会立即执行。' : '暂时不能保存。';
+  if (bindingChanged || document.activeElement !== text) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(projectInstructionDraftKey(product)) || 'null');
+      text.value = typeof saved?.text === 'string' ? saved.text : '';
+    } catch { text.value = ''; }
+  }
+}
+
+async function saveProjectInstruction(event) {
+  event.preventDefault();
+  if (state.projectChatSelectionPending) return;
+  const product = state.nativeProduct;
+  const text = $('#project-instructions-text').value.trim();
+  if (!text || !product?.authorityCurrent || product.native?.actions?.canInstructions !== true) return;
+  const submittedBinding = projectTaskBinding(product);
+  const draftStorageKey = projectInstructionDraftKey(product);
+  let requestId;
+  try {
+    const savedDraft = JSON.parse(localStorage.getItem(draftStorageKey) || 'null');
+    requestId = savedDraft?.text === text && typeof savedDraft.requestId === 'string'
+      ? savedDraft.requestId : crypto.randomUUID().replaceAll('-', '');
+  } catch { requestId = crypto.randomUUID().replaceAll('-', ''); }
+  try {
+    localStorage.setItem(draftStorageKey, JSON.stringify({ text, requestId }));
+  } catch { /* The form remains the recoverable draft for this page session. */ }
+  const payload = nativeActionPayload(product, 'instructions', { text, requestId });
+  const button = $('#project-instructions-form').querySelector('[type="submit"]');
+  button.disabled = true;
+  $('#project-instructions-status').textContent = '正在保存；尚未执行。';
+  try {
+    await api(product.links.actions, { method: 'POST', body: JSON.stringify(payload) });
+    await refreshNativeProduct({ silent: false });
+    let draftStillMatches = false;
+    try {
+      const currentDraft = JSON.parse(localStorage.getItem(draftStorageKey) || 'null');
+      draftStillMatches = currentDraft?.text === text && currentDraft?.requestId === requestId;
+      if (draftStillMatches) localStorage.removeItem(draftStorageKey);
+    } catch { /* no-op */ }
+    if (projectTaskBinding(state.nativeProduct) === submittedBinding) {
+      renderProjectChat();
+      const input = $('#project-instructions-text');
+      if (input.value.trim() === text) input.value = '';
+      $('#project-instructions-status').textContent = input.value.trim() === text || draftStillMatches
+        ? '已保存，尚未执行。' : '本条已保存，后来修改的文字仍保留；尚未执行。';
+    }
+  } catch (error) {
+    if (projectTaskBinding(state.nativeProduct) === submittedBinding) {
+      $('#project-instructions-status').textContent = `保存失败，草稿已保留；未执行。${error.message}`;
+      announce(`工作交代未保存，草稿已保留：${error.message}`, 'error');
+    }
+  } finally {
+    if (projectTaskBinding(state.nativeProduct) === submittedBinding) button.disabled = !state.nativeProduct?.native?.actions?.canInstructions;
+  }
+}
+
+function bindProjectOverlay() {
+  const shell = $('.office-shell');
+  const sidebar = $('#project-sidebar');
+  const panel = $('#project-dialogue-panel');
+  const isolatedEvents = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'dblclick', 'contextmenu', 'wheel', 'keydown', 'keyup'];
+  for (const root of [sidebar, panel]) {
+    for (const name of isolatedEvents) root.addEventListener(name, (event) => event.stopPropagation());
+  }
+  sidebar.addEventListener('click', async (event) => {
+    const close = event.target.closest('[data-project-sidebar-close]');
+    if (close) { state.projectSidebarOpen = false; sidebar.hidden = true; shell.classList.remove('has-sidebar'); return; }
+    const project = event.target.closest('[data-project-chat-project]');
+    if (project) {
+      state.projectChatFunctionId = null;
+      state.projectChatCoworker = null;
+      state.projectChatProjectId = project.dataset.projectChatProject;
+      state.projectChatTaskId = null;
+      renderProjectChat();
+      const newest = state.nativeTaskHistory.tasks.filter((item) => (item.projectId || 'unassigned') === state.projectChatProjectId)
+        .filter((item) => !state.projectChatFunctionId || item.functionId === state.projectChatFunctionId)
+        .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
+      if (newest) await openProjectChatTask(newest.id, { sidebar, panel, shell });
+      return;
+    }
+    const taskButton = event.target.closest('[data-project-chat-task]');
+    if (!taskButton) return;
+    state.projectChatFunctionId = null;
+    state.projectChatCoworker = null;
+    await openProjectChatTask(taskButton.dataset.projectChatTask, { sidebar, panel, shell });
+  });
+  sidebar.addEventListener('submit', (event) => event.preventDefault());
+  panel.addEventListener('click', (event) => {
+    if (event.target.closest('[data-project-dialogue-list]')) {
+      panel.hidden = true; sidebar.hidden = false; state.projectSidebarOpen = true; shell.classList.add('has-sidebar');
+      loadProjectChatData();
+      return;
+    }
+    if (event.target.closest('[data-project-dialogue-close]')) {
+      panel.hidden = true; panel.classList.remove('is-expanded'); state.projectChatExpanded = false;
+    }
+    if (event.target.closest('[data-project-dialogue-expand]')) {
+      state.projectChatExpanded = !state.projectChatExpanded;
+      panel.classList.toggle('is-expanded', state.projectChatExpanded);
+      event.target.closest('[data-project-dialogue-expand]').textContent = state.projectChatExpanded ? '收起对话' : '展开对话';
+    }
+  });
+  panel.addEventListener('submit', saveProjectInstruction);
+  panel.addEventListener('input', (event) => {
+    if (event.target.id !== 'project-instructions-text' || !state.nativeProduct) return;
+    const product = state.nativeProduct;
+    const key = projectInstructionDraftKey(product);
+    let requestId = null;
+    try {
+      const previous = JSON.parse(localStorage.getItem(key) || 'null');
+      if (previous?.text === event.target.value) requestId = previous.requestId || null;
+      localStorage.setItem(key, JSON.stringify({ text: event.target.value, requestId }));
+    } catch { /* Keep the live form value if browser storage is unavailable. */ }
+  });
+  $('#coworker-dialog').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-coworker-expand]');
+    if (!button) return;
+    const dialog = $('#coworker-dialog'); dialog.classList.toggle('is-expanded');
+    button.textContent = dialog.classList.contains('is-expanded') ? '收起对话' : '展开对话';
+  });
+  $('#coworker-dialog').addEventListener('close', () => $('#coworker-dialog').classList.remove('is-expanded'));
+}
+
+async function openProjectChatTask(taskId, { sidebar = $('#project-sidebar'), panel = $('#project-dialogue-panel'), shell = $('.office-shell') } = {}) {
+  const previousTaskId = state.projectChatTaskId;
+  try {
+    if (!nativeMode()) throw new Error('项目对话目前不可用。');
+    const taskRecord = state.nativeTaskHistory.tasks.find((item) => item.id === taskId);
+    if (state.projectChatFunctionId && taskRecord?.functionId !== state.projectChatFunctionId) throw new Error('这个任务不属于当前同事职能，未切换。');
+    state.projectChatTaskId = taskId;
+    state.projectChatProjectId = taskRecord?.projectId || 'unassigned';
+    state.projectChatSelectionPending = true;
+    $('#project-instructions-text').disabled = true;
+    $('#project-instructions-form').querySelector('[type="submit"]').disabled = true;
+    $('#project-instructions-status').textContent = '正在切换任务，暂不能保存。';
+    $('#project-dialogue-title').textContent = '正在切换任务';
+    $('#project-dialogue-status').textContent = '先读取所选任务的对话和对应草稿。';
+    $('#project-chat-history').textContent = '正在读取所选任务…';
+    if (state.nativeTaskHistory.activeTaskId !== taskId) await selectNativeTask(taskId);
+    else applyNativeProduct(await readNativeProduct(taskId));
+    if (state.nativeProduct?.taskId !== taskId) throw new Error('任务切换未完成。');
+    state.projectChatSelectionPending = false;
+    panel.hidden = false;
+    panel.classList.toggle('is-expanded', state.projectChatExpanded);
+    sidebar.hidden = true; state.projectSidebarOpen = false; shell.classList.remove('has-sidebar');
+    renderProjectChat();
+    $('#project-instructions-text').focus();
+  } catch (error) {
+    state.projectChatSelectionPending = false;
+    state.projectChatTaskId = previousTaskId;
+    renderProjectChat();
+    announce(`无法打开这个任务：${error.message}`, 'error');
   }
 }
 
@@ -633,7 +958,7 @@ function officeState(task) {
     if (waitingPresentation) return waitingPresentation.office;
     if (!native.artifact && native.execution?.phase === 'planned') return native.native?.actions.canRun && native.native?.runAgentId
       ? { kicker: 'NATIVE LEAD READY', title: '原生后台已经准备好，等待你开始执行', detail: native.nextStep, tone: 'normal' }
-      : { kicker: 'NATIVE RUNTIME READY', title: '原生后台已经准备好，当前不开放模型执行', detail: native.native?.aiEnabled === false ? '当前是零模型开发模式；没有发起模型调用。' : '后台尚未明确开放当前任务的模型启动资格。', tone: 'normal' };
+      : { kicker: 'NATIVE RUNTIME READY', title: '原生后台已经准备好，当前不开放模型执行', detail: native.native?.modelStatus?.message || (native.native?.aiEnabled === false ? '当前是零模型开发模式；没有发起模型调用。' : '后台尚未明确开放当前任务的模型启动资格。'), tone: 'normal' };
     if (task.status === 'running') return { kicker: 'OPENOFFICE EXECUTION', title: 'OpenOffice 原生团队正在执行', detail: native.statusLabel || native.nextStep, tone: 'working' };
     if (task.status === 'waiting_user') {
       return { kicker: 'AWAITING THE PRINCIPAL', title: '原生任务等待你的决定', detail: native.nextStep, tone: 'normal' };
@@ -713,6 +1038,12 @@ function setView(view) {
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
+async function loadProjectChatData() {
+  if (!nativeMode()) { announce('项目对话目前只读取 OpenOffice 原生记录。', 'error'); return; }
+  await Promise.all([loadRegisteredProjects(), loadNativeTaskHistory()]);
+  renderProjectChat();
+}
+
 function syncLocation() {
   const next = synchronizedUrl(window.location.href, { taskId: state.task?.id, view: state.view });
   window.history.replaceState(null, '', next);
@@ -749,7 +1080,7 @@ function renderTaskList() {
       const functionLabel = { learning: '学习', utility: '小工具', game: '小游戏', agent: 'Agent' }[task.functionId];
       return `<button class="task-row ${active ? 'is-active' : ''}" type="button" data-native-task-id="${esc(task.id)}" ${disabled ? 'disabled aria-disabled="true"' : ''} aria-current="${active ? 'page' : 'false'}">
         <strong>${esc(task.title)}</strong><span><em>${esc(TASK_STATUS[task.status] || task.status)}${disabled ? ' · 执行中，暂不可切换' : ''}</em><time>${esc(dateLabel(task.updatedAt))}</time></span>
-        <small>${esc(task.projectLabel || functionLabel || '原生任务')}${active ? ' · 当前查看' : ''}</small>
+        <small>${esc(task.projectLabel || functionLabel || '原生任务')} · ${esc(task.currentVersionLabel || '当前目标暂无候选/确认版本')}${active ? ' · 当前查看' : ''}</small>
       </button>`;
     }).join(''));
     return;
@@ -775,13 +1106,18 @@ function renderOffice() {
   const nativeWaiting = nativeOfficeWaitingPresentation(state.nativeProduct, task);
   $('#global-status').textContent = task ? `${task.title} · ${nativeWaiting?.statusLabel || TASK_STATUS[task.status] || task.status}` : '本地待命';
   $('#global-status-dot').dataset.tone = display.tone;
-  $('#goal-version').textContent = nativeMode() ? state.nativeProduct.goalVersionId || '尚未建立' : goal ? `v${goal.version}` : '—';
+  const goalVersionId = nativeMode() ? state.nativeProduct.goalVersionId || '' : goal ? `v${goal.version}` : '—';
+  const goalVersionStamp = nativeMode() ? nativeGoalVersionStamp(goalVersionId) : { label: goalVersionId || '尚未建立', fullId: '' };
+  const goalVersionNode = $('#goal-version');
+  goalVersionNode.textContent = goalVersionStamp.label;
+  goalVersionNode.title = goalVersionStamp.fullId;
+  goalVersionNode.setAttribute('aria-label', goalVersionStamp.fullId ? `当前目标完整编号：${goalVersionStamp.fullId}` : `当前目标版本：${goalVersionStamp.label}`);
   $('#active-goal').textContent = goal?.statement || '尚未选择任务。';
   $('#success-criteria').textContent = lines(goal?.successCriteria, '尚未填写。');
   $('#goal-boundaries').textContent = lines(goal?.boundaries, '默认不发送、不发布、不覆盖来源。');
   if (nativeMode()) {
-    $('#success-criteria').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : '原生产品状态尚未提供已接受的成功条件。';
-    $('#goal-boundaries').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : '原生产品状态尚未提供已接受的目标边界；此处不自行补写。';
+    $('#success-criteria').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : lines(state.nativeProduct.successCriteria, '原生产品状态尚未提供已接受的成功条件。');
+    $('#goal-boundaries').textContent = state.nativeProduct.setupOnly ? '尚未建立任务。填写时可留空，不会由前端补写。' : lines(state.nativeProduct.boundaries, '原生产品状态尚未提供已接受的目标边界；此处不自行补写。');
     if (state.nativeProduct.setupPending) {
       $('#success-criteria').textContent = lines(state.nativeProduct.successCriteria, '用户尚未填写成功条件。');
       $('#goal-boundaries').textContent = lines(state.nativeProduct.boundaries, '用户尚未填写工作边界。');
@@ -884,10 +1220,12 @@ function renderCoworkerConversation() {
       saved: '已保存', pending: '等待回复', running: '回复中', completed: '已完成', failed: '失败',
       cancelled: '已取消', saved_no_native_runtime: '只保存记录，未启动模型',
     };
-    const history = (product.conversations || []).filter((item) => chat.member?.id && item.agentId === chat.member.id).slice(-8).map((item) => {
+    const history = (product.conversations || []).map((item) => {
       const isUser = item.actor === 'user';
       const failed = item.status === 'failed';
-      const by = isUser ? '你' : failed ? `${memberName} · 回复失败` : memberName;
+      const agent = product.team?.agents?.find((entry) => entry.id === item.agentId);
+      const participant = item.agentName || agent?.name || ROLE_LABEL[item.role] || memberName;
+      const by = isUser ? '你' : failed ? `${participant} · 回复失败` : participant;
       const text = item.text || (failed ? '本次原生讨论调用失败，未形成模型回复。' : '本条讨论没有返回正文。');
       return `<div class="conversation-line ${isUser ? 'is-user' : 'is-system'}"><b>${esc(by)}</b><p>${esc(text)}</p><small>${esc(conversationStatus[item.status] || item.status)}${item.at ? ` · ${esc(item.at)}` : ''}</small></div>`;
     }).join('');
@@ -901,8 +1239,10 @@ function renderCoworkerConversation() {
             : `当前任务属于${functionCopy.title}，但后台没有同时开放该任务的实际登记成员、模型能力和讨论资格；不会伪造或改路由。`
       : chat.canSend
       ? '这里发送的是当前任务、当前目标下的只读讨论，不会自动变成已接受交代、修改要求或成果退回。工作要求请到任务书桌补充；成果退回请到审阅台操作。'
-      : product.native?.aiEnabled === false
-        ? '当前为零模型开发模式：真实历史可读，但不会启动模型回复。工作要求请到任务书桌补充；成果退回请到审阅台操作。'
+      : product.native?.modelStatus?.state
+        ? `${product.native.modelStatus.message} 真实历史仍可查看；不会切换到其他模型或生成替代回复。`
+        : product.native?.aiEnabled === false
+          ? '当前为零模型开发模式：真实历史可读，但不会启动模型回复。工作要求请到任务书桌补充；成果退回请到审阅台操作。'
         : '后台尚未同时开放当前成员、模型能力和讨论资格，因此只显示真实历史，不会伪造回复。';
     root.innerHTML = `<div class="conversation-line is-system"><b>OpenOffice 真实状态</b><p>${esc(statusText)}</p></div>${history}<div class="conversation-line is-system"><b>当前接线边界</b><p>${esc(boundary)}</p></div>`;
     root.scrollTop = root.scrollHeight;
@@ -1291,11 +1631,18 @@ function renderGameWorkshop(root) {
 
 function renderNativeDesk(root) {
   const native = state.nativeProduct;
+  const artifact = native?.artifact || null;
+  const review = artifact?.review || null;
   if (state.gameWorkshopTaskId && state.gameWorkshopTaskId === native?.taskId) {
     $('#desk-subtitle').textContent = '只读显示当前 OpenOffice 游戏任务绑定的 Noobi 项目、素材来源与候选状态。';
     renderGameWorkshop(root);
     return;
   }
+  const reviewState = nativeReviewDisposition(review, {
+    canConfirm: native?.native?.actions?.canConfirm === true,
+    canAdjudicateConfirm: native?.native?.actions?.canAdjudicateConfirm === true,
+    confirmed: Boolean(artifact?.confirmation),
+  });
   const binding = JSON.stringify([
     native.taskId || null,
     native.goalVersionId || null,
@@ -1312,18 +1659,36 @@ function renderNativeDesk(root) {
   }
   if (native.setupPending) {
     const projects = native.setup.projects.filter((project) => project.current);
-    const projectFacts = projects.map((project) => `<div class="project-scope-card"><p><strong>${esc(project.label)}</strong></p><p class="field-note">project ${esc(project.projectId)}<br>保存位置：${esc(project.location || '后台未提供')}<br>scope ${esc(project.scopeFingerprint)}<br>可写：${esc(project.allowedWritePaths.join('、') || '无')}<br>检查：${esc(project.checkIds.join('、') || '无')}</p></div>`).join('');
+    const projectFacts = projects.map((project) => `<div class="project-scope-card"><p><strong>${esc(project.label)}</strong></p><p class="field-note">project ${esc(project.projectId)}<br>保存位置：${esc(project.location || '后台未提供')}<br>scope ${esc(project.scopeFingerprint)}<br>可写：${esc(project.allowedWritePaths.join('、') || '无')}<br>检查：${esc(project.checkIds.join('、') || '无')}${Array.isArray(project.allowedRoles) ? `<br>允许角色能力（按需招募，不代表已招募）：${esc(project.allowedRoles.join('、'))}<br>最多成员：${esc(project.maxAgents ?? '—')}；模型调用预算：${esc(project.maxModelCalls ?? '—')} 次` : ''}</p></div>`).join('');
     const selected = native.setup.selectedProject;
+    const executionHasLiveCalls = native.execution?.modelCalls?.some((call) => ['reserved', 'running'].includes(call.status)) === true;
+    const currentExecutionFailed = native.status === 'failed' && native.execution?.bindingCurrent === true
+      && native.execution.phase === 'failed' && native.taskLifecycle?.status === 'failed'
+      && native.taskLifecycle?.inFlight === false && !executionHasLiveCalls;
+    const currentExecutionPending = native.execution?.bindingCurrent === true
+      && native.execution.phase === 'failed' && native.taskLifecycle?.status === 'failed'
+      && (native.taskLifecycle?.inFlight !== false || executionHasLiveCalls);
+    const modelCallCount = Array.isArray(native.execution?.modelCalls) ? native.execution.modelCalls.length : null;
+    const maxModelCalls = selected?.maxModelCalls ?? projects.find((project) => project.projectId === native.setup.selectedScope?.projectId)?.maxModelCalls;
+    const callCountLabel = modelCallCount === null ? '后台未提供调用数'
+      : `${modelCallCount}${Number.isInteger(maxModelCalls) ? `/${maxModelCalls}` : ''} 次${currentExecutionFailed ? '（原执行已结束）' : currentExecutionPending ? '（有在途/预留调用）' : ''}`;
     let scopeStep;
     if (native.setupStatus === 'waiting_scope') {
       scopeStep = projects.length ? `<form data-native-scope><label>选择后台登记项目<select name="projectId" data-native-focus-key="scope-project" required><option value="" selected disabled>请选择与当前目标匹配的项目</option>${projects.map((project) => `<option value="${esc(project.projectId)}" data-scope-fingerprint="${esc(project.scopeFingerprint)}" data-scope-current="true">${esc(project.label)}</option>`).join('')}</select></label><button class="primary-button" type="submit" data-native-focus-key="scope-select" ${native.native.actions.canScope ? '' : 'disabled'}>选择这个项目范围</button><p class="field-note">请按本次目标手动选匹配的已登记项目；没有匹配项时先登记。不会自动套用文章学习范围。</p>${native.native.actions.canScope ? '' : '<p class="field-note">HTTP 入口尚未明确开放 scope 动作；当前只能核对列表。</p>'}</form>${projectFacts}`
         : '<p class="demo-warning">后台当前没有返回可选且有效的登记项目。不能手工填写路径，也不会使用证据夹具冒充真实项目。</p>';
     } else {
-      const selectedScope = `<div class="project-scope-card"><p><strong>${esc(selected?.label || '已选择项目')}</strong></p><p class="field-note">project ${esc(selected?.projectId || '—')}<br>保存位置：${esc(selected?.location || '后台未提供')}<br>scope ${esc(native.setup.selectedScope?.scopeFingerprint || selected?.scopeFingerprint || '—')}<br>可写：${esc(selected?.allowedWritePaths?.join('、') || '无')}<br>检查：${esc(selected?.checkIds?.join('、') || '无')}</p></div>`;
+      const selectedScope = `<div class="project-scope-card"><p><strong>${esc(selected?.label || '已选择项目')}</strong></p><p class="field-note">project ${esc(selected?.projectId || '—')}<br>保存位置：${esc(selected?.location || '后台未提供')}<br>scope ${esc(native.setup.selectedScope?.scopeFingerprint || selected?.scopeFingerprint || '—')}<br>可写：${esc(selected?.allowedWritePaths?.join('、') || '无')}<br>检查：${esc(selected?.checkIds?.join('、') || '无')}${Array.isArray(selected?.allowedRoles) ? `<br>允许角色能力（按需招募，不代表已招募）：${esc(selected.allowedRoles.join('、'))}<br>最多成员：${esc(selected.maxAgents ?? '—')}；模型调用预算：${esc(selected.maxModelCalls ?? '—')} 次` : ''}</p></div>`;
+      const canChooseReviewContinuation = native.setupStatus === 'ready_to_run' && native.canPrepareRun
+        && nativeSetupBound(native) && (!native.execution?.id || native.blockedReason === 'explicit_new_run_required');
+      const reviewContinuationChoice = canChooseReviewContinuation && !canRestoreCurrentResult(native)
+        ? '<label class="field-note"><input type="checkbox" data-auto-review-continuation> 本执行结束后，如原工作已结清且额度用尽或期限已到、目标/范围/首个候选仍一致，自动接续一次独立只读审阅（最多 1 次、20 分钟）；不自动确认或发布。</label>' : '';
+      const continuationState = native.execution?.reviewContinuation?.authorized
+        ? `<p class="field-note">本执行已授权一次只读审阅接续：${esc(native.execution.reviewContinuation.status || '已授权')}；最多 ${esc(native.execution.reviewContinuation.maxModelCalls ?? 1)} 次、20 分钟。</p>`
+        : '';
+      const readyToRunStep = `${selectedScope}${continuationState}${canRestoreCurrentResult(native) ? `<p class="field-note">原执行与已确认成果已保留，恢复只会沿用该版本，不会重新开发。</p><div class="review-panel"><strong>已确认版本 v${native.currentResultRecovery.artifactVersion} 可安全恢复</strong><p class="field-note">候选、执行、目标和项目范围均与当前任务绑定。</p><button class="primary-button" type="button" data-action="native-restore-confirmed">恢复已确认成果（不重新开发）</button></div>` : currentExecutionFailed ? `<p class="demo-warning">${esc(native.nextStep)}</p>` : currentExecutionPending ? '<p class="demo-warning">后台仍有在途或预留调用，本轮是否结束尚待核实。不会自动重试。</p>' : '<p class="field-note">范围授权已经保存。原生执行、registry 与模型调用尚未开始。</p>'}${native.canPrepareRun && nativeSetupBound(native) && !currentExecutionFailed ? `${reviewContinuationChoice}<button class="${canRestoreCurrentResult(native) ? 'secondary' : 'primary'}-button" type="button" data-action="native-prepare-run">${canRestoreCurrentResult(native) ? '准备新一轮' : '准备原生后台'}</button><p class="field-note">${canRestoreCurrentResult(native) ? '这会创建新执行轮次；若要保留已确认成果，请使用上方恢复入口。' : '这一步只初始化受控组件、登记当前执行与产品绑定；不会启动模型工作。'}</p>` : currentExecutionFailed ? '<button class="secondary-button" type="button" disabled>等待明确后续指示</button>' : '<button class="secondary-button" type="button" disabled>等待后台开放运行准备</button>'}`;
       scopeStep = native.setupStatus === 'waiting_scope_authorization'
         ? `${selectedScope}<form data-native-authorize-scope><button class="primary-button" type="submit" data-native-focus-key="scope-authorize" ${native.native.actions.canAuthorizeScope ? '' : 'disabled'}>授权这个有限范围</button><p class="field-note">${native.native.actions.canAuthorizeScope ? '授权后后台仍需创建当前 registry 与执行绑定；不会立即确认、合并或发布。' : 'authorize_scope 尚未由在线入口明确开放；当前不把“已选择”写成“已授权”。'}</p></form>`
-        : native.setupStatus === 'ready_to_run'
-          ? `${selectedScope}${canRestoreCurrentResult(native) ? `<p class="field-note">原执行与已确认成果已保留，恢复只会沿用该版本，不会重新开发。</p><div class="review-panel"><strong>已确认版本 v${native.currentResultRecovery.artifactVersion} 可安全恢复</strong><p class="field-note">候选、执行、目标和项目范围均与当前任务绑定。</p><button class="primary-button" type="button" data-action="native-restore-confirmed">恢复已确认成果（不重新开发）</button></div>` : '<p class="field-note">范围授权已经保存。原生执行、registry 与模型调用尚未开始。</p>'}${native.canPrepareRun && nativeSetupBound(native) ? `<button class="${canRestoreCurrentResult(native) ? 'secondary' : 'primary'}-button" type="button" data-action="native-prepare-run">${canRestoreCurrentResult(native) ? '准备新一轮' : '准备原生后台'}</button><p class="field-note">${canRestoreCurrentResult(native) ? '这会创建新执行轮次；若要保留已确认成果，请使用上方恢复入口。' : '这一步只初始化受控组件、登记当前执行与产品绑定；不会启动模型工作。'}</p>` : '<button class="secondary-button" type="button" disabled>等待后台开放运行准备</button>'}`
+        : native.setupStatus === 'ready_to_run' ? readyToRunStep
           : native.setupStatus === 'runtime_starting'
             ? `${selectedScope}<p class="field-note">当前执行与 registry 已经登记；正在等待原生后台就绪，模型调用仍为 0。</p><button class="secondary-button" type="button" disabled>原生后台正在启动</button>`
             : `${selectedScope}<p class="demo-warning">当前执行与 registry 已经保留，但原生后台不可用。页面不会回退到旧执行器，也不会把未连接状态写成完成。</p>${native.canPrepareRun && nativeSetupBound(native) ? '<button class="primary-button" type="button" data-action="native-prepare-run">恢复原生后台</button><p class="field-note">恢复沿用同一执行账与当前授权，不会启动模型工作。</p>' : '<button class="secondary-button" type="button" disabled>等待原生后台恢复</button>'}`;
@@ -1332,7 +1697,11 @@ function renderNativeDesk(root) {
       : native.setupStatus === 'waiting_scope_authorization' ? '核对并授权范围'
         : native.setupStatus === 'runtime_unavailable' ? '已保留的原生运行绑定' : '已授权的项目范围';
     const inputActions = `${native.native.actions.canInstructions ? '<button class="secondary-button wide-button" type="button" data-open-dialog="suggestion-dialog">补充工作要求</button>' : ''}${native.native.actions.canMaterials ? '<button class="secondary-button wide-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}`;
-    render(`<div class="desk-columns"><div class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前目标</h2><span class="record-status" data-tone="good">设置中</span></div><div class="sheet-body"><p><strong>${esc(native.title)}</strong></p><p>${esc(native.goalStatement)}</p><p class="field-note">成功条件：${esc(native.successCriteria.join('；') || '未填写')}<br>工作边界：${esc(native.boundaries.join('；') || '未填写')}<br>goal ${esc(native.goalVersionId)}</p>${inputActions ? `<div class="button-stack">${inputActions}</div><p class="field-note">这两类输入会进入当前任务并使旧设置绑定失效；不会静默替换目标，也不会启动模型。</p>` : ''}</div></section><section class="desk-sheet"><div class="sheet-heading"><h2>${setupHeading}</h2><span class="record-status">${esc(native.statusLabel)}</span></div><div class="sheet-body">${scopeStep}</div></section></div><aside class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前阶段</h2></div><div class="sheet-body"><p>${esc(native.nextStep)}</p><p class="field-note">execution：${esc(native.execution?.id || '尚未创建')}<br>registry：${esc(native.registry?.status || '尚未创建')}<br>模型调用：0（本设置态）</p></div></section><section class="desk-sheet"><div class="sheet-heading"><h2>长期记忆</h2></div><div class="sheet-body">${renderNativeMemoryPanel(native)}</div></section></aside></div>`);
+    const statusTone = currentExecutionFailed ? 'bad' : currentExecutionPending ? 'warn' : 'good';
+    const failureFacts = currentExecutionFailed ? `<br>截止：${esc(native.execution.deadline || '后台未提供')}<br>失败原因：${esc(native.execution.failureReason || '后台未提供可读原因')}` : '';
+    const modelCallsDisplay = native.execution ? esc(callCountLabel)
+      : native.taskLifecycle?.inFlight === true ? '后台仍有在途任务，调用数待核' : native.taskLifecycle?.inFlight === false ? '0（尚未启动）' : '后台未提供执行/调用状态';
+    render(`<div class="desk-columns"><div class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前目标</h2><span class="record-status" data-tone="${statusTone}">${currentExecutionFailed ? '本轮执行失败' : currentExecutionPending ? '失败状态待核实' : '设置中'}</span></div><div class="sheet-body"><p><strong>${esc(native.title)}</strong></p><p>${esc(native.goalStatement)}</p><p class="field-note">成功条件：${esc(native.successCriteria.join('；') || '未填写')}<br>工作边界：${esc(native.boundaries.join('；') || '未填写')}<br>goal ${esc(native.goalVersionId)}</p>${inputActions ? `<div class="button-stack">${inputActions}</div><p class="field-note">这两类输入会进入当前任务并使旧设置绑定失效；不会静默替换目标，也不会启动模型。</p>` : ''}</div></section><section class="desk-sheet"><div class="sheet-heading"><h2>${setupHeading}</h2><span class="record-status">${esc(native.statusLabel)}</span></div><div class="sheet-body">${scopeStep}</div></section></div><aside class="desk-stack"><section class="desk-sheet"><div class="sheet-heading"><h2>当前阶段</h2></div><div class="sheet-body"><p>${esc(native.nextStep)}</p><p class="field-note">execution：${esc(native.execution?.id || '尚未创建')}<br>registry：${esc(native.registry?.status || '尚未创建')}<br>模型调用：${modelCallsDisplay}${failureFacts}</p></div></section><section class="desk-sheet"><div class="sheet-heading"><h2>长期记忆</h2></div><div class="sheet-body">${renderNativeMemoryPanel(native)}</div></section></aside></div>`);
     return;
   }
   const product = native.product;
@@ -1351,19 +1720,21 @@ function renderNativeDesk(root) {
                 : native.native?.planApprovalStatus === 'mismatch' ? '保留的计划与当前任务绑定不匹配，当前不可批准；原文仍可查看'
               : execution?.stopReason ? `执行已停止，原计划保留但当前不可批准`
                 : `当前计划不可批准（状态尚未确认）`
-            : runLead ? `${runLead.name || runLead.role || runLead.id} 已登记为启动 Lead，尚无在途执行` : '原生状态未提供活动角色，所有同事保持待命';
+            : native.status === 'failed' && execution?.phase === 'partial'
+              ? `本轮已停止，${execution.modelCalls?.filter((call) => call.status === 'failed').length || 1} 次调用失败；等待明确后续`
+              : runLead ? `${runLead.name || runLead.role || runLead.id} 已登记为启动 Lead，尚无在途执行` : '原生状态未提供活动角色，所有同事保持待命';
   const nativeRoster = native.team.length ? native.team.map((agent) => `${agent.name} · ${agent.role || agent.stationRole || '原生成员'} · ${agent.status === 'idle' ? '待命' : agent.status}`) : [];
   const nativeTaskLink = native.links.nativeTask ? `<a class="primary-button" href="${esc(native.links.nativeTask)}">打开 OpenOffice 原生任务</a>` : '<button class="secondary-button" type="button" disabled>原生任务链接未提供</button>';
   const actionButtons = `${actions?.canApprovePlan && native.native?.bindingCurrent && native.native?.plan?.sha256 && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-approve-plan" data-native-focus-key="approve-plan">批准当前 Lead 计划</button>' : ''}${actions?.canRun && native.native?.runAgentId && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-run" data-native-focus-key="run">由原生 Lead 开始执行</button>' : ''}${actions?.canContinue && nativeActionBound(native) ? '<button class="primary-button" type="button" data-action="native-resume" data-native-focus-key="resume">按当前目标继续</button>' : ''}`;
   render(`<div class="desk-columns"><div class="desk-stack">
     <section class="desk-sheet"><div class="sheet-heading"><h2>当前目标</h2><span class="record-status" data-tone="${native.current ? 'good' : 'bad'}">${native.current ? '当前有效' : '已经失效'}</span></div><div class="sheet-body provider-line"><p><strong>${esc(native.title)}</strong></p><p>${esc(native.goalStatement)}</p><p class="field-note">task ${esc(native.taskId)}<br>goal ${esc(native.goalVersionId)}<br>authority ${native.authorityCurrent ? 'current' : 'stale'} · product binding ${product?.bindingCurrent ? 'current' : 'stale'}</p>${product?.bindingError ? `<p class="demo-warning">${esc(product.bindingError)}</p>` : ''}</div></section>
-    <section class="desk-sheet"><div class="sheet-heading"><h2>OpenOffice 原生执行</h2><span class="record-status" data-tone="${native.officeStatus === 'running' ? 'active' : native.officeStatus === 'failed' ? 'bad' : ''}">${esc(native.statusLabel || native.status)}</span></div><div class="sheet-body provider-line"><p><strong>实际执行角色</strong><br>${esc(actualRole)}</p><p><strong>执行记录</strong><br>${execution ? `ID ${esc(execution.id || '未提供')} · 阶段 ${esc(execution.phase || native.status)}${execution.stopReason ? `<br>停止原因 ${esc(execution.stopReason)}` : ''}` : '尚未提供活动执行记录'}</p><p><strong>已登记执行</strong><br>${native.registeredExecution ? `目标 ${esc(native.registeredExecution.goalVersionId || '—')} · prompt ${esc(native.registeredExecution.promptSha256 || '—')}` : '未登记'}</p>${native.native?.plan ? `<div class="review-panel"><span class="record-status" data-tone="${actions?.canApprovePlan ? 'active' : native.native?.planApprovalStatus === 'not_persisted' || native.native?.planApprovalStatus === 'mismatch' || execution?.stopReason ? 'bad' : ''}">${actions?.canApprovePlan ? '等待批准' : native.native?.planApprovalStatus === 'not_persisted' ? '计划未保存成功 · 当前不可批准' : native.native?.planApprovalStatus === 'unavailable' ? '保存状态不可读取 · 当前不可批准' : native.native?.planApprovalStatus === 'mismatch' ? '计划与当前绑定不符 · 当前不可批准' : execution?.stopReason ? '执行已停止 · 当前不可批准' : '当前不可批准'}</span><h3>Lead 提交的计划原文</h3><p class="field-note">SHA-256 ${esc(native.native.plan.sha256)}</p><pre class="native-plan-view">${esc(native.native.plan.text)}</pre></div>` : ''}<p><strong>下一步</strong><br>${esc(native.nextStep)}</p>${nativeTaskLink}</div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>OpenOffice 原生执行</h2><span class="record-status" data-tone="${native.officeStatus === 'running' ? 'active' : native.officeStatus === 'failed' ? 'bad' : ''}">${esc(native.statusLabel || native.status)}</span></div><div class="sheet-body provider-line"><p><strong>当前执行状态</strong><br>${esc(nativeExecutionStatusLabel(native))}</p><p><strong>实际执行角色</strong><br>${esc(actualRole)}</p><p><strong>原始执行记录（保留原账）</strong><br>${execution ? `ID ${esc(execution.id || '未提供')} · 阶段 ${esc(execution.phase || '未提供')}${execution.stopReason ? `<br>停止原因 ${esc(execution.stopReason)}` : ''}` : '尚未提供活动执行记录'}</p><p><strong>已登记执行</strong><br>${native.registeredExecution ? `目标 ${esc(native.registeredExecution.goalVersionId || '—')} · prompt ${esc(native.registeredExecution.promptSha256 || '—')}` : '未登记'}</p>${native.native?.plan ? `<div class="review-panel"><span class="record-status" data-tone="${actions?.canApprovePlan ? 'active' : native.native?.planApprovalStatus === 'not_persisted' || native.native?.planApprovalStatus === 'mismatch' || execution?.stopReason ? 'bad' : ''}">${actions?.canApprovePlan ? '等待批准' : native.native?.planApprovalStatus === 'not_persisted' ? '计划未保存成功 · 当前不可批准' : native.native?.planApprovalStatus === 'unavailable' ? '保存状态不可读取 · 当前不可批准' : native.native?.planApprovalStatus === 'mismatch' ? '计划与当前绑定不符 · 当前不可批准' : execution?.stopReason ? '执行已停止 · 当前不可批准' : '当前不可批准'}</span><h3>Lead 提交的计划原文</h3><p class="field-note">SHA-256 ${esc(native.native.plan.sha256)}</p><pre class="native-plan-view">${esc(native.native.plan.text)}</pre></div>` : ''}<p><strong>下一步</strong><br>${esc(native.nextStep)}</p>${nativeTaskLink}</div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>原生任务操作</h2></div><div class="sheet-body provider-line"><div class="inline-actions">${actionButtons || '<button class="secondary-button" type="button" disabled>当前没有可执行动作</button>'}${actions?.canInstructions ? '<button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">补充工作要求</button>' : ''}${actions?.canMaterials ? '<button class="secondary-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}</div><p class="field-note">每个动作都提交到同一 OpenOffice 产品动作入口；后台会再次核对当前任务、目标、执行与产品绑定。</p></div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>接受完整新版目标</h2></div><div class="sheet-body"><form data-native-goal><p class="field-note">这是目标替换，不是普通补充。请完整填写新版目标、成功条件和工作边界；不会从旧版静默继承。</p><label>新版目标<textarea name="statement" data-native-focus-key="goal-statement" rows="4" maxlength="4000" required>${esc(native.goalStatement)}</textarea></label><label>新版成功条件 <span class="field-note">每行一条</span><textarea name="successCriteria" data-native-focus-key="goal-success" rows="3" required></textarea></label><label>新版工作边界 <span class="field-note">每行一条</span><textarea name="boundaries" data-native-focus-key="goal-boundaries" rows="3" required></textarea></label><button class="danger-button" type="submit" ${actions?.canGoal && nativeSetupBound(native) ? '' : 'disabled'}>接受完整新版目标</button></form></div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>当前接线边界</h2></div><div class="sheet-body"><p class="field-note">真实状态、范围准备与 Lead 启动只按后台明确资格开放；缺字段时按钮保持不可用。</p><ul class="boundary-list"><li>首个任务、登记项目、范围选择与授权已按实际设置合同接入</li><li>原生后台准备是零模型步骤；只有 canRun 与真实 runAgentId 同时存在才显示模型启动</li><li>同事双向讨论已接源码；只有模型能力、当前绑定、动作资格和真实成员同时有效时才允许发送</li><li>目标、工作要求、材料、继续、暂停、取消、计划批准、候选读取、审阅、预览和退回均按当前在线动作合同开放</li></ul></div></section>
   </div><aside class="desk-stack">
     <section class="desk-sheet"><div class="sheet-heading"><h2>产品登记</h2><span class="record-status">${product ? '已读取' : '未提供'}</span></div><div class="sheet-body provider-line">${product ? `<p><strong>项目</strong><br>${esc(product.projectId || '—')}</p><p><strong>登记指纹</strong><br>${esc(product.registrySha256 || '—')}</p><p><strong>工作区范围</strong><br>${esc(product.workspaceScopeFingerprint || '—')}</p><p><strong>允许写入</strong><br>${esc(lines(product.allowedWritePaths))}</p><p><strong>固定检查</strong><br>${esc(lines(product.checks.map(checkLabel)))}</p><p><strong>已登记能力</strong><br>${esc(lines(capabilityLines(product.capabilities)))}</p>` : '<p class="demo-warning">原生状态未提供产品登记信息。</p>'}</div></section>
-    <section class="desk-sheet"><div class="sheet-heading"><h2>原生运行边界</h2></div><div class="sheet-body provider-line"><p><strong>实际登记团队</strong><br>${esc(lines(nativeRoster, '未提供'))}</p><p><strong>允许角色</strong><br>${esc(lines(product?.allowedRoles, '未提供'))}</p><p class="field-note">团队成员当前均可处于待命；只有真实运行或工作项会点亮工位。</p><p><strong>运行预算</strong><br>${product?.maxModelCalls ?? '—'} 次模型调用 · ${product?.maxDurationMs ? `${Math.round(product.maxDurationMs / 60000)} 分钟` : '时限未提供'}</p></div></section>
+    <section class="desk-sheet"><div class="sheet-heading"><h2>原生运行边界</h2></div><div class="sheet-body provider-line"><p><strong>实际登记团队</strong><br>${esc(lines(nativeRoster, '未提供'))}</p><p><strong>允许角色</strong><br>${esc(lines(product?.allowedRoles, '未提供'))}</p><p class="field-note">团队成员当前均可处于待命；只有真实运行或工作项会点亮工位。</p><p><strong>运行预算</strong><br>${native.execution && Number.isInteger(product?.maxModelCalls) ? (Array.isArray(native.execution.modelCalls) ? `${native.execution.modelCalls.length}/${product.maxModelCalls} 次已用 · ${Math.max(0, product.maxModelCalls - native.execution.modelCalls.length)} 次剩余` : `调用数待核/${product.maxModelCalls} 次`) : `${product?.maxModelCalls ?? '—'} 次模型调用`} · ${product?.maxDurationMs ? `${Math.round(product.maxDurationMs / 60000)} 分钟` : '时限未提供'}</p><p class="field-note">候选状态：${artifact ? `v${artifact.version} 已生成` : '尚无候选'}；独立审阅：${reviewState.label}。运行结束不代表审阅或交付已完成。</p></div></section>
     <section class="desk-sheet"><div class="sheet-heading"><h2>长期记忆</h2></div><div class="sheet-body">${native.memory?.stalePreparedPrompt ? `<p class="demo-warning">准备后记忆内容或版本发生变化。Lead 暂不可启动；重新准备会更新同一未启动执行的提示词，不会新建批次或调用模型。</p>${native.canPrepareRun && native.product?.workspaceScopeFingerprint && nativeSetupBound(native) ? '<button class="primary-button" type="button" data-action="native-prepare-run">按当前记忆重新准备</button>' : '<p class="field-note">当前后台未提供重新准备资格。</p>'}` : ''}${renderNativeMemoryPanel(native)}${native.memory?.references?.length ? `<h3>本次准备引用的记忆来源</h3><ul>${native.memory.references.map((item) => `<li>${esc(item.title)} · v${item.revision} · ${esc(item.ownerTaskId || 'task')} / ${esc(item.sourceEventId || 'event')}</li>`).join('')}</ul>` : ''}${native.memory?.indexDegraded ? `<p class="demo-warning">本次记忆索引降级：${esc(native.memory.indexDegraded)}；未引用旧索引内容。</p>` : ''}</div></section>
   </aside></div>`);
 }
@@ -1441,13 +1812,19 @@ function renderNativeReview(root) {
     return;
   }
   const review = artifact.review;
+  const reviewState = nativeReviewDisposition(review, {
+    canConfirm: native.native?.actions?.canConfirm === true,
+    canAdjudicateConfirm: native.native?.actions?.canAdjudicateConfirm === true,
+    confirmed: Boolean(artifact.confirmation),
+  });
   const confirmed = artifact.confirmation;
   const patchHref = nativePatchHref(native);
   const zipHref = nativeZipHref(native);
   const candidate = nativeCandidateMatches(native) ? state.nativeCandidate : null;
   const reviewBinding = nativeReviewBinding(native);
-  const candidateReviewMatches = Boolean(candidate?.review && review && candidate.review.id === review.id && candidate.review.passed === false
-    && candidate.review.nativeVerdict === 'FAIL' && candidate.review.fullOutputSha256 === review.fullOutputSha256
+  const candidateReviewMatches = Boolean(candidate?.review && review && candidate.review.id === review.id
+    && candidate.review.passed === review.passed && candidate.review.nativeVerdict === review.nativeVerdict
+    && candidate.review.scopeOutcome === review.scopeOutcome && candidate.review.fullOutputSha256 === review.fullOutputSha256
     && typeof candidate.review.text === 'string' && candidate.review.text.trim());
   const reviewPending = state.nativeReviewPending?.binding === reviewBinding;
   const reviewRound = native.native?.reviewRound;
@@ -1463,22 +1840,29 @@ function renderNativeReview(root) {
   const reviewAction = reviewCandidateBound && reviewPending
     ? '<button class="secondary-button" type="button" disabled>独立审阅已提交，等待新结果</button><p class="field-note" role="status" aria-live="polite">旧审阅记录仍保留；收到当前候选的新审阅结果前不会重复提交。</p>'
     : canReviewNativeCandidate(native)
-      ? `<button class="secondary-button" type="button" data-action="native-review" data-native-review-binding="${esc(reviewBinding)}">${reviewRound?.status === 'open' ? '开始本轮独立审阅（1 次）' : review ? '重新独立审阅这个候选' : '请求独立审阅'}</button>`
+      ? `<button class="secondary-button" type="button" data-action="native-review" data-native-review-binding="${esc(reviewBinding)}">${['open', 'running'].includes(reviewRound?.status) ? `开始本轮独立审阅（最多 ${reviewRound.maxModelCalls} 次${reviewRound.callUnit || '调用'}）` : review ? '重新独立审阅这个候选' : '请求独立审阅'}</button>`
       : reviewCandidateBound && review && !review.passed
         ? '<p class="field-note">后台当前未开放重新审阅。</p>' : '';
   const reviewRoundAction = reviewCandidateBound && native.native?.actions?.canOpenReviewRound === true
     ? reviewRoundPending ? '<button class="secondary-button" type="button" disabled>正在开启后续审阅轮…</button>'
-      : `<button class="secondary-button" type="button" data-action="native-open-review-round" data-native-review-binding="${esc(reviewBinding)}">开启后续只读审阅轮（1 次 / 20 分钟）</button>`
+      : `<button class="secondary-button" type="button" data-action="native-open-review-round" data-native-review-binding="${esc(reviewBinding)}">开启后续只读审阅轮（最多 ${native.native.reviewRoundOffer ? `${native.native.reviewRoundOffer.maxModelCalls} 次 CLI 调用` : '1 次'} / ${Math.round((native.native.reviewRoundOffer?.maxDurationMs ?? 20 * 60 * 1000) / 60000)} 分钟）</button>`
     : '';
+  const cancelReviewRoundAction = reviewCandidateBound && ['open', 'running'].includes(reviewRound?.status)
+    && native.native?.actions?.canCancel === true
+    ? `<button class="danger-button" type="button" data-action="native-cancel" data-native-review-binding="${esc(reviewBinding)}">停止本次审阅</button>` : '';
   const reconnectReviewAction = reviewCandidateBound && native.native?.actions?.canReconnectReview === true
     ? `<button class="secondary-button" type="button" data-action="native-reconnect-review-runtime" data-native-review-binding="${esc(reviewBinding)}">接回原审阅运行环境（不启动模型）</button>`
     : '';
-  const reviewRoundStatus = reviewRound ? `<p class="field-note" role="status">后续审阅轮：${esc(({ open: '已开启，尚未调用', running: '审阅正在进行', expired: '时间已结束', stale: '绑定已过期', completed: '已完成', failed: '调用失败' })[reviewRound.status] || '状态未知')} · ${reviewRound.modelCalls}/${reviewRound.maxModelCalls} 次${reviewRound.deadlineAt ? ` · 截止 ${esc(reviewRound.deadlineAt)}` : ''}。不会自动续开。</p>` : '';
+  const reviewRoundStatus = reviewRound ? `<p class="field-note" role="status">后续审阅轮：${esc(({ open: '已开启，尚未调用', running: '审阅正在进行', expired: '时间已结束', stale: '绑定已过期', completed: '已完成', failed: '调用失败' })[reviewRound.status] || '状态未知')} · ${reviewRound.modelCalls}/${reviewRound.maxModelCalls} 次${reviewRound.callUnit ? ` ${esc(reviewRound.callUnit)}` : ''}${reviewRound.deadlineAt ? ` · 截止 ${esc(reviewRound.deadlineAt)}` : ''}。不会自动续开。</p>` : '';
   const preparationFailureStatus = preparationFailure ? `<p class="field-note" role="status">Reviewer 未启动，模型调用 0 次：${esc(preparationFailure.error)}</p>` : '';
-  const canConfirm = native.current && native.native?.actions.canConfirm && artifact.id && review?.passed && !confirmed && native.links.confirm && candidate;
+  const canConfirm = native.current && native.native?.actions.canConfirm && artifact.id && review?.passed && !confirmed
+    && native.links.confirm && candidate && candidateReviewMatches;
   const canAdjudicateConfirm = native.current && native.native?.actions.canAdjudicateConfirm && artifact.id
     && review?.passed === false && review.nativeVerdict === 'FAIL' && review.id && review.fullOutputSha256
     && !confirmed && native.links.confirm && candidate && candidateReviewMatches;
+  const archivedReviews = (artifact.reviewHistory || []).filter((item) => item.id && item.fullOutputSha256);
+  const archivedReviewMarkup = archivedReviews.length ? `<details class="review-panel"><summary>历史 Reviewer 报告（${archivedReviews.length}）</summary>${archivedReviews.map((item) =>
+    `<section class="review-panel"><p class="field-note">review ${esc(item.id)} · ${esc(item.nativeVerdict || '—')} · ${esc(item.reviewedAt || '时间未提供')}<br>report SHA-256 ${esc(item.fullOutputSha256)}</p><pre class="native-patch-view">${esc(item.text || '未返回有效报告')}</pre></section>`).join('')}</details>` : '';
   const adjudicationDraftMatches = state.nativeReviewAdjudicationDraft?.binding === reviewBinding
     && state.nativeReviewAdjudicationDraft?.reviewId === review?.id
     && state.nativeReviewAdjudicationDraft?.reviewFullOutputSha256 === review?.fullOutputSha256;
@@ -1498,9 +1882,9 @@ function renderNativeReview(root) {
   const previewPanel = previewEntries.length ? `<div class="review-panel"><h3>当前候选预览</h3><p class="field-note">预览按当前目标、执行、登记、候选版本与文件摘要绑定。异步请求被接受不代表预览已就绪。</p>${native.preview?.status === 'pending' ? '<p class="record-status" data-tone="active">预览正在准备</p>' : native.preview?.status === 'failed' ? `<p class="field-note">${esc(native.preview.error || '预览准备失败，请重新请求。')}</p>` : ''}${previewReady ? `<a class="export-link" href="${esc(native.links.preview)}" target="_blank" rel="noopener">打开当前候选预览（${esc(native.preview.entry || '入口')}）</a>` : `<label class="field-label" for="native-preview-entry">登记入口</label><select class="text-input" id="native-preview-entry" data-native-focus-key="preview-entry" ${native.native?.actions.canPreview && native.current && artifact.candidateSha256 ? '' : 'disabled'}>${previewEntries.map((entry) => `<option value="${esc(entry)}" ${native.preview?.entry === entry ? 'selected' : ''}>${esc(entry)}</option>`).join('')}</select><button class="secondary-button" type="button" data-action="native-preview" ${native.native?.actions.canPreview && native.current && artifact.candidateSha256 ? '' : 'disabled'}>${native.preview?.status === 'pending' ? '重新请求当前候选预览' : '生成当前候选预览'}</button>`}</div>` : '';
   const candidateDetail = candidate ? `<section class="native-candidate-detail"><h3>真实候选文件</h3><p class="field-note">diff ${esc(candidate.diffSha256)} · patch ${esc(candidate.patchSha256)}</p><ul class="boundary-list">${candidate.files.map((file) => `<li>${esc(file.path)}${file.sha256 ? ` · ${esc(file.sha256)}` : ''}${file.bytes !== null ? ` · ${esc(file.bytes)} bytes` : ''}</li>`).join('') || '<li>没有变更文件</li>'}</ul><h3>固定检查</h3><ul class="boundary-list">${candidate.checks.map((check) => `<li>${esc(check.id)} · ${check.passed ? 'PASS' : 'FAIL'}${check.detail ? ` · ${esc(check.detail)}` : ''}</li>`).join('') || '<li>没有检查记录</li>'}</ul><h3>完整差异</h3><pre class="native-patch-view">${esc(candidate.patch || '（空差异）')}</pre></section>` : `<section class="native-candidate-detail"><h3>确认前先核对真实差异</h3><p class="field-note">${esc(state.nativeCandidateError || '文件清单、固定检查和完整 patch 尚未读取；在读取并核对当前版本前，确认按钮保持不可用。')}</p>${native.native?.actions.canInspectDiff && native.links.candidate ? `<button class="secondary-button" type="button" data-action="native-inspect-candidate" ${state.nativeCandidateLoading ? 'disabled' : ''}>${state.nativeCandidateLoading ? '正在读取真实候选…' : '查看真实差异与文件'}</button>` : '<button class="secondary-button" type="button" disabled>后台尚未开放当前候选查看</button>'}</section>`;
   render(`<div class="proof-grid"><article class="artifact-paper"><header class="artifact-header"><span class="eyebrow">OPENOFFICE NATIVE CANDIDATE</span><h2>${esc(native.title)}</h2><div class="artifact-meta"><span>版本 ${esc(artifact.version ?? '—')}</span><span>目标 ${esc(native.goalVersionId)}</span><span>${confirmed ? '指定版本已确认' : '尚未确认'}</span></div></header><div class="artifact-content native-artifact-facts"><p><strong>候选 ID</strong><br>${esc(artifact.id || '未提供')}</p><p><strong>候选 SHA-256</strong><br>${esc(artifact.candidateSha256 || '未提供')}</p><p><strong>宿主固定检查</strong><br>${artifact.hostCheck ? artifact.hostCheck.passed ? '通过' : '未通过' : '未提供'}</p>${candidateDetail}</div></article><aside class="review-sidebar">
-    <div class="review-panel"><span class="record-status" data-tone="${review?.passed ? 'good' : review ? 'bad' : ''}">${review ? review.passed ? '审阅通过' : '审阅未通过' : '尚无审阅'}</span><h3>OpenOffice 原生审阅</h3><p class="field-note">review ${esc(review?.id || '—')}<br>verdict ${esc(review?.nativeVerdict || '—')}<br>scope ${esc(review?.scopeOutcome || '—')}<br>report SHA-256 ${esc(review?.fullOutputSha256 || '—')}</p>${candidateReviewMatches ? `<details class="review-panel"><summary>查看完整 Reviewer 原文</summary><pre class="native-patch-view">${esc(candidate.review.text)}</pre></details>` : ''}${confirmed?.reviewAdjudication ? `<p class="field-note"><strong>人工裁决；原始 FAIL 保留</strong><br>${esc(confirmed.reviewAdjudication.reason)}<br>${esc(confirmed.reviewAdjudication.decidedBy)} · ${esc(confirmed.reviewAdjudication.decidedAt)}<br>授权来源：${esc(confirmed.reviewAdjudication.authorizationSourceThreadId || '—')}<br>${esc(confirmed.reviewAdjudication.authorizationText || '')}</p>` : ''}</div>
-    <div class="review-panel"><h3>指定版本操作</h3><p class="field-note">确认只针对当前任务、当前目标与这个候选版本；办公室不会自动应用、提交或合并。</p>${preparationFailureStatus}${reviewRoundStatus}${reviewEvidence}<div class="button-stack">${reconnectReviewAction}${reviewRoundAction}${reviewAction}${canConfirm ? '<button class="primary-button" type="button" data-action="native-confirm">确认这个指定版本</button>' : !confirmed && !canAdjudicateConfirm ? '<button class="secondary-button" type="button" disabled>审阅通过且确认接口可用后才能确认</button>' : ''}${patchHref ? `<a class="export-link" href="${esc(patchHref)}">下载已确认 patch</a>` : ''}${zipHref ? `<a class="export-link" href="${esc(zipHref)}">下载完整工具 ZIP</a>` : ''}${native.links.nativeTask ? `<a class="secondary-button" href="${esc(native.links.nativeTask)}">打开原生任务</a>` : ''}</div>${confirmed ? `<p class="field-note">approval ${esc(confirmed.approvalId || '—')}<br>artifact version ${esc(confirmed.artifactVersion ?? '—')}<br>goal ${esc(confirmed.goalVersionId || '—')}</p>` : ''}</div>${adjudicationForm}${previewPanel}
-    <div class="review-panel"><h3>继续修改</h3><p class="field-note">普通补充与正式退回分开保存。正式退回会绑定当前候选 ID/版本，并使旧执行绑定失效；不会用聊天输入冒充。</p>${native.native?.actions.canRevise && candidate ? `<form data-native-revise data-revise-binding="${esc(binding || '')}"><label>退回修改原因（最多 2000 UTF-8 字节）<textarea name="reason" rows="5" maxlength="2000" required placeholder="准确写出这个版本需要修改什么"></textarea></label><button class="danger-button" type="submit">退回这个指定版本</button></form>` : native.native?.actions.canRevise ? '<p class="field-note">先读取并核对当前版本的真实差异，才能正式退回。</p>' : ''}<div class="button-stack">${native.native?.actions.canInstructions ? '<button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">补充普通工作要求</button>' : ''}${native.native?.actions.canMaterials ? '<button class="secondary-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}<button class="secondary-button" type="button" data-view-target="desk">查看任务状态</button></div></div>
+    <div class="review-panel"><span class="record-status" data-tone="${reviewState.tone}">${esc(reviewState.label)}</span><h3>OpenOffice 原生审阅</h3><p class="field-note">review ${esc(review?.id || '—')}<br>verdict ${esc(review?.nativeVerdict || '—')}<br>scope ${esc(review?.scopeOutcome || '—')}<br>report SHA-256 ${esc(review?.fullOutputSha256 || '—')}</p>${candidateReviewMatches ? `<details class="review-panel"><summary>查看完整 Reviewer 原文</summary><pre class="native-patch-view">${esc(candidate.review.text)}</pre></details>` : ''}${archivedReviewMarkup}${confirmed?.reviewAdjudication ? `<p class="field-note"><strong>人工裁决；原始 FAIL 保留</strong><br>${esc(confirmed.reviewAdjudication.reason)}<br>${esc(confirmed.reviewAdjudication.decidedBy)} · ${esc(confirmed.reviewAdjudication.decidedAt)}<br>授权来源：${esc(confirmed.reviewAdjudication.authorizationSourceThreadId || '—')}<br>${esc(confirmed.reviewAdjudication.authorizationText || '')}</p>` : ''}</div>
+    <div class="review-panel"><h3>指定版本操作</h3><p class="field-note">确认只针对当前任务、当前目标与这个候选版本；办公室不会自动应用、提交或合并。</p>${preparationFailureStatus}${reviewRoundStatus}${reviewEvidence}<div class="button-stack">${reconnectReviewAction}${reviewRoundAction}${cancelReviewRoundAction}${reviewAction}${canConfirm ? '<button class="primary-button" type="button" data-action="native-confirm">确认这个指定版本</button>' : !confirmed && !canAdjudicateConfirm ? '<button class="secondary-button" type="button" disabled>审阅通过且确认接口可用后才能确认</button>' : ''}${patchHref ? `<a class="export-link" href="${esc(patchHref)}">下载已确认 patch</a>` : ''}${zipHref ? `<a class="export-link" href="${esc(zipHref)}">下载完整工具 ZIP</a>` : ''}${native.links.nativeTask ? `<a class="secondary-button" href="${esc(native.links.nativeTask)}">打开原生任务</a>` : ''}</div>${confirmed ? `<p class="field-note">approval ${esc(confirmed.approvalId || '—')}<br>artifact version ${esc(confirmed.artifactVersion ?? '—')}<br>goal ${esc(confirmed.goalVersionId || '—')}</p>` : ''}</div>${adjudicationForm}${previewPanel}
+    <div class="review-panel"><h3>继续修改</h3><p class="field-note">普通补充与正式退回分开保存。正式退回会保留当前版本和修改原因；能否继续由原任务状态、剩余时间和调用额度决定，不会自动确认成果，也不会用聊天输入冒充。</p>${native.native?.actions.canRevise && candidate ? `<form data-native-revise data-revise-binding="${esc(binding || '')}"><label>退回修改原因（最多 2000 UTF-8 字节）<textarea name="reason" rows="5" maxlength="2000" required placeholder="准确写出这个版本需要修改什么"></textarea></label><button class="danger-button" type="submit">退回这个指定版本</button></form>` : native.native?.actions.canRevise ? '<p class="field-note">先读取并核对当前版本的真实差异，才能正式退回。</p>' : ''}<div class="button-stack">${native.native?.actions.canInstructions ? '<button class="secondary-button" type="button" data-open-dialog="suggestion-dialog">补充普通工作要求</button>' : ''}${native.native?.actions.canMaterials ? '<button class="secondary-button" type="button" data-open-dialog="material-dialog">加入文本材料</button>' : ''}<button class="secondary-button" type="button" data-view-target="desk">查看任务状态</button></div></div>
   </aside></div>`);
 }
 
@@ -1601,6 +1985,7 @@ function renderAll() {
   renderReview();
   if ($('#coworker-dialog').open) renderCoworkerConversation();
   if (state.view === 'connections') renderConnections();
+  if (state.projectSidebarOpen || !$('#project-dialogue-panel').hidden) renderProjectChat();
   managePolling();
 }
 
@@ -1728,6 +2113,20 @@ function openDialog(id, functionId = '') {
   }
   const dialog = document.getElementById(id);
   if (id === 'task-dialog') setTaskFunction(functionId);
+  if (id === 'suggestion-dialog' && nativeMode()) {
+    const product = state.nativeProduct;
+    if (!product?.native?.actions?.canInstructions || !product.links?.actions) {
+      announce('后台没有确认当前任务可以补充工作要求。', 'error');
+      return;
+    }
+    const form = $('#suggestion-form');
+    const binding = projectTaskBinding(product);
+    form.dataset.nativeInstructionBinding = binding;
+    try {
+      const draft = JSON.parse(localStorage.getItem(nativeInstructionDraftKey(product)) || 'null');
+      form.elements.text.value = typeof draft?.text === 'string' ? draft.text : '';
+    } catch { form.elements.text.value = ''; }
+  }
   if (dialog && !dialog.open) dialog.showModal();
 }
 
@@ -1865,9 +2264,21 @@ document.addEventListener('click', async (event) => {
     if (action === 'native-confirm') {
       const native = state.nativeProduct;
       const artifact = native?.artifact;
-      if (!native?.current || !native.native?.actions.canConfirm || !artifact?.id || !artifact.review?.passed || artifact.confirmation || !native.links.confirm || !nativeCandidateMatches(native)) throw new Error('请先读取并核对当前版本的真实差异与文件，再确认候选。');
+      const reviewedCandidate = state.nativeCandidate;
+      if (!native?.current || !native.native?.actions.canConfirm || !artifact?.id || !artifact.review?.passed
+        || !artifact.review.id || !/^[a-f0-9]{64}$/.test(artifact.review.fullOutputSha256 || '')
+        || reviewedCandidate?.review?.id !== artifact.review.id
+        || reviewedCandidate.review.fullOutputSha256 !== artifact.review.fullOutputSha256
+        || !reviewedCandidate.review.text?.trim()
+        || artifact.confirmation || !native.links.confirm || !nativeCandidateMatches(native)) throw new Error('请先读取并核对当前版本的真实差异与文件，再确认候选。');
       if (!window.confirm(`只确认 OpenOffice 候选版本 ${artifact.version ?? '—'} 吗？\n\n这不会自动应用、提交、合并或发布。`)) return;
-      await api(native.links.confirm, { method: 'POST', body: JSON.stringify({ artifactId: artifact.id, version: artifact.version }) });
+      await api(native.links.confirm, { method: 'POST', body: JSON.stringify({
+        artifactId: artifact.id, version: artifact.version, expectedTaskId: native.taskId,
+        expectedGoalVersionId: native.goalVersionId, expectedExecutionId: native.execution?.id,
+        expectedRegistrySha256: native.product?.registrySha256, expectedCandidateSha256: artifact.candidateSha256,
+        expectedDiffSha256: artifact.diffSha256,
+        expectedReviewId: artifact.review.id, expectedReviewFullOutputSha256: artifact.review.fullOutputSha256,
+      }) });
       await refreshNativeProduct({ silent: false });
       announce('OpenOffice 指定版本已确认；现在可以下载同一份已确认 patch。');
       return;
@@ -1896,9 +2307,10 @@ document.addEventListener('click', async (event) => {
       }
       if (!window.confirm(`Reviewer 的 FAIL 会原样保留。你将仅对候选 v${artifact.version} 记录人工裁决并确认，不会把审阅改为 PASS。继续吗？\n\n裁决理由：${reason}`)) return;
       await api(native.links.confirm, { method: 'POST', body: JSON.stringify({ artifactId: artifact.id, version: artifact.version,
-        expectedTaskId: native.taskId, expectedExecutionId: native.execution?.id,
+        expectedTaskId: native.taskId, expectedGoalVersionId: native.goalVersionId,
+        expectedExecutionId: native.execution?.id, expectedRegistrySha256: native.product?.registrySha256,
         expectedReviewId: review.id, expectedReviewFullOutputSha256: review.fullOutputSha256,
-        expectedCandidateSha256: artifact.candidateSha256, adjudicationReason: reason,
+        expectedCandidateSha256: artifact.candidateSha256, expectedDiffSha256: artifact.diffSha256, adjudicationReason: reason,
         authorizationSourceThreadId, authorizationText }) });
       await refreshNativeProduct({ silent: false });
       announce('人工裁决和确认已记录；原始 Reviewer FAIL 仍保留。');
@@ -1925,7 +2337,12 @@ document.addEventListener('click', async (event) => {
           ? evidenceDraft.text.trim() : '';
         if (new TextEncoder().encode(evidence).length > 512) throw new Error('补充审阅证据不能超过 512 UTF-8 字节。');
         if (evidence && native.native?.reviewRound?.status !== 'open') throw new Error('补充审阅证据仅能用于已开启的同候选审阅轮。');
-        await postNativeAction('review', evidence ? { reviewEvidence: evidence } : {});
+        const reviewRequestKey = `${binding}|${currentRoundId || ''}|${evidence}`;
+        if (state.nativeReviewRequest?.key !== reviewRequestKey) {
+          state.nativeReviewRequest = { key: reviewRequestKey, requestId: globalThis.crypto?.randomUUID?.() || `review-${Date.now()}-${Math.random().toString(16).slice(2)}` };
+        }
+        await postNativeAction('review', { ...(evidence ? { reviewEvidence: evidence } : {}), requestId: state.nativeReviewRequest.requestId });
+        state.nativeReviewRequest = null;
         if (state.nativeReviewEvidenceDraft?.binding === binding && state.nativeReviewEvidenceDraft?.roundId === currentRoundId) {
           state.nativeReviewEvidenceDraft = null;
         }
@@ -1951,8 +2368,13 @@ document.addEventListener('click', async (event) => {
       state.nativeReviewRoundPending = { binding };
       renderReview();
       try {
-        const result = await postNativeAction('open_review_round');
-        announce(`已为同一候选开启一次只读后续审阅轮，截止 ${result.deadlineAt || '20 分钟内'}；尚未调用模型。`);
+        if (state.nativeReviewRoundRequest?.binding !== binding) {
+          state.nativeReviewRoundRequest = { binding,
+            requestId: globalThis.crypto?.randomUUID?.() || `review-round-${Date.now()}-${Math.random().toString(16).slice(2)}` };
+        }
+        const result = await postNativeAction('open_review_round', { requestId: state.nativeReviewRoundRequest.requestId });
+        state.nativeReviewRoundRequest = null;
+        announce(`已为同一候选开启一次只读后续审阅轮，最多 ${result.maxModelCalls ?? 1} 次 CLI 调用，截止 ${result.deadlineAt || '按后台状态显示'}；尚未调用模型。`);
       } catch (error) {
         if (state.nativeReviewRoundPending?.binding === binding) state.nativeReviewRoundPending = null;
         throw error;
@@ -2011,7 +2433,8 @@ document.addEventListener('click', async (event) => {
       return;
     }
     if (action === 'native-cancel') {
-      await requestNativeCancel();
+      const control = event.target.closest('[data-action="native-cancel"]');
+      await requestNativeCancel(control?.dataset.nativeReviewBinding || null);
       return;
     }
     if (action === 'native-resume') {
@@ -2223,12 +2646,24 @@ document.addEventListener('submit', async (event) => {
       announce('当前候选没有可核对的正式退回资格。', 'error'); return;
     }
     if (!reason || new TextEncoder().encode(reason).length > 2000) { announce('退回原因需为 1–2000 个 UTF-8 字节；请精简后重试，当前输入已保留。', 'error'); return; }
-    if (!window.confirm(`退回 OpenOffice 候选版本 ${artifact.version ?? '—'} 并要求按这条原因修改吗？\n\n旧候选和审阅会保留为历史，当前执行绑定需要重新准备。`)) return;
+    if (!window.confirm(`退回 OpenOffice 候选版本 ${artifact.version ?? '—'} 并要求按这条原因修改吗？\n\n旧候选和审阅会保留。若当前执行仍有效且预算允许，可在同一执行中继续；否则需另行准备新执行。`)) return;
     try {
-      await postNativeAction('revise', { expectedArtifactId: artifact.id, expectedArtifactVersion: artifact.version, reason });
+      nativeReviseForm.dataset.requestId ||= crypto.randomUUID();
+      const result = await postNativeAction('revise', {
+        requestId: nativeReviseForm.dataset.requestId,
+        expectedExecutionId: native.execution.id,
+        expectedRegistrySha256: native.product.registrySha256,
+        expectedScopeFingerprint: native.product.workspaceScopeFingerprint,
+        expectedArtifactId: artifact.id,
+        expectedArtifactVersion: artifact.version,
+        expectedCandidateSha256: artifact.candidateSha256,
+        reason,
+      });
       state.nativeCandidate = null;
       state.nativeCandidateError = null;
-      announce('已正式退回当前指定版本；原因已保存，下一轮必须按更新后的输入重新准备。');
+      announce(result.canContinue
+        ? '已正式退回当前版本；它已绑定当前执行，可按剩余预算继续修订。'
+        : '已正式退回当前版本并保留记录；当前执行不具备安全续改资格，如需继续请明确准备新执行。');
     } catch (error) { announce(error.message, 'error'); }
     return;
   }
@@ -2442,19 +2877,66 @@ $('#task-form').addEventListener('submit', async (event) => {
   }
 });
 
+$('#suggestion-form').addEventListener('input', (event) => {
+  if (event.target.name !== 'text' || !nativeMode() || !state.nativeProduct) return;
+  const binding = $('#suggestion-form').dataset.nativeInstructionBinding;
+  if (!binding) return;
+  const key = nativeInstructionDraftKeyForBinding(binding);
+  try {
+    const previous = JSON.parse(localStorage.getItem(key) || 'null');
+    const requestId = previous?.text === event.target.value ? previous.requestId || null : null;
+    localStorage.setItem(key, JSON.stringify({ text: event.target.value, requestId }));
+  } catch { /* The form remains the in-page draft if storage is unavailable. */ }
+});
+
 $('#suggestion-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const element = event.currentTarget;
   const body = Object.fromEntries(new FormData(element));
   if (nativeBlocked()) { announce('OpenOffice 状态不可核对，不能提交工作要求。', 'error'); return; }
   if (nativeMode()) {
-    if (!state.nativeProduct?.native?.actions.canInstructions) { announce('后台没有确认当前任务可以补充工作要求。', 'error'); return; }
+    const product = state.nativeProduct;
+    const binding = projectTaskBinding(product);
+    const formBinding = element.dataset.nativeInstructionBinding;
+    if (formBinding !== binding) {
+      if (formBinding) {
+        try { localStorage.setItem(nativeInstructionDraftKeyForBinding(formBinding), JSON.stringify({ text: String(body.text || ''), requestId: null })); } catch { /* Keep the visible input if storage is unavailable. */ }
+      }
+      announce('当前任务已变化；这条草稿保留在原任务下，没有提交。', 'error');
+      return;
+    }
+    if (!product?.native?.actions?.canInstructions || !product.links?.actions) {
+      announce('当前任务已变化或后台未开放工作要求保存；草稿保留，没有提交。', 'error');
+      return;
+    }
+    const text = String(body.text || '').trim();
+    if (!text) { announce('请先填写工作要求。', 'error'); return; }
+    const draftKey = nativeInstructionDraftKeyForBinding(formBinding);
+    let requestId = null;
     try {
-      await postNativeAction('instructions', { text: String(body.text || '').trim() });
-      element.reset();
-      element.closest('dialog').close();
-      announce('工作要求已写入当前原生任务；它不会静默替换目标。');
-    } catch (error) { announce(error.message, 'error'); }
+      const draft = JSON.parse(localStorage.getItem(draftKey) || 'null');
+      if (draft?.text === text && typeof draft.requestId === 'string') requestId = draft.requestId;
+    } catch { /* Generate a request identity below. */ }
+    requestId ||= newRequestId();
+    try { localStorage.setItem(draftKey, JSON.stringify({ text, requestId })); } catch { /* Preserve the live form value. */ }
+    const submit = element.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      await postNativeAction('instructions', { text, requestId });
+      try {
+        const draft = JSON.parse(localStorage.getItem(draftKey) || 'null');
+        if (draft?.text === text && draft?.requestId === requestId) localStorage.removeItem(draftKey);
+      } catch { /* The server accepted the instruction; cleanup is best effort. */ }
+      if (projectTaskBinding(state.nativeProduct) === binding) {
+        element.reset();
+        element.closest('dialog').close();
+        announce('工作要求已保存到当前原生任务；尚未执行。');
+      }
+    } catch (error) {
+      announce(`工作要求未确认保存，草稿已保留；尚未执行。${error.message}`, 'error');
+    } finally {
+      if (projectTaskBinding(state.nativeProduct) === binding) submit.disabled = !state.nativeProduct?.native?.actions?.canInstructions;
+    }
     return;
   }
   if (!body.classification) delete body.classification;
@@ -2485,7 +2967,13 @@ $('#coworker-form').addEventListener('submit', async (event) => {
       element.querySelector('[type="submit"]').disabled = true;
       $('#coworker-message').disabled = true;
       $('#coworker-intent').disabled = true;
-      await postNativeAction('chat', { text, agentId: chat.member.id });
+      if (state.nativeChatRequestText !== text || !state.nativeChatRequestId) {
+        state.nativeChatRequestText = text;
+        state.nativeChatRequestId = globalThis.crypto?.randomUUID?.() || `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+      await postNativeAction('chat', { text, agentId: chat.member.id, requestId: state.nativeChatRequestId });
+      state.nativeChatRequestId = null;
+      state.nativeChatRequestText = null;
       $('#coworker-message').value = '';
       renderCoworkerConversation();
       announce('讨论已绑定当前任务、目标与真实同事；它不会自动变成工作交代。');
@@ -2659,6 +3147,8 @@ window.addEventListener('keydown', (event) => {
 
 window.addEventListener('irixi:office-ready', () => { state.sceneReady = true; syncSceneFrame(); });
 function openCoworkerConversation(detail) {
+  state.coworker = detail;
+  if (nativeMode()) { void openCoworkerProjectConversation(detail); return; }
   const dialog = $('#coworker-dialog');
   const officeRole = detail.stationRole || detail.officeRole || detail.role;
   const assigned = !detail.dynamic ? state.task?.team?.agents?.find((agent) => agent.stationRole === detail.role && agent.goalVersionId === activeGoal()?.id) : null;
@@ -2678,6 +3168,30 @@ function openCoworkerConversation(detail) {
     history.scrollTop = history.scrollHeight;
     $('#coworker-message').focus();
   });
+}
+
+async function openCoworkerProjectConversation(detail) {
+  const functionId = officeFunctionForCoworker(detail);
+  state.projectChatCoworker = detail;
+  state.projectChatFunctionId = functionId;
+  state.projectChatTaskId = null;
+  state.projectChatProjectId = '';
+  state.projectChatExpanded = false;
+  $('#project-dialogue-panel').hidden = true;
+  $('#project-dialogue-panel').classList.remove('is-expanded');
+  $('#project-sidebar').hidden = false;
+  state.projectSidebarOpen = true;
+  $('.office-shell').classList.add('has-sidebar');
+  await loadProjectChatData();
+  const target = functionId
+    ? nativeCoworkerTask(state.nativeTaskHistory.tasks, functionId, state.nativeTaskHistory.activeTaskId)
+    : null;
+  if (target) { await openProjectChatTask(target.id); return; }
+  $('#project-sidebar').hidden = true;
+  state.projectSidebarOpen = false;
+  $('.office-shell').classList.remove('has-sidebar');
+  $('#project-dialogue-panel').hidden = false;
+  renderProjectChat();
 }
 
 window.addEventListener('irixi:coworker', (event) => openCoworkerConversation(event.detail));
@@ -2730,3 +3244,20 @@ document.addEventListener('click', async (event) => {
 loadTasks()
   .then(() => loadScene())
   .catch((error) => announce(`Irixi 无法读取当前产品状态：${error.message}`, 'error'));
+
+attachProjectMapHotspot({
+  shell: $('.office-shell'),
+  sceneProvider: () => window.irixiOffice?.scene,
+  onActivate: () => {
+    state.projectChatFunctionId = null;
+    state.projectChatCoworker = null;
+    state.projectSidebarOpen = !state.projectSidebarOpen;
+    $('#project-sidebar').hidden = !state.projectSidebarOpen;
+    $('.office-shell').classList.toggle('has-sidebar', state.projectSidebarOpen);
+    if (state.projectSidebarOpen) {
+      $('#project-dialogue-panel').hidden = true;
+      loadProjectChatData();
+    }
+  },
+});
+bindProjectOverlay();

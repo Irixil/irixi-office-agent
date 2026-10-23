@@ -1,5 +1,12 @@
 # Third-party notices
 
+## OmO native harness integration
+
+- Upstream project: <https://github.com/code-yeongyu/oh-my-openagent>
+- The iRIXI source snapshot contains a local integration and provider bridge targeting OmO `5.1.40`; it does not vendor or redistribute OmO source, binaries, runtime packages, or installation metadata.
+- OmO is an external prerequisite. Review the upstream repository's current `LICENSE.md` and release terms before obtaining or redistributing its software.
+- The controlled model-decision bridge targets an existing Desktop Codex CLI and does not redistribute that executable.
+
 This stage source snapshot includes the previously adapted local OpenOffice and agent-office source under `native/`. Their original LICENSE files and existing attribution are retained. Historical integration notes below describe their dated implementation scope.
 
 ## 2026-10-19 source preview

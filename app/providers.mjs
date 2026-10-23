@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { resolveCodexRuntime } from './codex-runtime.mjs';
 import { activeGoal, artifactInputIsCurrent, currentInstructionIds, deriveTaskContinuity } from './core.mjs';
 import { assertProjectReviewInputReady, demoResearch, sourcePackets } from './execution.mjs';
 import { materialContext } from './material-applicability.mjs';
@@ -369,6 +370,7 @@ function conversationPrompt(task, role, message) {
 }
 
 async function executableExists(executable) {
+  if (typeof executable !== 'string' || !executable) return false;
   if (executable.includes('/')) {
     try { await fs.access(executable); return true; } catch { return false; }
   }
@@ -379,11 +381,11 @@ async function executableExists(executable) {
   });
 }
 
-function runProcess(command, args, { cwd, input, timeoutMs = CODEX_TIMEOUT_MS, signal } = {}) {
+function runProcess(command, args, { cwd, input, timeoutMs = CODEX_TIMEOUT_MS, signal, codexHome, env = process.env, spawnProcess = spawn } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       cwd,
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...env, ...(codexHome ? { CODEX_HOME: codexHome } : {}), NO_COLOR: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
@@ -418,25 +420,38 @@ function runProcess(command, args, { cwd, input, timeoutMs = CODEX_TIMEOUT_MS, s
   });
 }
 
-function codexExecArgs(schemaPath, outputPath, runRoot) {
+export function codexExecArgs(schemaPath, outputPath, runRoot, { model = CODEX_MODEL, json = false, cwd = runRoot, sandbox = 'read-only', writableDirs = [], developerWritable = false, developerCodeModeHost = false, disableCodeMode = false, disableMcp = false, reasoningEffort = null, developerInstructions = null } = {}) {
   return [
-    'exec', '-', '--ephemeral', '--sandbox', 'read-only', '--skip-git-repo-check',
-    '--model', CODEX_MODEL,
-    '--ignore-user-config', '--ignore-rules', '-c', 'web_search="disabled"', '--output-schema', schemaPath,
+    'exec', '-', '--ephemeral', '--sandbox', sandbox, '--skip-git-repo-check',
+    '--model', model,
+    '--ignore-user-config', '--ignore-rules', '-c', 'web_search="disabled"',
+    ...(typeof developerInstructions === 'string' && developerInstructions.length
+      ? ['-c', `developer_instructions=${JSON.stringify(developerInstructions)}`] : []),
+    ...(reasoningEffort ? ['-c', `model_reasoning_effort="${reasoningEffort}"`] : []),
+    ...(disableMcp ? ['-c', 'mcp_servers={}'] : []), '--output-schema', schemaPath,
     '--enable', 'skip_host_skill_discovery',
-    '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins',
+    ...(developerWritable ? [] : ['--disable', 'shell_tool']), '--disable', 'unified_exec', '--disable', 'apps', '--disable', 'plugins',
     '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'browser_use_full_cdp_access',
     '--disable', 'computer_use', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'skill_search',
-    '--disable', 'code_mode_host', '--disable', 'image_generation', '--disable', 'in_app_browser',
+    ...(developerCodeModeHost ? ['--enable', 'code_mode_host'] : ['--disable', 'code_mode_host']), '--disable', 'image_generation', '--disable', 'in_app_browser',
     '--disable', 'workspace_dependencies', '--disable', 'tool_suggest', '--disable', 'tool_call_mcp_elicitation',
-    '--color', 'never', '-o', outputPath, '-C', runRoot,
+    ...(disableCodeMode ? ['-c', 'features.code_mode.enabled=false'] : []),
+    ...(disableMcp ? ['--disable', 'mcp_2026_07_28', '--disable', 'skill_mcp_dependency_install'] : []),
+    ...writableDirs.flatMap((dir) => ['--add-dir', dir]),
+    ...(json ? ['--json'] : []),
+    '--color', 'never', '-o', outputPath, '-C', cwd,
   ];
 }
 
 export function createProviders({ projectRoot, store }) {
   const schemaRoot = path.join(projectRoot, 'app', 'schemas');
-  const codexPath = process.env.IRIXI_CODEX_PATH || path.join(os.homedir(), '.local', 'bin', 'codex');
+  const codexRuntime = resolveCodexRuntime({ realUserHome: os.userInfo().homedir });
+  const codexPath = codexRuntime.executable;
   const connectionFile = path.join(store.root, '.connections.json');
+
+  const unavailableCodexMessage = () => codexRuntime.executableError || (codexRuntime.executableSource === 'IRIXI_CODEX_PATH'
+    ? 'IRIXI_CODEX_PATH 指定的 Codex CLI 不存在或不可执行；未切换到其他运行时。'
+    : 'Desktop 自带 Codex CLI 不存在或不可执行；未切换到其他运行时。');
 
   async function readConnectionState() {
     try { return JSON.parse(await fs.readFile(connectionFile, 'utf8')); }
@@ -451,7 +466,7 @@ export function createProviders({ projectRoot, store }) {
   }
 
   async function runCodex(task, schemaName, prompt, label, signal, configuredTimeout = CODEX_TIMEOUT_MS, respectExecutionDeadline = true) {
-    if (!(await executableExists(codexPath))) throw new Error('没有找到 Codex CLI，请先在连接中心检查真实模型。');
+    if (!(await executableExists(codexPath))) throw new Error(unavailableCodexMessage());
     const runRoot = path.join(store.taskDir(task.id), 'runs', `${Date.now()}-${label}`);
     await fs.mkdir(runRoot, { recursive: true });
     const outputPath = path.join(runRoot, 'result.json');
@@ -459,7 +474,7 @@ export function createProviders({ projectRoot, store }) {
     const args = codexExecArgs(schemaPath, outputPath, runRoot);
     await fs.writeFile(path.join(runRoot, 'request.txt'), prompt, { mode: 0o600 });
     const timeoutMs = providerTimeoutMs(task, configuredTimeout, respectExecutionDeadline);
-    await runProcess(codexPath, args, { cwd: runRoot, input: prompt, signal, timeoutMs });
+    await runProcess(codexPath, args, { cwd: runRoot, input: prompt, signal, timeoutMs, codexHome: codexRuntime.codexHome });
     const raw = await fs.readFile(outputPath, 'utf8');
     if (raw.length > MAX_PROVIDER_OUTPUT) throw new Error('真实模型返回内容超过安全上限。');
     try {
@@ -494,9 +509,9 @@ export function createProviders({ projectRoot, store }) {
     },
     async verifyCodex() {
       const available = await executableExists(codexPath);
-      if (!available) return { ok: false, message: '没有找到 Codex CLI。' };
+      if (!available) return { ok: false, message: unavailableCodexMessage() };
       try {
-        const { stdout } = await runProcess(codexPath, ['--version'], { cwd: projectRoot, input: '', timeoutMs: 10_000 });
+        const { stdout } = await runProcess(codexPath, ['--version'], { cwd: projectRoot, input: '', timeoutMs: 10_000, codexHome: codexRuntime.codexHome });
         const version = stdout.trim() || 'Codex CLI 可运行。';
         const checkedAt = new Date().toISOString();
         await writeConnectionState({ ...(await readConnectionState()), codexCli: { ...(await readConnectionState()).codexCli, runtimeVerified: true, runtimeVerifiedAt: checkedAt, version } });
@@ -591,4 +606,4 @@ export function createProviders({ projectRoot, store }) {
   };
 }
 
-export const __test = { demoResult, researchPrompt, providerPrompt, reviewPrompt, conversationPrompt, plannerPrompt, projectScopePrompt, workPrompt, codexExecArgs, timeoutForWorkItem, providerTimeoutMs };
+export const __test = { demoResult, researchPrompt, providerPrompt, reviewPrompt, conversationPrompt, plannerPrompt, projectScopePrompt, workPrompt, codexExecArgs, timeoutForWorkItem, providerTimeoutMs, runProcess };

@@ -15,30 +15,21 @@ Open [localhost:3847](http://127.0.0.1:3847). Keep the demo provider selected, c
 
 The demo provider does not use a real model. This route exercises the older desktop backend, rather than the native product development chain. Stop the server with Ctrl+C. Existing tasks are stored in `data/tasks/`; use a separate checkout for experiments.
 
-## Native product development setup
+## Current OmO-backed integration
 
-```text
-app/                                             Desktop and legacy backend
-art/office-playable-v1/                           Runtime office artwork
-native/upstream-mac-trial-20261004/
-  sources/OpenOffice/                            Adapted native agent runtime
-  sources/agent-office/                          Adapted office source
-  integration-slice-20261004/
-    authority/                                   Input, scope, review and delivery guards
-    product/                                     Product entry and desktop adapters
-```
+The current code path is `app/public/` → `omo-pilot/server.mjs` → OmO 5.1.40 native RPC → the constrained provider bridge → an existing Desktop Codex CLI. OmO owns the native tool loop; the bridge does not replace it with a separate executor. The older OpenOffice integration is retained as source and for the legacy/demo route.
 
-The native entry requires the desktop dependencies, dependencies and compiled outputs for the bundled upstream workspaces, an existing authenticated Codex executable for real inference, and a local trusted project catalogue. That catalogue binds canonical paths, allowed files, fixed checks, roles, and execution limits. Original runtime scopes and approvals are not included.
+Install Node.js 24+ dependencies with `npm ci`, then run `npm start` to open the local server at [127.0.0.1:3848](http://127.0.0.1:3848). Starting the server does not make a model call. A real project run also requires a compatible local OmO 5.1.40 installation, its runtime modules, an existing Desktop Codex CLI, and a trusted local project catalogue that binds paths, allowed files, fixed checks, roles, and limits. The public snapshot does not include these installations, credentials, project registrations, or approvals. `IRIXI_CODEX_PATH` may select an existing Desktop Codex CLI where supported; the bridge does not silently fall back to a global Codex executable.
 
-Follow each upstream workspace's package scripts and README to prepare dependencies. This publication has not revalidated a complete clean build. `IRIXI_CODEX_PATH` can select an existing executable where supported.
+OmO's source and license are maintained by its upstream project; this repository includes only the iRIXI integration and provider bridge, not the OmO distribution. Review the upstream terms before installing or distributing it.
 
-After those prerequisites are prepared:
+The historical OpenOffice native setup is retained for compatibility and separate development checks:
 
 ```bash
 npm run start:zero
 ```
 
-This launches the native product entry with model execution disabled. For explicitly authorized real-model work, the normal entry is `npm start`. Open [the native desktop](http://127.0.0.1:3847/?backend=openoffice). `IRIXI_NATIVE_ROOT` or `--native-root` can select an existing canonical native integration directory; otherwise the public launcher resolves the bundled source tree.
+This older zero-model entry may require the original upstream workspaces and is not the current OmO path. The public preview has not verified a clean-machine OmO installation or end-to-end execution.
 
 The optional local XERJ index uses an existing installation. The launcher does not download it; when unavailable, the desktop continues with local task and memory storage. Search indexing and full cross-machine memory behavior are separate validation items.
 

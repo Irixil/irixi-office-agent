@@ -78,6 +78,16 @@
           </aside>
         </details>
         <div class="movement-help" aria-hidden="true">WASD / 方向键移动 · 点击同事交谈 · Esc 取消行走</div>
+        <aside id="project-sidebar" class="project-sidebar" aria-label="项目与对话侧栏" hidden>
+          <header class="sidebar-header"><h2>项目与对话</h2><button class="text-button" type="button" data-project-sidebar-close>收起</button></header>
+          <section class="sidebar-section" aria-labelledby="project-list-heading"><h3 id="project-list-heading">项目</h3><div id="project-list" class="sidebar-list"></div></section>
+          <section class="sidebar-section recent-section" aria-labelledby="recent-list-heading"><div class="sidebar-section-heading"><h3 id="recent-list-heading">最近对话</h3></div><div id="recent-list" class="sidebar-list"></div></section>
+          <p id="storage-note" class="storage-note" role="status">这里显示本机保存的历史，不会生成虚构回复。</p>
+        </aside>
+        <aside id="project-dialogue-panel" class="dialogue-panel" aria-label="项目对话" hidden>
+          <header class="dialogue-header project-dialogue-header"><div class="coworker-heading"><h1 id="project-dialogue-title">项目对话</h1><p id="project-dialogue-status" class="coworker-status">选择项目和任务后查看真实记录。</p></div><div class="header-actions"><button class="text-button" type="button" data-project-dialogue-list>切换项目</button><button class="text-button" type="button" data-project-dialogue-expand>展开对话</button><button class="close-button" type="button" data-project-dialogue-close aria-label="回到办公室">×</button></div></header>
+          <div class="dialogue-layout"><section class="conversation-column" aria-label="历史消息和项目记录"><div id="project-chat-history" class="message-list" aria-live="polite"></div><details id="project-records" class="project-progress"><summary>查看项目记录</summary><div id="project-record-content" class="project-progress-body"></div></details><form id="project-instructions-form" class="message-form"><label class="visually-hidden" for="project-instructions-text">交代下一步</label><textarea id="project-instructions-text" rows="2" maxlength="2000" placeholder="说说下一步希望完成什么…" required></textarea><div class="composer-footer"><span id="project-instructions-status" class="field-note">保存后不会立即执行。</span><button class="send-button" type="submit">保存</button></div></form></section></div>
+        </aside>
       </div>
     </section>
 
@@ -159,7 +169,7 @@
       <label>这次要做什么<select id="coworker-intent" name="intent"><option value="assign">交代工作或补充要求</option><option value="progress">询问当前进度</option><option value="revise">要求修改当前成果</option></select></label>
       <label>交代事项<textarea id="coworker-message" name="text" rows="4" maxlength="2000" required placeholder="写下你希望这位同事注意的事项"></textarea></label>
       <input type="hidden" name="role">
-      <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>结束交谈（不取消模型）</button><button class="danger-button" id="cancel-conversation-button" type="button" hidden>取消本次模型回复</button><button class="primary-button" type="submit">发送</button></div>
+      <div class="dialog-actions"><button class="secondary-button" type="button" data-coworker-expand>展开对话</button><button class="secondary-button" type="button" data-close-dialog>回到办公室</button><button class="danger-button" id="cancel-conversation-button" type="button" hidden>取消本次模型回复</button><button class="primary-button" type="submit">发送</button></div>
     </form>
   </dialog>
 

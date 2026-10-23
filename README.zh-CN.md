@@ -6,7 +6,7 @@
 
 **[English](README.md) · [开始体验](docs/getting-started.md) · [项目实例](docs/showcase.md) · [当前进度](STAGE_STATUS.md) · [参与贡献](CONTRIBUTING.md)**
 
-iRIXI 是一个正在开发的可视化个人 AI 助手。猫头鹰协调工作，动物同事呈现各自的项目职能和任务状态。办公室下方接入 OpenOffice 的原生协作、模型会话、受管工作树和预览能力。
+iRIXI 是一个正在开发的可视化个人 AI 助手。猫头鹰协调工作，动物同事呈现各自的项目职能和任务状态。当前原生 Harness 使用 OmO，通过原生 RPC 工具循环和受限 Provider 桥接调用已安装的 Desktop Codex CLI。
 
 ![iRIXI 个人 AI 办公室，猫头鹰协调员与动物同事](docs/media/irixi-office.gif)
 
@@ -24,9 +24,9 @@ iRIXI 是一个正在开发的可视化个人 AI 助手。猫头鹰协调工作�
 
 前台同事分别承接学习、小工具、小游戏、Agent 开发和档案记忆。它们共用任务后台；实际开发中的 Lead、Developer 和 Reviewer 是原生执行角色。
 
-## 最近跑通的一条实际链路
+## 历史示例：文章学习链路
 
-在已有文章学习项目里提出“下载完整报告”，Lead 规划后补充“另下载仅含薄弱或未检验项的待复习清单”。原生团队经过开发、独立审阅与修正，明确确认后实际下载两份 Markdown，并核对历史切换、会话恢复和刷新续接。
+这条文章学习链路使用的是较早的 OpenOffice 路线，不代表当前 OmO 流程的验收结果。当时在已有项目里提出“下载完整报告”，Lead 规划后补充“另下载仅含薄弱或未检验项的待复习清单”。原生团队经过开发、独立审阅与修正，明确确认后实际下载两份 Markdown，并核对历史切换、会话恢复和刷新续接。
 
 这条链路在本地、有人监督的环境中完成验证。项目还在持续开发，当前支持范围见 [项目进度](STAGE_STATUS.md)。
 
@@ -43,7 +43,9 @@ npm run start:legacy
 
 打开 [localhost:3847](http://127.0.0.1:3847)，保持演示提供者，用虚构材料建立任务。这个入口适合了解办公室和任务界面，使用的是历史桌面后台。
 
-原生多 Agent 开发链使用 `npm start`；开发零模型入口为 `npm run start:zero`。原生链还需要准备上游工作区、本机 Codex 和可信项目登记，公共源码不携带原用户的运行授权。请先看 [安装与运行说明](docs/getting-started.md)。
+当前 OmO 入口使用 `npm start`，在 `127.0.0.1:3848` 启动；`npm run start:legacy` 保留旧演示后台，端口为 3847。公开源码包含 OmO 5.1.40 原生 RPC 接入和受控 Desktop Codex CLI 桥接，但不包含 OmO 安装/runtime、Codex 可执行文件、凭据、个人项目目录或本机审批。真实执行还需要本机已有这些依赖并登记可信项目范围。`npm run start:zero` 保留给早期原生设置，不是当前 OmO 入口。
+
+**OmO 当前仍是开发预览；全新机器安装和真实执行尚未验证。** 请先看[安装与运行说明](docs/getting-started.md)。启动服务本身不会调用模型；项目执行需要用户另行操作。
 
 ## 当前重点
 

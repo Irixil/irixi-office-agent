@@ -61,6 +61,7 @@ test('真实模型子进程显式禁用内置网页搜索并保留只读沙箱',
   assert.deepEqual(args.slice(args.indexOf('--sandbox'), args.indexOf('--sandbox') + 2), ['--sandbox', 'read-only']);
   assert.ok(args.includes('--ignore-user-config'));
   assert.ok(args.includes('--ignore-rules'));
+  assert.ok(args.some((arg, index) => arg === '--disable' && args[index + 1] === 'code_mode_host'));
 });
 
 test('综合交付超时按工作类型而非模型自选步骤名计算', () => {

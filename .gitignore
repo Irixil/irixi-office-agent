@@ -4,6 +4,7 @@ data/tasks/*
 .dz/
 .irixi-runtime/
 .impeccable/
+omo-pilot/runtime/
 
 # Keep local credentials, runtime data and evidence out of commits.
 node_modules

@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node app/start-native.mjs --enable-ai",
+    "start": "node omo-pilot/server.mjs",
+    "start:omo": "node omo-pilot/server.mjs",
     "start:zero": "node app/start-native.mjs --zero-model",
     "start:legacy": "node app/server.mjs",
-    "test": "node --test app/tests/*.test.mjs"
+    "test": "node --test app/tests/*.test.mjs",
+    "test:omo": "node --import ./omo-pilot/test-isolation-preload.mjs --test omo-pilot/*.test.mjs"
   },
   "engines": {
     "node": ">=24"

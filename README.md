@@ -10,7 +10,7 @@ Turn a project goal into a plan, an agent team, a reviewed deliverable, and a pl
 
 **[简体中文](README.zh-CN.md) · [See the office](#see-the-office) · [Get started](docs/getting-started.md) · [What works today](STAGE_STATUS.md) · [Contribute](CONTRIBUTING.md)**
 
-iRIXI is a visual personal AI assistant for people building and maintaining their own projects. An owl coordinates your work in a Victorian miniature office, while animal colleagues make project roles and activity visible. Underneath the scene, OpenOffice supplies native agent collaboration, model sessions, and managed worktrees.
+iRIXI is a visual personal AI assistant for people building and maintaining their own projects. An owl coordinates your work in a Victorian miniature office, while animal colleagues make project roles and activity visible. The current native harness is OmO, which coordinates work through its native RPC loop and a constrained provider bridge to an existing Desktop Codex CLI.
 
 **Early preview.** Built and exercised on selected local projects. [See the current scope →](STAGE_STATUS.md)
 
@@ -43,9 +43,9 @@ Describe a goal → Plan with the Lead → Approve the plan
 
 Requirements can change along the way. Failed reviews and earlier versions stay in the project history. A new candidate needs its own review and confirmation.
 
-### An existing project, improved in place
+### Historical example: an existing project, improved in place
 
-The latest local validation used an existing article-learning project. The request began with “download the full learning report,” then added a separate review list containing only weak or untested topics.
+This historical example used the earlier OpenOffice route; it is not evidence of the current OmO workflow. The request began with “download the full learning report,” then added a separate review list containing only weak or untested topics.
 
 - The native team planned, developed, and refined the change through independent review.
 - The confirmed version downloads the saved server record and provides both a full report and a separate review list.
@@ -68,16 +68,16 @@ npm run start:legacy
 
 Open [localhost:3847](http://127.0.0.1:3847), keep the **demo provider** selected, and create a task with synthetic material. This is the older desktop backend and is useful for exploring the office and task interface. It does not exercise the native multi-agent development chain.
 
-### Work on the native integration
+### Run the current native integration
 
-`npm start` launches the native product entry; `npm run start:zero` disables model execution for development checks. Native execution additionally needs the bundled upstream workspaces prepared, an existing Codex runtime, and a locally registered project scope. The public snapshot excludes the original user's runtime configuration and approvals.
+`npm start` launches the OmO-backed server on `127.0.0.1:3848`. `npm run start:legacy` remains the older demo backend on port 3847. The public source includes iRIXI's OmO 5.1.40 RPC integration and controlled Desktop Codex CLI bridge, but not the OmO installation, its runtime packages, Codex executable, credentials, personal project catalogue, or local approvals. Real execution requires those existing local prerequisites and a registered project scope. `npm run start:zero` is retained for the earlier native setup and is not the current OmO entry.
 
-**The native preview is currently a developer setup, with fresh-machine execution unverified.** Read the [setup guide](docs/getting-started.md) before starting it.
+**The OmO preview is a developer setup; clean-machine installation and execution are not verified.** Read the [setup guide](docs/getting-started.md) before starting it. The default server can start without making a model call; a project execution is a separate user action.
 
 ## Built around one project history
 
 - **Desktop:** JavaScript, Node.js, Phaser, and EasyStar.js.
-- **Native agents:** locally adapted [OpenOffice](https://github.com/longyangxi/OpenOffice) for team coordination, sessions, worktrees, and previews.
+- **Native agents:** [OmO](https://github.com/code-yeongyu/oh-my-openagent) 5.1.40 as the core harness; the local bridge constrains model decisions to the existing Desktop Codex CLI while OmO owns the native tool loop. Older OpenOffice source remains available for the demo/legacy route.
 - **Office interaction:** adapted scene and grid ideas from [agent-office](https://github.com/harishkotra/agent-office), with iRIXI artwork and interaction.
 - **Project continuity:** task records and local memory, plus an optional local XERJ index. This does not mean that every conversation is remembered automatically.
 - **Review and delivery:** checks bind to the current goal, inputs, scope, and candidate. Code changes are delivered as confirmed patches.

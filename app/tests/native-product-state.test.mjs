@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canCreateNativeTask, canReviewNativeCandidate, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, renderNativeMarkup, renderTaskListMarkup, safeLocalPath } from '../public/native-product-state.js';
+import { canCreateNativeTask, canReviewNativeCandidate, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeCoworkerTask, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, renderNativeMarkup, renderTaskListMarkup, safeLocalPath } from '../public/native-product-state.js';
 
 const PLAN_SHA256 = 'a'.repeat(64);
+const INSTRUCTION_SNAPSHOT_SHA256 = 'f'.repeat(64);
 
 test('办公室职能归属独立于原生执行角色', () => {
   assert.equal(officeFunctionForStation('researcher'), 'learning');
@@ -16,8 +17,28 @@ test('办公室职能归属独立于原生执行角色', () => {
   assert.equal(officeFunctionForCoworker({ officeRole: 'researcher', role: 'writer', stationRole: 'writer' }), 'learning');
 });
 
+test('NPC优先打开当前同职能任务，否则找最近已结算同职能任务，不跨职能代选', () => {
+  const tasks = [
+    { id: 'utility-old', functionId: 'utility', updatedAt: '2026-10-20' },
+    { id: 'game-recent', functionId: 'game', updatedAt: '2026-10-23' },
+    { id: 'utility-busy', functionId: 'utility', updatedAt: '2026-10-24', inFlight: true },
+  ];
+  assert.equal(nativeCoworkerTask(tasks, 'game', 'game-recent').id, 'game-recent');
+  assert.equal(nativeCoworkerTask(tasks, 'utility', 'game-recent').id, 'utility-old');
+  assert.equal(nativeCoworkerTask(tasks, 'agent', 'game-recent'), null);
+});
+
 test('把目标等用户文本写入办公室HTML前逐字符转义', () => {
   assert.equal(escapeHtml('<img src=x onerror="alert(1)">'), '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;');
+});
+
+test('原生对话历史完整保留，不按参与者或条数截断', () => {
+  const conversations = Array.from({ length: 14 }, (_, index) => ({
+    id: `conversation-${index}`, actor: index % 2 ? 'assistant' : 'user', status: 'saved', text: `历史消息 ${index}`,
+  }));
+  const product = normalizeNativeProductState(projection({ conversations }));
+  assert.equal(product.conversations.length, 14);
+  assert.equal(product.conversations[13].text, '历史消息 13');
 });
 
 function projection(overrides = {}) {
@@ -42,6 +63,65 @@ function projection(overrides = {}) {
     ...overrides,
   };
 }
+
+test('接受目标条件与原生当前阶段独立于未改写的执行账本', () => {
+  const value = normalizeNativeProductState(projection({
+    status: 'ready_to_export',
+    successCriteria: ['按已接受目标交付可审阅候选。'],
+    boundaries: ['不覆盖正式源。'],
+    execution: { id: 'execution-1', phase: 'executing', stopReason: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      phase: 'complete', sessions: [], actions: {} },
+  }));
+
+  assert.deepEqual(value.successCriteria, ['按已接受目标交付可审阅候选。']);
+  assert.deepEqual(value.boundaries, ['不覆盖正式源。']);
+  assert.equal(value.native.phase, 'complete');
+  assert.equal(value.execution.phase, 'executing');
+  assert.equal(value.status, 'ready_to_export');
+});
+
+test('execution 未提供调用记录时保持待核，不从 native sessions 重复计数', () => {
+  const missing = normalizeNativeProductState(projection({
+    execution: { id: 'execution-1', phase: 'executing', stopReason: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      sessions: [{ callOrdinal: 1, status: 'completed' }, { callOrdinal: 2, status: 'running' }], actions: {} },
+  }));
+  assert.equal(missing.execution.modelCalls, null);
+
+  const explicitNone = normalizeNativeProductState(projection({
+    execution: { id: 'execution-1', phase: 'prepared', stopReason: null, modelCalls: [] },
+  }));
+  assert.deepEqual(explicitNone.execution.modelCalls, []);
+});
+
+test('完成态产品投影保留后台登记项目供工程选择器使用', () => {
+  const project = { projectId: 'project-utility-1', label: '已登记工具', scopeFingerprint: 'f'.repeat(64),
+    allowedWritePaths: ['app.js'], checkIds: ['node-syntax-v1'], current: true };
+  const value = normalizeNativeProductState(projection({ setup: { projects: [project], selectedProject: null, selectedScope: null } }));
+  assert.deepEqual(value.setup.projects, [project]);
+});
+
+test('自动只读审阅接续授权只在目标、范围、执行和候选绑定一致时显示', () => {
+  const candidateSha256 = 'a'.repeat(64);
+  const continuation = { taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1',
+    registrySha256: 'registry-1', scopeFingerprint: 'scope-1', artifactId: 'artifact-1', artifactVersion: 1,
+    candidateSha256, authorized: true, status: 'authorized',
+    dispatchEventId: 'event-review-1', reviewRoundId: null, maxModelCalls: 1, maxDurationMs: 1200000 };
+  const current = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 1, candidateSha256, status: 'candidate', review: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      autoReviewContinuation: continuation, actions: {} },
+  }));
+  assert.equal(current.native.autoReviewContinuation.status, 'authorized');
+  const stale = normalizeNativeProductState(projection({
+    artifact: { id: 'artifact-1', version: 1, candidateSha256: 'b'.repeat(64), status: 'candidate', review: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      autoReviewContinuation: continuation, actions: {} },
+  }));
+  assert.equal(stale.native.autoReviewContinuation, null);
+  assert.throws(() => nativeActionPayload(current, 'prepare_run', { autoReviewContinuation: 'yes' }), /布尔/);
+});
 
 test('未持久化计划状态经真实归一化后不会显示为待批准', () => {
   const value = normalizeNativeProductState(projection({
@@ -207,6 +287,7 @@ test('旧执行阶段不能压过权威任务终态，但实际预留或运行�
   });
   const terminal = normalizeNativeProductState(raw({ status: 'ready_to_export', inFlight: false }));
   assert.equal(terminal.execution.phase, 'executing');
+  assert.equal(terminal.execution.bindingCurrent, false, 'a legacy execution without a current binding must not be promoted to current');
   assert.equal(terminal.taskLifecycle.status, 'ready_to_export');
   assert.equal(canCreateNativeTask(terminal), true);
 
@@ -224,6 +305,7 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
   const project = {
     projectId: 'project-live-1', label: '已登记项目', scopeFingerprint: 'scope-live-1',
     allowedWritePaths: ['src/main.ts'], checkIds: ['typecheck'], current: true,
+    allowedRoles: ['Lead', 'Senior Developer', 'Frontend Developer', 'Reviewer'], maxAgents: 4, maxModelCalls: 8,
   };
   const waiting = normalizeNativeProductState({ task, status: 'waiting_scope', execution: null, registry: null, setup: { projects: [project], selectedProject: null, selectedScope: null } });
   assert.equal(waiting.setupPending, true);
@@ -269,9 +351,56 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
     expectedGoalVersionId: task.goalVersionId,
   });
 
+  const failed = normalizeNativeProductState({
+    task, status: 'ready_to_run', taskLifecycle: { status: 'failed', inFlight: false },
+    execution: { id: 'run-current', phase: 'failed', bindingCurrent: true, deadline: '2026-10-12T01:20:00.000Z',
+      modelCalls: [{ role: 'lead', status: 'failed' }], failureReason: '工作区路由连接超时，本轮已结束。' },
+    registry: { status: 'registered', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint },
+    canPrepareRun: true,
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
+  });
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.setupStatus, 'ready_to_run');
+  assert.equal(failed.officeStatus, 'failed');
+  assert.equal(failed.execution.modelCalls.length, 1);
+  assert.equal(failed.execution.deadline, '2026-10-12T01:20:00.000Z');
+  assert.match(failed.nextStep, /本轮已停止/);
+  assert.match(failed.nextStep, /1 次调用失败/);
+  assert.match(failed.nextStep, /原截止 2026-10-12T01:20:00\.000Z 保留/);
+  assert.match(failed.nextStep, /不会自动重试/);
+  assert.doesNotMatch(failed.nextStep, /Lead|没有生成计划/);
+  assert.equal(failed.canPrepareRun, true);
+
+  const staleFailure = normalizeNativeProductState({
+    task, status: 'ready_to_run', taskLifecycle: { status: 'failed', inFlight: false },
+    execution: { id: 'run-old-goal', phase: 'failed', bindingCurrent: false, modelCalls: [{ status: 'failed' }], failureReason: '旧目标失败' },
+    canPrepareRun: true,
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
+  });
+  assert.equal(staleFailure.status, 'ready_to_run');
+  assert.notEqual(staleFailure.officeStatus, 'failed');
+  assert.equal(staleFailure.execution, null);
+
+  const unsettledFailure = normalizeNativeProductState({
+    task, status: 'ready_to_run', taskLifecycle: { status: 'failed', inFlight: true },
+    execution: { id: 'run-pending', phase: 'failed', bindingCurrent: true, modelCalls: [{ status: 'reserved' }] },
+    setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
+  });
+  assert.equal(unsettledFailure.statusLabel, '失败状态待核实');
+  assert.match(unsettledFailure.nextStep, /尚待核实/);
+  assert.doesNotMatch(unsettledFailure.nextStep, /执行失败并已结束/);
+  assert.equal(unsettledFailure.officeStatus, 'partial');
+
+  const runningWithoutBinding = normalizeNativeProductState({
+    task, status: 'ready_to_run', taskLifecycle: { status: 'executing', inFlight: true }, execution: null,
+    setup: { projects: [], selectedProject: null, selectedScope: null },
+  });
+  assert.equal(runningWithoutBinding.execution, null);
+  assert.equal(runningWithoutBinding.taskLifecycle.inFlight, true);
+
   const unavailable = normalizeNativeProductState({
     task, status: 'runtime_unavailable',
-    execution: { id: 'execution-setup-1', phase: 'planned' },
+    execution: { id: 'execution-setup-1', phase: 'planned', bindingCurrent: true },
     registry: { status: 'runtime_starting', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: 'registry-setup-1', registeredEventId: 'event-registry-1' },
     canPrepareRun: true, canReconnect: true,
     setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
@@ -294,9 +423,11 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
     expectedExecutionId: 'execution-setup-1', expectedRegistrySha256: 'registry-setup-1',
     expectedArtifactId: 'artifact-setup-1', expectedArtifactVersion: 1,
   }), /可安全复用/);
-  assert.deepEqual(nativeActionPayload(unavailable, 'instructions', { text: '输入变化' }), {
-    text: '输入变化', action: 'instructions', expectedGoalVersionId: task.goalVersionId,
+  assert.deepEqual(nativeActionPayload(unavailable, 'instructions', { text: '输入变化', requestId: 'instruction-request-1' }), {
+    text: '输入变化', action: 'instructions', expectedGoalVersionId: task.goalVersionId, requestId: 'instruction-request-1',
+    expectedTaskId: task.id, expectedProjectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint,
     expectedExecutionId: 'execution-setup-1', expectedRegistrySha256: 'registry-setup-1',
+    expectedArtifactId: null, expectedArtifactVersion: null, expectedCandidateSha256: null, expectedDiffSha256: null,
   });
 });
 
@@ -312,7 +443,7 @@ test('只从当前任务、当前范围和无在途工作的只读绑定恢复�
     expectedArtifactId: 'artifact-recovery-1', expectedArtifactVersion: 4, expectedCandidateSha256: candidateSha256,
   };
   const raw = {
-    task, status: 'ready_to_run', execution: { id: 'run-recovery-1', phase: 'failed', modelCalls: [] },
+    task, status: 'ready_to_run', execution: { id: 'run-recovery-1', phase: 'failed', bindingCurrent: true, modelCalls: [] },
     registry: { projectId: project.projectId, scopeFingerprint, registrySha256 }, canPrepareRun: true,
     taskLifecycle: { status: 'ready_to_export', inFlight: false },
     setup: { projects: [project], selectedProject: project, selectedScope: { projectId: project.projectId, scopeFingerprint, goalVersionId: task.goalVersionId, current: true } },
@@ -374,14 +505,14 @@ test('原生来源标记的真实 roster 与 Lead 可以在无 session 时投影
       ],
       runAgentId: 'product-lead',
       phase: 'design',
-      plan: { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256 },
+      plan: { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256, instructionCount: 0 },
       sessions: [],
       actions: { canRun: true, canApprovePlan: true, canResume: false, stopClass: null },
     },
   }));
   assert.deepEqual(value.team.map((agent) => agent.id), ['product-lead', 'product-senior-developer', 'product-reviewer']);
   assert.equal(value.native.runAgentId, 'product-lead');
-  assert.deepEqual(value.native.plan, { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256 });
+  assert.deepEqual(value.native.plan, { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256, instructionCount: 0, instructionIds: [] });
   assert.equal(value.native.agents.find((agent) => agent.id === value.native.runAgentId).isTeamLead, true);
   assert.equal(value.native.actions.canRun, true);
   assert.equal(value.native.actions.canContinue, false);
@@ -392,10 +523,12 @@ test('原生来源标记的真实 roster 与 Lead 可以在无 session 时投影
   assert.deepEqual(nativeActionPayload(value, 'approve_plan'), {
     action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
     expectedPlanSha256: PLAN_SHA256,
+    expectedInstructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256,
   });
   assert.deepEqual(nativeActionPayload(value, 'approve_plan', { expectedPlanSha256: 'spoofed-plan' }), {
     action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
     expectedPlanSha256: PLAN_SHA256,
+    expectedInstructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256,
   });
   const officeTask = nativeProductAsOfficeTask(value);
   assert.deepEqual(nativeCoworkerPresence(value, officeTask, 'writer'), {
@@ -582,7 +715,7 @@ test('办公室只把当前绑定下的真实活动调用显示为推进中', ()
 
   const approval = normalizeNativeProductState(projection({
     functionId: 'utility', status: 'running', execution: { id: 'execution-1', phase: 'execute' },
-    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', plan: { text: '待审批计划', sha256: PLAN_SHA256 }, sessions: [{ status: 'running' }], actions: { canApprovePlan: true } },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', plan: { text: '待审批计划', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256, instructionCount: 0 }, sessions: [{ status: 'running' }], actions: { canApprovePlan: true } },
   }));
   assert.equal(approval.officeStatus, 'waiting_user');
 });
@@ -620,37 +753,95 @@ test('审阅通过与确认分别映射为等待确认和允许下载', () => {
   assert.match(confirmed.nextStep, /下载同一份已确认 patch/);
 });
 
-test('失败候选的后续审阅轮显式开启、单次预算绑定同一候选与上一份审阅', () => {
+test('UNVERIFIED 本身不代表已停止；仅服务端明确的结算失败绑定显示停止', () => {
+  const unverified = normalizeNativeProductState(projection({
+    status: 'waiting_user', taskLifecycle: { status: 'idle', inFlight: false },
+    execution: { id: 'execution-1', phase: 'partial', stopReason: 'native_process_failed', deadline: '2026-10-22T14:31:02.757Z' },
+    artifact: { id: 'artifact-1', version: 1, candidateSha256: 'a'.repeat(64), hostCheck: { passed: true },
+      review: { id: 'review-attempt-1', passed: false, nativeVerdict: 'UNVERIFIED', scopeOutcome: 'unverified' } },
+    nextStep: '宿主固定检查已通过，但当前候选尚无有效的同版独立审阅结果；等待审阅完成后再查看成果，不要确认或交付。',
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', sessions: [],
+      reviewRound: null, actions: { canReview: false, canOpenReviewRound: false } },
+  }));
+  assert.match(unverified.nextStep, /等待审阅完成/u);
+  assert.equal(unverified.native.actions.canOpenReviewRound, false);
+  const waiting = nativeOfficeWaitingPresentation(unverified, { id: unverified.taskId, status: 'waiting_user', goal: { activeVersionId: unverified.goalVersionId } });
+  assert.equal(waiting.office.kicker, 'REVIEW UNVERIFIED');
+
+  const stopped = normalizeNativeProductState(projection({
+    status: 'waiting_user',
+    artifact: { id: 'artifact-1', version: 1, candidateSha256: 'a'.repeat(64), hostCheck: { passed: true },
+      review: { id: 'review-attempt-1', passed: false, nativeVerdict: 'UNVERIFIED', scopeOutcome: 'unverified' } },
+    nextStep: '本轮 Reviewer 调用已失败；不会自动重试，后续复审需要明确授权。',
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', sessions: [],
+      autoReviewContinuation: { taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1',
+        registrySha256: 'registry-1', scopeFingerprint: 'scope-1', artifactId: 'artifact-1', artifactVersion: 1,
+        candidateSha256: 'a'.repeat(64), authorized: true, status: 'blocked_or_failed' },
+      reviewRound: null, actions: { canReview: false, canOpenReviewRound: false } },
+  }));
+  const stoppedPresentation = nativeOfficeWaitingPresentation(stopped, { id: stopped.taskId, status: 'waiting_user', goal: { activeVersionId: stopped.goalVersionId } });
+  assert.equal(stoppedPresentation.office.kicker, 'REVIEW STOPPED');
+});
+
+test('失败候选的后续审阅轮显式开启、8次额度绑定同一候选与上一份审阅', () => {
   const candidateSha256 = 'a'.repeat(64);
   const previousReviewId = 'review-failed-1';
   const value = normalizeNativeProductState(projection({
     status: 'partial', execution: { id: 'execution-1', phase: 'partial', stopReason: 'execution_expired' },
-    artifact: { id: 'artifact-1', version: 39, candidateSha256, status: 'candidate',
+    artifact: { id: 'artifact-1', version: 39, candidateSha256, diffSha256: 'd'.repeat(64), status: 'candidate',
       review: { id: previousReviewId, passed: false, nativeVerdict: 'FAIL' } },
+    product: { ...projection().product, workspaceScopeFingerprint: 'f'.repeat(64) },
     native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
-      reviewRound: { id: 'review-round-1', status: 'open', expectedReviewId: previousReviewId, candidateSha256,
-        remainingCalls: 1, maxModelCalls: 1, modelCalls: 0, deadlineAt: '2026-10-17T12:20:00.000Z' },
-      actions: { canReview: true, canReviewSameRun: false, canOpenReviewRound: false } },
+      reviewRound: { id: 'review-round-1', status: 'open', callUnit: 'CLI 调用', expectedReviewId: previousReviewId, candidateSha256,
+        diffSha256: 'd'.repeat(64), scopeFingerprint: 'f'.repeat(64), remainingCalls: 8, maxModelCalls: 8, modelCalls: 0,
+        deadlineAt: '2026-10-17T12:20:00.000Z' },
+      actions: { canReview: true, canReviewSameRun: false, canOpenReviewRound: false, canCancel: true } },
   }));
   assert.equal(value.native.reviewRound.id, 'review-round-1');
-  assert.equal(value.native.reviewRound.maxModelCalls, 1);
+  assert.equal(value.native.reviewRound.maxModelCalls, 8);
   assert.equal(canReviewNativeCandidate(value), true);
   assert.deepEqual(nativeActionPayload(value, 'review'), {
     action: 'review', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
     expectedArtifactId: 'artifact-1', expectedArtifactVersion: 39, expectedCandidateSha256: candidateSha256,
-    expectedReviewId: previousReviewId, expectedReviewRoundId: 'review-round-1',
+    expectedReviewId: previousReviewId, expectedReviewRoundId: 'review-round-1', expectedTaskId: 'task-native-1',
+      expectedPreviousReviewRoundId: null,
+    expectedDiffSha256: 'd'.repeat(64), expectedScopeFingerprint: 'f'.repeat(64),
+  });
+  assert.deepEqual(nativeActionPayload(value, 'cancel', { requestId: 'cancel-round-1' }), {
+    requestId: 'cancel-round-1', action: 'cancel', expectedGoalVersionId: 'goal-native-1',
+    expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+    expectedReviewRoundId: 'review-round-1', expectedPreviousReviewRoundId: null,
+    expectedTaskId: 'task-native-1', expectedArtifactId: 'artifact-1', expectedArtifactVersion: 39,
+    expectedCandidateSha256: candidateSha256, expectedDiffSha256: 'd'.repeat(64),
+    expectedReviewId: previousReviewId, expectedScopeFingerprint: 'f'.repeat(64),
   });
   const canOpen = normalizeNativeProductState(projection({
     execution: { id: 'execution-1', phase: 'partial', stopReason: 'execution_expired' },
-    artifact: { id: 'artifact-1', version: 39, candidateSha256, status: 'candidate',
+    artifact: { id: 'artifact-1', version: 39, candidateSha256, diffSha256: 'd'.repeat(64), status: 'candidate',
       review: { id: previousReviewId, passed: false, nativeVerdict: 'FAIL' } },
+    product: { ...projection().product, workspaceScopeFingerprint: 'f'.repeat(64) },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      reviewRoundOffer: { maxModelCalls: 8, maxDurationMs: 1200000 },
+      actions: { canReview: false, canOpenReviewRound: true } },
+  }));
+  assert.deepEqual(nativeActionPayload(canOpen, 'open_review_round', { requestId: 'round-request-1' }), {
+    requestId: 'round-request-1', action: 'open_review_round', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+    expectedArtifactId: 'artifact-1', expectedArtifactVersion: 39, expectedCandidateSha256: candidateSha256,
+    expectedReviewId: previousReviewId, expectedDiffSha256: 'd'.repeat(64), expectedTaskId: 'task-native-1', expectedScopeFingerprint: 'f'.repeat(64),
+    expectedPreviousReviewRoundId: null,
+  });
+  const legacyOpen = normalizeNativeProductState(projection({
+    execution: { id: 'execution-1', phase: 'partial', stopReason: 'execution_expired' },
+    artifact: { id: 'artifact-1', version: 39, candidateSha256, diffSha256: 'd'.repeat(64), status: 'candidate',
+      review: { id: previousReviewId, passed: false, nativeVerdict: 'FAIL' } },
+    product: { ...projection().product, workspaceScopeFingerprint: 'f'.repeat(64) },
     native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
       actions: { canReview: false, canOpenReviewRound: true } },
   }));
-  assert.deepEqual(nativeActionPayload(canOpen, 'open_review_round'), {
-    action: 'open_review_round', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
-    expectedArtifactId: 'artifact-1', expectedArtifactVersion: 39, expectedCandidateSha256: candidateSha256,
-    expectedReviewId: previousReviewId,
+  assert.deepEqual(nativeActionPayload(legacyOpen, 'open_review_round', { requestId: 'legacy-request-1' }), {
+    requestId: 'legacy-request-1', action: 'open_review_round', expectedGoalVersionId: 'goal-native-1',
+    expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1', expectedArtifactId: 'artifact-1',
+    expectedArtifactVersion: 39, expectedCandidateSha256: candidateSha256, expectedReviewId: previousReviewId,
   });
   const canReconnect = normalizeNativeProductState(projection({
     execution: { id: 'execution-1', phase: 'partial', stopReason: 'execution_deadline_elapsed' },
@@ -667,6 +858,9 @@ test('失败候选的后续审阅轮显式开启、单次预算绑定同一候�
     expectedCandidateSha256: candidateSha256, expectedReviewId: previousReviewId,
     expectedScopeFingerprint: 'd'.repeat(64),
   });
+  assert.deepEqual(nativeActionPayload(canReconnect, 'cancel'), {
+    action: 'cancel', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+  });
   assert.throws(() => nativeActionPayload({ ...canReconnect, native: { ...canReconnect.native, actions: { canReconnectReview: false } } }, 'reconnect_review_runtime'), /未开放/);
   assert.throws(() => nativeActionPayload({ ...canOpen, native: { ...canOpen.native, actions: { canOpenReviewRound: false } } }, 'open_review_round'), /未开放/);
 });
@@ -675,9 +869,12 @@ test('未审阅的当前候选允许以 null Review ID 接回并开启审阅轮�
   const candidateSha256 = 'a'.repeat(64);
   const value = normalizeNativeProductState(projection({
     status: 'partial', execution: { id: 'execution-1', phase: 'partial', stopReason: 'execution_deadline_elapsed' },
-    artifact: { id: 'artifact-1', version: 41, candidateSha256, status: 'candidate', review: null },
+    artifact: { id: 'artifact-1', version: 41, candidateSha256, diffSha256: 'd'.repeat(64), status: 'candidate', review: null },
     native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      reviewRoundOffer: { maxModelCalls: 8, maxDurationMs: 1200000 },
       preparationFailures: [{ eventId: 'event-preflight', sourceTaskId: 'review-task', attemptId: 'attempt-1',
+        taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1',
+        workspaceScopeFingerprint: 'd'.repeat(64), registrySha256: 'registry-1',
         agentId: 'agent-reviewer', actor: 'reviewer', phase: 'review', reviewDispatchEventId: 'dispatch-1',
         artifactId: 'artifact-1', artifactVersion: 41, candidateSha256, modelCallCreated: false,
         status: 'failed', error: '输入超过保守预算；没有提交模型。' },
@@ -688,16 +885,37 @@ test('未审阅的当前候选允许以 null Review ID 接回并开启审阅轮�
   assert.equal(value.artifact.review, null);
   assert.equal(value.native.preparationFailures.length, 1);
   assert.equal(value.native.preparationFailures[0].modelCallCreated, false);
-  assert.deepEqual(nativeActionPayload(value, 'open_review_round'), {
-    action: 'open_review_round', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1',
+  assert.deepEqual(nativeActionPayload(value, 'open_review_round', { requestId: 'round-request-2' }), {
+    requestId: 'round-request-2', action: 'open_review_round', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1',
     expectedRegistrySha256: 'registry-1', expectedArtifactId: 'artifact-1', expectedArtifactVersion: 41,
-    expectedCandidateSha256: candidateSha256, expectedReviewId: null,
+    expectedCandidateSha256: candidateSha256, expectedReviewId: null, expectedDiffSha256: 'd'.repeat(64),
+    expectedTaskId: 'task-native-1', expectedScopeFingerprint: 'd'.repeat(64), expectedPreviousReviewRoundId: null,
   });
   assert.deepEqual(nativeActionPayload(value, 'reconnect_review_runtime'), {
     action: 'reconnect_review_runtime', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1',
     expectedRegistrySha256: 'registry-1', expectedArtifactId: 'artifact-1', expectedArtifactVersion: 41,
     expectedCandidateSha256: candidateSha256, expectedReviewId: null, expectedScopeFingerprint: 'd'.repeat(64),
   });
+});
+
+test('当前执行的非Reviewer预留前失败不要求候选SHA，并排除身份不匹配记录', () => {
+  const failure = { eventId: 'event-preflight', sourceTaskId: 'worker-task', attemptId: 'attempt-1',
+    taskId: 'task-native-1', goalVersionId: 'goal-native-1', executionId: 'execution-1',
+    workspaceScopeFingerprint: 'scope-1', registrySha256: 'registry-1', agentId: 'agent-developer',
+    actor: 'developer', phase: 'developer', candidateSha256: null, modelCallCreated: false,
+    status: 'failed', error: '工作区准备失败。', createdAt: '2026-10-19T12:00:01.000Z' };
+  const value = normalizeNativeProductState(projection({
+    status: 'in_progress', taskLifecycle: { status: 'running', inFlight: false },
+    execution: { id: 'execution-1', phase: 'executing', deadline: '2026-10-19T12:20:00.000Z', modelCalls: [
+      { status: 'completed' }, { status: 'completed' },
+    ] },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      phase: 'executing', sessions: [{ status: 'completed', createdAt: '2026-10-19T11:59:00.000Z' }],
+      preparationFailures: [failure, { ...failure, eventId: 'stale', goalVersionId: 'old-goal' }], actions: {} },
+  }));
+  assert.equal(value.native.preparationFailures.length, 1);
+  assert.equal(value.native.preparationFailures[0].candidateSha256, null);
+  assert.match(value.nextStep, /未创建模型调用/);
 });
 
 test('ZIP 链接只在当前审阅通过并确认后规范化为同源路径', () => {
@@ -735,10 +953,12 @@ test('真实候选必须与当前任务、目标、版本和候选摘要完全�
   const candidate = normalizeNativeCandidate({
     taskId: product.taskId, goalVersionId: product.goalVersionId, artifactId: 'artifact-1', artifactVersion: 2,
     candidateSha256: 'candidate-1', diffSha256: 'diff-1', patchSha256: 'patch-1', patch: 'diff --git a/a b/a',
-    files: [{ path: 'a', sha256: 'file-1', bytes: 12 }], checks: [{ id: 'check-1', passed: true }], review: null, confirmation: null,
+    files: [{ path: 'a', sha256: 'file-1', bytes: 12 }], checks: [{ id: 'check-1', passed: true }],
+    review: { id: 'review-1', passed: true, nativeVerdict: 'PASS', scopeOutcome: 'clean', fullOutputSha256: 'a'.repeat(64), text: 'VERDICT: PASS\nReviewed.' }, confirmation: null,
   }, product);
   assert.equal(candidate.files[0].path, 'a');
   assert.equal(candidate.checks[0].passed, true);
+  assert.equal(candidate.review.scopeOutcome, 'clean');
   assert.throws(() => normalizeNativeCandidate({ ...candidate, artifactVersion: 3 }, product), /不属于当前任务、目标或版本/);
 });
 
@@ -893,10 +1113,37 @@ test('设置态没有执行或产品登记时仍可提交设置动作，但不�
   }));
   assert.equal(draft.authorityCurrent, true);
   assert.equal(draft.current, false);
-  assert.deepEqual(nativeActionPayload(draft, 'instructions', { text: '补充验收要求' }), {
-    text: '补充验收要求', action: 'instructions', expectedGoalVersionId: 'goal-native-1',
+  assert.deepEqual(nativeActionPayload(draft, 'instructions', { text: '补充验收要求', requestId: 'instruction-request-2' }), {
+    text: '补充验收要求', action: 'instructions', expectedGoalVersionId: 'goal-native-1', requestId: 'instruction-request-2',
+    expectedTaskId: 'task-native-1', expectedProjectId: null, expectedScopeFingerprint: null,
+    expectedExecutionId: null, expectedRegistrySha256: null, expectedArtifactId: null, expectedArtifactVersion: null,
+    expectedCandidateSha256: null, expectedDiffSha256: null,
   });
   assert.throws(() => nativeActionPayload(draft, 'run'), /执行绑定不完整/);
+});
+
+test('旧范围已失效时只给设置输入附带独立旧绑定，不恢复旧执行资格', () => {
+  const registrySha256 = 'd'.repeat(64);
+  const draft = normalizeNativeProductState(projection({
+    status: 'waiting_scope', current: false, authorityCurrent: true, execution: null, product: null,
+    registry: { registrySha256 },
+    inputMutationBinding: { goalVersionId: 'goal-native-1', executionId: 'run-expired', registrySha256 },
+    native: { bindingCurrent: false, sessions: [], actions: { canInstructions: true } },
+  }));
+  assert.equal(draft.current, false);
+  assert.equal(draft.execution, null);
+  assert.equal(draft.canRun, undefined);
+  assert.deepEqual(nativeActionPayload(draft, 'instructions', {
+    text: '补充当前要求', requestId: 'instruction-request-3', expectedExecutionId: 'forged', expectedRegistrySha256: 'e'.repeat(64),
+  }), {
+    text: '补充当前要求', action: 'instructions', expectedGoalVersionId: 'goal-native-1', requestId: 'instruction-request-3',
+    expectedTaskId: 'task-native-1', expectedProjectId: null, expectedScopeFingerprint: null,
+    expectedExecutionId: 'run-expired', expectedRegistrySha256: registrySha256,
+    expectedArtifactId: null, expectedArtifactVersion: null, expectedCandidateSha256: null, expectedDiffSha256: null,
+  });
+  assert.deepEqual(nativeActionPayload(draft, 'prepare_run'), {
+    action: 'prepare_run', expectedGoalVersionId: 'goal-native-1',
+  });
 });
 
 test('继续和输入动作只认后端明确资格', () => {
@@ -911,6 +1158,33 @@ test('继续和输入动作只认后端明确资格', () => {
   assert.equal(product.native.actions.canMaterials, true);
   assert.equal(product.native.actions.canRun, false);
   assert.equal(product.native.actions.canCancel, false);
+});
+
+test('续改动作保留服务器提供的修订身份并绑定完整目标与范围', () => {
+  const value = normalizeNativeProductState(projection({
+    current: true,
+    artifact: { id: 'artifact-returned', version: 4, candidateSha256: 'a'.repeat(64) },
+    execution: { id: 'execution-returned', phase: 'partial' },
+    product: { projectId: 'project-1', registrySha256: 'b'.repeat(64), bindingCurrent: true, workspaceScopeFingerprint: 'c'.repeat(64) },
+    native: { bindingCurrent: true, registrySha256: 'b'.repeat(64), aiEnabled: true,
+      actions: { canContinue: true, revisionId: 'revision-omo-test' } },
+  }));
+  assert.equal(value.native.actions.canContinue, true);
+  assert.equal(value.native.actions.revisionId, 'revision-omo-test');
+  assert.deepEqual(nativeActionPayload(value, 'continue', {
+    revisionId: value.native.actions.revisionId,
+    expectedExecutionId: value.execution.id,
+    expectedRegistrySha256: value.product.registrySha256,
+    expectedScopeFingerprint: value.product.workspaceScopeFingerprint,
+    expectedArtifactId: value.artifact.id,
+    expectedArtifactVersion: value.artifact.version,
+    expectedCandidateSha256: value.artifact.candidateSha256,
+  }), {
+    action: 'continue', expectedGoalVersionId: 'goal-native-1', revisionId: 'revision-omo-test',
+    expectedExecutionId: 'execution-returned', expectedRegistrySha256: 'b'.repeat(64),
+    expectedScopeFingerprint: 'c'.repeat(64), expectedArtifactId: 'artifact-returned',
+    expectedArtifactVersion: 4, expectedCandidateSha256: 'a'.repeat(64),
+  });
 });
 
 test('轮询重绘保留同绑定退回理由、焦点与光标', () => {
@@ -1046,6 +1320,25 @@ test('native task history filters by title and registered project without changi
   assert.deepEqual(filterNativeTaskHistory(tasks, '  整理 ', 'utility-1'), [tasks[0], tasks[2]]);
   assert.deepEqual(filterNativeTaskHistory(tasks, '无匹配'), []);
   assert.equal(tasks.length, 3);
+});
+
+test('same-bound redraw preserves review continuation opt-in, but a new binding clears it', () => {
+  let checked = false;
+  let html = '';
+  const checkbox = { get checked() { return checked; }, set checked(value) { checked = value; } };
+  const root = {
+    dataset: {}, contains: () => false,
+    querySelector: (selector) => selector === 'input[data-auto-review-continuation]' ? checkbox : null,
+    querySelectorAll: () => [],
+    get innerHTML() { return html; },
+    set innerHTML(value) { html = value; checked = value.includes('checked'); },
+  };
+  assert.equal(renderNativeMarkup(root, '<input type="checkbox" data-auto-review-continuation>', 'task-1/goal-1/scope-1'), true);
+  checked = true;
+  assert.equal(renderNativeMarkup(root, '<p>status changed</p><input type="checkbox" data-auto-review-continuation>', 'task-1/goal-1/scope-1'), true);
+  assert.equal(checked, true);
+  assert.equal(renderNativeMarkup(root, '<input type="checkbox" data-auto-review-continuation>', 'task-2/goal-2/scope-2'), true);
+  assert.equal(checked, false);
 });
 
 test('same task-list content preserves its DOM nodes while changed or externally modified content rerenders', () => {

@@ -606,6 +606,127 @@ async function runChild(command, args, { input = '', env = {}, timeoutMs = 2_000
   });
 }
 
+async function runSandboxedRuntime(runtime, readableFiles, entry, input, signal, timeoutMs = 2_000, { args = [], cwd } = {}) {
+  const profile = sandboxProfile({ nodePath: runtime.nodePath, readableFiles });
+  const result = await runChild(runtime.sandboxExecPath, ['-p', profile, runtime.nodePath, '--max-old-space-size=64', entry, ...args], {
+    input: `${JSON.stringify(input)}\n`, env: { LANG: 'C', LC_ALL: 'C' }, timeoutMs, signal, cwd,
+  });
+  return { ...result, profileSha256: sha256(profile) };
+}
+
+export async function runRegisteredJsonFunctionCheck({ candidateRoot, modulePath, namedExport, cases, signal, runtime = {} }) {
+  if (typeof candidateRoot !== 'string' || !path.isAbsolute(candidateRoot)
+    || typeof modulePath !== 'string' || !modulePath || path.posix.isAbsolute(modulePath)
+    || path.posix.normalize(modulePath) !== modulePath || modulePath.split('/').some((part) => !part || part === '.' || part === '..')
+    || typeof namedExport !== 'string' || !/^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/.test(namedExport)
+    || !Array.isArray(cases) || !cases.length || cases.length > 20) throw new Error('固定 JSON 函数检查定义无效。');
+  const contract = { id: 'json-function-v1', modulePath, namedExport, cases };
+  const contractBytes = Buffer.byteLength(JSON.stringify(contract));
+  if (contractBytes > 64 * 1024 || new Set(cases.map((entry) => entry?.id)).size !== cases.length
+    || cases.some((entry) => !entry || typeof entry.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(entry.id)
+      || !Array.isArray(entry.args))) throw new Error('固定 JSON 函数检查用例无效或超限。');
+  for (const entry of cases) { assertPlainJson(entry.args); assertPlainJson(entry.expected); }
+
+  const root = await fs.realpath(candidateRoot);
+  if (root !== path.resolve(candidateRoot)) throw Object.assign(new Error('固定 JSON 函数候选目录不是规范路径。'), { code: 'check_evidence_invalid' });
+  const candidateFile = path.resolve(root, modulePath);
+  if (!candidateFile.startsWith(`${root}${path.sep}`)) throw Object.assign(new Error('固定 JSON 函数候选路径越界。'), { code: 'check_evidence_invalid' });
+  const candidateReal = await fs.realpath(candidateFile);
+  const beforeStat = await fs.lstat(candidateFile);
+  const candidateBytes = await fs.readFile(candidateFile);
+  if (candidateReal !== candidateFile || !beforeStat.isFile() || beforeStat.isSymbolicLink() || beforeStat.nlink !== 1
+    || beforeStat.size > MAX_TEXT_BYTES || candidateBytes.length !== beforeStat.size) {
+    throw Object.assign(new Error('固定 JSON 函数候选模块无效。'), { code: 'check_evidence_invalid' });
+  }
+
+  const nodePath = await fs.realpath(runtime.nodePath || process.execPath);
+  const sandboxExecPath = await fs.realpath(runtime.sandboxExecPath || SANDBOX_EXEC);
+  const wrapperPath = await fs.realpath(GENERIC_JSON_WRAPPER);
+  if (runtime.genericJsonWrapperPath && await fs.realpath(runtime.genericJsonWrapperPath) !== wrapperPath) {
+    throw new Error('固定 JSON 函数 wrapper 与已登记版本不匹配。');
+  }
+  const [nodeBytes, sandboxBytes, wrapperBytes] = await Promise.all([
+    fs.readFile(nodePath), fs.readFile(sandboxExecPath), fs.readFile(wrapperPath),
+  ]);
+  const inputSet = cases.map(({ id, args }) => ({ id, args }));
+  const expectedSet = cases.map(({ id, expected }) => ({ id, expected }));
+  const inputSummary = {
+    module: { path: modulePath, bytes: candidateBytes.length, sha256: sha256(candidateBytes) },
+    contract, contractSha256: fingerprint(contract), inputSet, inputSetSha256: fingerprint(inputSet),
+    expectedSet, expectedSetSha256: fingerprint(expectedSet),
+    runtime: { nodeSha256: sha256(nodeBytes), sandboxExecSha256: sha256(sandboxBytes), wrapperSha256: sha256(wrapperBytes),
+      profileTemplateSha256: PROFILE_TEMPLATE_SHA256, executionContractSha256: EXECUTION_CONTRACT_SHA256 },
+  };
+  const temporaryRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-json-function-check-')));
+  const stagedModule = path.join(temporaryRoot, 'candidate.mjs');
+  try {
+    await fs.writeFile(stagedModule, candidateBytes, { flag: 'wx', mode: 0o400 });
+    const caseResults = [];
+    for (const testCase of cases) {
+      const nonce = crypto.randomBytes(16).toString('hex');
+      const request = { caseId: testCase.id, nonce, exportName: namedExport, args: testCase.args };
+      let child = null, protocolCode = null, protocolMessage = null, actual = null;
+      try {
+        child = await runSandboxedRuntime({ nodePath, sandboxExecPath }, [wrapperPath, stagedModule], wrapperPath,
+          request, signal, 2_000, { args: [stagedModule], cwd: temporaryRoot });
+        if (child.code === 71 && /^sandbox-exec:/u.test(child.stderr || '')) {
+          const error = Object.assign(new Error(child.stderr.trim().slice(0, 900) || '固定 OS sandbox 无法启动。'), { code: 'host_sandbox_unavailable' });
+          error.checkEvidence = { inputSummary, caseResults: [...caseResults, { caseId: testCase.id, passed: false,
+            exitCode: child.code, stderrBytes: child.stderrBytes, stderrPrefix: child.stderr,
+            stderrPrefixSha256: child.stderrPrefixSha256, profileSha256: child.profileSha256, protocolCode: error.code }] };
+          throw error;
+        }
+        if (child.timedOut) throw Object.assign(new Error('固定 JSON 函数检查超时。'), { code: 'timeout' });
+        if (child.outputLimitExceeded || child.truncated) throw Object.assign(new Error('固定 JSON 函数检查输出超限。'), { code: 'output_limit' });
+        if (child.code !== 0 || child.signal) throw Object.assign(new Error('固定 JSON 函数检查进程异常退出。'), { code: 'abnormal_exit' });
+        const envelope = parseSingleEnvelope(child.stdout, ['type', 'caseId', 'nonce', 'value']);
+        if (envelope.type !== 'json-function-result-v1' || envelope.caseId !== testCase.id || envelope.nonce !== nonce) {
+          throw Object.assign(new Error('固定 JSON 函数检查结果绑定不匹配。'), { code: 'binding_mismatch' });
+        }
+        assertPlainJson(envelope.value);
+        actual = envelope.value;
+        if (canonical(actual) !== canonical(testCase.expected)) throw Object.assign(new Error('固定 JSON 函数检查未符合宿主期望值。'), { code: 'expected_mismatch' });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        if (error.code === 'host_sandbox_unavailable') throw error;
+        if (!child && ['EACCES', 'ENOENT', 'EPERM'].includes(error.code)) {
+          error.code = 'host_sandbox_unavailable';
+          error.checkEvidence = { inputSummary, caseResults: [...caseResults, { caseId: testCase.id, passed: false,
+            protocolCode: error.code, protocolMessage: String(error.message || error).slice(0, 500) }] };
+          throw error;
+        }
+        protocolCode = error.code || 'protocol_invalid';
+        protocolMessage = String(error.message || error).slice(0, 500);
+      }
+      caseResults.push({ caseId: testCase.id, passed: protocolCode === null, exitCode: child?.code ?? null,
+        signal: child?.signal ?? null, timedOut: child?.timedOut ?? false, truncated: child?.truncated ?? false,
+        outputLimitExceeded: child?.outputLimitExceeded ?? false, stdoutBytes: child?.stdoutBytes ?? 0,
+        stdoutPrefix: child?.stdout ?? '', stdoutPrefixSha256: child?.stdoutPrefixSha256 ?? sha256(''),
+        stderrBytes: child?.stderrBytes ?? 0, stderrPrefix: child?.stderr ?? '',
+        stderrPrefixSha256: child?.stderrPrefixSha256 ?? sha256(''), elapsedMs: child?.elapsedMs ?? null,
+        profileSha256: child?.profileSha256 ?? null, protocolCode, protocolMessage, actual });
+    }
+    const afterStat = await fs.lstat(candidateFile);
+    const afterBytes = await fs.readFile(candidateFile);
+    const moduleStable = afterStat.dev === beforeStat.dev && afterStat.ino === beforeStat.ino
+      && afterStat.size === beforeStat.size && afterStat.nlink === 1 && !afterStat.isSymbolicLink()
+      && afterBytes.length === candidateBytes.length && sha256(afterBytes) === sha256(candidateBytes);
+    const candidateErrorCodes = new Set(['expected_mismatch', 'timeout', 'output_limit', 'abnormal_exit']);
+    const wrapperUnavailable = caseResults.some((entry) => entry.protocolCode === 'abnormal_exit'
+      && entry.stderrPrefix?.includes(wrapperPath) && /Cannot find module|ERR_MODULE_NOT_FOUND/u.test(entry.stderrPrefix));
+    const checkCategory = !moduleStable || wrapperUnavailable
+      || caseResults.some((entry) => entry.protocolCode && !candidateErrorCodes.has(entry.protocolCode))
+      ? 'evidence_invalid'
+      : caseResults.some((entry) => !entry.passed) ? 'candidate_failure' : 'passed';
+    return { passed: checkCategory === 'passed', moduleStable, checkCategory, inputSummary,
+      caseResults, caseTotal: caseResults.length, casePassed: caseResults.filter((entry) => entry.passed).length,
+      resultDigest: fingerprint(caseResults), failureMessage: !moduleStable ? '候选模块在固定检查期间变化。'
+        : caseResults.find((entry) => !entry.passed)?.protocolMessage || null };
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
 function parseSingleEnvelope(stdout, expectedKeys) {
   if (!stdout.endsWith('\n') || stdout.slice(0, -1).includes('\n')) throw new Error('子进程必须只返回一份 JSON envelope。');
   const body = stdout.slice(0, -1);
@@ -855,12 +976,7 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
   }
 
   async function runSandboxed(runtime, readableFiles, entry, input, _profileDir, signal, timeoutMs = 2_000, { args = [], cwd } = {}) {
-    const profile = sandboxProfile({ nodePath: runtime.nodePath, readableFiles });
-    const profileSha256 = sha256(profile);
-    const result = await runChild(runtime.sandboxExecPath, ['-p', profile, runtime.nodePath, '--max-old-space-size=64', entry, ...args], {
-      input: `${JSON.stringify(input)}\n`, env: { LANG: 'C', LC_ALL: 'C' }, timeoutMs, signal, cwd,
-    });
-    return { ...result, profileSha256 };
+    return runSandboxedRuntime(runtime, readableFiles, entry, input, signal, timeoutMs, { args, cwd });
   }
 
   async function probeCapability({ grantRoot, originalRoot, candidateRoot, candidateModule, trustedParentPath, signal }) {
@@ -1262,33 +1378,10 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
         });
       }
     } else {
-      const candidateModule = resolveInside(candidateRoot, specification.modulePath);
       assertGenericModulePolicy((await readRegular(candidateRoot, specification.modulePath)).toString('utf8'));
-      for (const testCase of specification.cases) {
-        assertPlainJson(testCase.args); assertPlainJson(testCase.expected);
-        const nonce = crypto.randomBytes(16).toString('hex');
-        const request = { caseId: testCase.id, nonce, exportName: specification.namedExport, args: testCase.args };
-        const child = await runSandboxed(runtime, [runtime.genericJsonWrapperPath, candidateModule], runtime.genericJsonWrapperPath, request, null, signal, 2_000, { args: [candidateModule], cwd: candidateRoot });
-        let passed = false;
-        let protocolCode = null;
-        try {
-          if (child.timedOut) throw Object.assign(new Error('timeout'), { code: 'timeout' });
-          if (child.outputLimitExceeded || child.truncated) throw Object.assign(new Error('output_limit'), { code: 'output_limit' });
-          if (child.code !== 0 || child.signal) throw Object.assign(new Error('abnormal_exit'), { code: 'abnormal_exit' });
-          const envelope = parseSingleEnvelope(child.stdout, ['type', 'caseId', 'nonce', 'value']);
-          if (envelope.type !== 'json-function-result-v1' || envelope.caseId !== testCase.id || envelope.nonce !== nonce) throw Object.assign(new Error('binding_mismatch'), { code: 'binding_mismatch' });
-          assertPlainJson(envelope.value);
-          if (canonical(envelope.value) !== canonical(testCase.expected)) throw Object.assign(new Error('expected_mismatch'), { code: 'expected_mismatch' });
-          passed = true;
-        } catch (error) { protocolCode = error.code || 'protocol_invalid'; }
-        caseResults.push({
-          caseId: testCase.id, passed, exitCode: child.code, signal: child.signal, timedOut: child.timedOut,
-          truncated: child.truncated, outputLimitExceeded: child.outputLimitExceeded,
-          stdoutBytes: child.stdoutBytes, stdoutPrefixSha256: child.stdoutPrefixSha256,
-          stderrBytes: child.stderrBytes, stderrPrefixSha256: child.stderrPrefixSha256,
-          elapsedMs: child.elapsedMs, profileSha256: child.profileSha256, protocolCode,
-        });
-      }
+      const execution = await runRegisteredJsonFunctionCheck({ candidateRoot, modulePath: specification.modulePath,
+        namedExport: specification.namedExport, cases: specification.cases, signal, runtime });
+      caseResults.push(...execution.caseResults);
     }
     const after = await manifestFor(candidateRoot, fixture.readablePaths, fixture.limits);
     if (manifestHash(after) !== candidate.candidateSha256 || canonical(before) !== canonical(after)) throw conflict('候选在固定检查期间变化，结果已拒收。');
@@ -1736,5 +1829,5 @@ export function createProjectWorkspaceHost({ projectRoot = path.resolve(moduleDi
 export const __test = {
   canonical, fingerprint, assertRelative, resolveInside, manifestFor, manifestHash,
   sandboxProfile, parseSingleEnvelope, diffCandidate, unifiedPatch, applySingleHunk, sameBinding,
-  runChild, assertGenericModulePolicy, PROFILE_TEMPLATE_SHA256, EXECUTION_CONTRACT_SHA256, DEFAULT_FIXTURES,
+  runChild, assertGenericModulePolicy, runRegisteredJsonFunctionCheck, PROFILE_TEMPLATE_SHA256, EXECUTION_CONTRACT_SHA256, DEFAULT_FIXTURES,
 };

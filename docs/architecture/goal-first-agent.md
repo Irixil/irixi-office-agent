@@ -4,9 +4,9 @@
 
 ## 原生执行与界面
 
-OpenOffice 负责原生成员、分工、模型会话、隔离 Git 工作区与预览能力。`native/upstream-mac-trial-20261004/sources/OpenOffice/` 保存当前适配源码。agent-office 的场景与办公室交互接收同一原生任务状态；桌面前端与静态美术位于 `app/public/` 和 `art/office-playable-v1/`。
+当前目标路线由 OmO 5.1.40 担任核心 Harness：`app/public/` 的界面状态进入 `omo-pilot/server.mjs`，服务通过 `native-rpc-runner.mjs` 启动 OmO 原生 RPC；OmO 通过受限 Provider 桥接请求既有 Desktop Codex CLI 的模型决策，再由 OmO 原生工具循环执行文件操作。桥接不替代 OmO 调度器。`omo-pilot/` 保存 iRIXI 的接入源码，不包含 OmO 安装包、运行模块、Codex 可执行文件或本机凭据。旧 OpenOffice 与 agent-office 适配仍保留在 `native/`，供历史演示和兼容检查使用。
 
-`integration-slice-20261004/product/` 的 Bootstrap、Launcher 与 Desktop 同源适配连接普通入口。`authority/` 核对目标、输入、登记范围、模型预约、时限、候选检查与指定版本的审阅、确认和导出。执行预算耗尽与仍有效成果的读取资格分开判断，不能靠继续动作清空已用预算。
+前端与产品管理层将授权、范围、预算、审阅、确认和导出状态映射到 OmO 执行记录。原 OpenOffice integration-slice 中的 Authority、Gateway、Agent Office 和 Desktop 连接代码属于旧路线，不代表当前 OmO 运行链。
 
 ## 成果与权限
 
@@ -16,4 +16,4 @@ OpenOffice 负责原生成员、分工、模型会话、隔离 Git 工作区与�
 
 ## 当前验证边界
 
-阶段状态见 [STAGE_STATUS.md](../../STAGE_STATUS.md)。已有文章学习项目的指定开发与交付链已在本地验证至 v45，包含中途要求、原生协作、独立审阅、具体确认、报告下载与历史恢复。此为有人监督的选定场景验证；生成候选与正式示例基线分开，新环境原生安装仍在建设中。
+阶段状态见 [STAGE_STATUS.md](../../STAGE_STATUS.md)。已有文章学习项目的本地验证属于有人监督的选定场景。当前公开快照包含 OmO→受控 Desktop Codex CLI 的接入源码，但不含本机运行依赖与授权；新环境安装及完整业务验收仍未验证。

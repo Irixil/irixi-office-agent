@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 
+import { resolveCodexRuntime } from '../codex-runtime.mjs';
 import { PublicWebError, __test } from '../web-tools.mjs';
 
 const PUBLIC_V4 = '93.184.216.34';
@@ -401,7 +402,7 @@ test('受控搜索子进程固定禁用能力，调用方取消会终止整个�
   const spawned = [];
   const terminated = [];
   const runner = __test.createCodexSearchRunner({
-    codexPath: '/fixed/codex', cwd: '/private/tmp',
+    codexPath: '/fixed/codex', cwd: '/tmp',
     spawnProcess(command, args, options) { spawned.push({ command, args, options }); return child; },
     terminate(process) { terminated.push(process.pid); },
   });
@@ -419,6 +420,31 @@ test('受控搜索子进程固定禁用能力，调用方取消会终止整个�
     const index = spawned[0].args.indexOf(feature);
     assert.equal(spawned[0].args[index - 1], '--disable', feature);
   }
+});
+
+test('Codex runtime path unavailable with AbortSignal returns search_unavailable before spawning', async () => {
+  let spawnCount = 0;
+  const runner = __test.createCodexSearchRunner({ codexPath: null, spawnProcess() { spawnCount += 1; return inertChild(); } });
+  await assert.rejects(runner('public docs', { signal: new AbortController().signal }), (error) => error.code === 'search_unavailable');
+  assert.equal(spawnCount, 0);
+});
+
+test('Codex search child receives resolved real CODEX_HOME while retaining synthetic HOME', async () => {
+  const syntheticHome = '/tmp/synthetic-search-home';
+  const runtime = resolveCodexRuntime({ env: { HOME: syntheticHome, CODEX_HOME: `${syntheticHome}/.codex` }, realUserHome: '/Users/runtime-test', platform: 'linux' });
+  const env = { ...process.env, HOME: syntheticHome, CODEX_HOME: `${syntheticHome}/.codex` };
+  const child = inertChild();
+  let spawnOptions;
+  const controller = new AbortController();
+  const runner = __test.createCodexSearchRunner({
+    runtime, env, codexPath: '/strict-fake-codex', cwd: '/tmp', spawnProcess(_command, _args, options) { spawnOptions = options; return child; },
+    terminate() {},
+  });
+  const pending = runner('public docs', { signal: controller.signal });
+  assert.equal(spawnOptions.env.HOME, syntheticHome);
+  assert.equal(spawnOptions.env.CODEX_HOME, '/Users/runtime-test/.codex');
+  controller.abort();
+  await assert.rejects(pending, (error) => error.code === 'aborted');
 });
 
 test('受控搜索子进程超时会终止整个进程组', async () => {
