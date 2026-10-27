@@ -877,6 +877,7 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   async talkTo(person) {
+    if (document.querySelector('dialog[open]')) return;
     if (person.role === 'steward' && this.stewardRoutine && !['waiting', 'completed'].includes(this.stewardRoutine.phase)) this.pauseStewardMotion('conversation');
     window.dispatchEvent(new CustomEvent('irixi:coworker', { detail: { role: person.role, name: person.name, status: person.statusText.text } }));
     const destination = this.nearestWalkable(person);

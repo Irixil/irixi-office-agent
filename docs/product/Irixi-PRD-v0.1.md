@@ -1,22 +1,11 @@
-# iRIXI Personal Agent 产品范围
+# Current product scope
 
-当前主线是让个人 Agent 理解、推进并持续跟踪真实项目，让用户看懂已经做成的结果、未解决的问题、停止原因和下一步，并在明确授权下交付可核对的成果。
+The current product helps an individual discuss an idea, explicitly begin work, create or modify a real local project, inspect a usable result, and continue later. A project may contain multiple conversations sharing its files and relevant history.
 
-## 已实现的阶段能力
+The conversation workbench includes project organization, a folder chooser, per-turn model selection, message copying/quoting/editing, references and branches, actual tool activity and read-only child agents, clear progress, stop/recovery handling, and a macOS shell.
 
-- 目标、成功条件与边界的完整版本记录，以及已接受工作交代的输入传播。
-- 材料用途、来源和当前适用性决定。
-- OpenOffice 原生分工、隔离候选、检查、独立审阅及指定版本确认与 patch 下载接线。
-- 同一任务驱动的办公室展示、失败保留、预算和有限续接机制。
+Ordinary work does not require a fixed project setup form or repeated plan approvals. Necessary questions and new permissions are handled in context. OmO is the sole harness; DZ supplies internal continuity rules mapped to product storage.
 
-这些能力各有当前适用范围与验证记录。源文件存在、受控测试或候选审阅通过，均不等于整个 Personal Agent 已被最终验收。
+The October 27 local workbench delivery covered 23 required outcomes. See [current progress](../../STAGE_STATUS.md), [examples](../showcase.md), and [setup](../getting-started.md). The public tree is source-only and excludes original runtime data and installed binaries.
 
-## 成功条件与后续工作
-
-真实任务须实际完成目标到结果的完整链路，并验证中途变更、旧结果拒收、失败恢复与明确交付。已有文章学习项目的指定链路已在本地验证至 v45，覆盖中途变更、原生开发与审阅、确认、两类报告下载和历史恢复。生成候选与正式业务基线分开。
-
-本地任务记忆与可选 XERJ 索引已接入。当前阶段不新增自动推送、部署、邮件发送、付款或任意目录/命令能力。
-
-## 打包与隐私边界
-
-本包只包含明确列入上传清单的源码、测试、合成基线、静态美术和许可。私密运行数据与历史绑定配置不属于开源内容；公共示例不会继承原用户的授权。跨机器安装与运行仍需单独验证。
+Public web sharing, broader provider connections, extended automatic memory, and complex parallel merging are later scope. Earlier requirements and example implementations are historical rather than the current entry workflow.

@@ -1,0 +1,117 @@
+{
+  "date": "2026-10-27",
+  "localAcceptedBuild": "95b4c2fad64dbdfcd96d2297aca0c4c6a2947ce8fd38cd054bef1d1bb4a53ac7",
+  "scope": "Public source snapshot; paths normalized in the macOS fallback only. Runtime data and installed app not included.",
+  "files": [
+    {
+      "path": "omo-pilot/server.mjs",
+      "localAcceptedSourceSha256": "2d02013d03139f9707a2612bd6680cce5dca65bdd9978cf9691671acff975735",
+      "publicSourceSha256": "2d02013d03139f9707a2612bd6680cce5dca65bdd9978cf9691671acff975735"
+    },
+    {
+      "path": "omo-pilot/conversation-store.mjs",
+      "localAcceptedSourceSha256": "128337fd283ef70f5e044313cc0b799413914c67000771ab0ed9e24dc7c899e5",
+      "publicSourceSha256": "128337fd283ef70f5e044313cc0b799413914c67000771ab0ed9e24dc7c899e5"
+    },
+    {
+      "path": "omo-pilot/conversation-models.mjs",
+      "localAcceptedSourceSha256": "665fa71716d951e48bf8cd7b134320fa2d0d32777737dacceff2ada2690ae3b0",
+      "publicSourceSha256": "665fa71716d951e48bf8cd7b134320fa2d0d32777737dacceff2ada2690ae3b0"
+    },
+    {
+      "path": "omo-pilot/conversation-command.mjs",
+      "localAcceptedSourceSha256": "d2f9f103f757742e6bf37b49ce9296b8f381fe5a1c04fa7d4bb8155ce7ba331b",
+      "publicSourceSha256": "d2f9f103f757742e6bf37b49ce9296b8f381fe5a1c04fa7d4bb8155ce7ba331b"
+    },
+    {
+      "path": "omo-pilot/conversation-checks.mjs",
+      "localAcceptedSourceSha256": "3398a36bc5eacdaad142c0ddc942fde34b3d51807ef9a618dbb5676610cbbae6",
+      "publicSourceSha256": "3398a36bc5eacdaad142c0ddc942fde34b3d51807ef9a618dbb5676610cbbae6"
+    },
+    {
+      "path": "omo-pilot/conversation-preview.mjs",
+      "localAcceptedSourceSha256": "cb73f8d849b6b8d1654b2e8b7adc961c9661cf57df1151f55caef45610cf1060",
+      "publicSourceSha256": "cb73f8d849b6b8d1654b2e8b7adc961c9661cf57df1151f55caef45610cf1060"
+    },
+    {
+      "path": "omo-pilot/native-rpc-runner.mjs",
+      "localAcceptedSourceSha256": "2ae8e3b4586d2c6bed50727015f70229205d206cc4abc379e05a4bc3cfbd524f",
+      "publicSourceSha256": "2ae8e3b4586d2c6bed50727015f70229205d206cc4abc379e05a4bc3cfbd524f"
+    },
+    {
+      "path": "omo-pilot/codex-provider-protocol.mjs",
+      "localAcceptedSourceSha256": "17a02234df4e15cf01bd1a2827cf73660e140d49c45f91b4606461fe289cceed",
+      "publicSourceSha256": "17a02234df4e15cf01bd1a2827cf73660e140d49c45f91b4606461fe289cceed"
+    },
+    {
+      "path": "omo-pilot/codex-bridge-provider.mjs",
+      "localAcceptedSourceSha256": "abbaa8d77555ff69d269a193af6b14e8e6787c44e760ef76b69914a31d9d07f2",
+      "publicSourceSha256": "abbaa8d77555ff69d269a193af6b14e8e6787c44e760ef76b69914a31d9d07f2"
+    },
+    {
+      "path": "app/codex-role-adapter.mjs",
+      "localAcceptedSourceSha256": "09d966ffd8d0263763fd4978c6814875c24ba4612f98b97ff81ae8bd02f501e8",
+      "publicSourceSha256": "09d966ffd8d0263763fd4978c6814875c24ba4612f98b97ff81ae8bd02f501e8"
+    },
+    {
+      "path": "app/public/conversation-app.js",
+      "localAcceptedSourceSha256": "18e742ab2ef59d1da9b09f772e9e205f9459320911b20e1602f2d313ffc3cedb",
+      "publicSourceSha256": "18e742ab2ef59d1da9b09f772e9e205f9459320911b20e1602f2d313ffc3cedb"
+    },
+    {
+      "path": "app/public/conversation-format.js",
+      "localAcceptedSourceSha256": "bbcfa07963c6bac2b0a4bbb49cb44f33296895688cba3f0b4e7017d5ec7b97f4",
+      "publicSourceSha256": "bbcfa07963c6bac2b0a4bbb49cb44f33296895688cba3f0b4e7017d5ec7b97f4"
+    },
+    {
+      "path": "app/public/conversation-workbench.css",
+      "localAcceptedSourceSha256": "aae81fd0a93845cada64878a4729b60d2f1a5ab3bcbfa5b181d12901b11f9c62",
+      "publicSourceSha256": "aae81fd0a93845cada64878a4729b60d2f1a5ab3bcbfa5b181d12901b11f9c62"
+    },
+    {
+      "path": "app/public/native-project-hotspot.js",
+      "localAcceptedSourceSha256": "af4d014a17e7c55ee6102c9044edf6e0c091e42d2d74fb47361f544ea71fbed0",
+      "publicSourceSha256": "af4d014a17e7c55ee6102c9044edf6e0c091e42d2d74fb47361f544ea71fbed0"
+    },
+    {
+      "path": "app/public/office-game.js",
+      "localAcceptedSourceSha256": "5a8eabe6c95997c469649ce7214eafcdcd69b4c4a52d8fcd6023d03644a87f5b",
+      "publicSourceSha256": "5a8eabe6c95997c469649ce7214eafcdcd69b4c4a52d8fcd6023d03644a87f5b"
+    },
+    {
+      "path": "app/public/index.html",
+      "localAcceptedSourceSha256": "3a27c8a62803d51473c5a21bda7954c217c2cf7c9310bc70d72bf6d875b113ab",
+      "publicSourceSha256": "3a27c8a62803d51473c5a21bda7954c217c2cf7c9310bc70d72bf6d875b113ab"
+    },
+    {
+      "path": "app/public/styles.css",
+      "localAcceptedSourceSha256": "14cf7da76201a77bab779099c3324a836db8b137c4e01d04db5751fb329ff9c8",
+      "publicSourceSha256": "14cf7da76201a77bab779099c3324a836db8b137c4e01d04db5751fb329ff9c8"
+    },
+    {
+      "path": "scripts/open-personal-agent-p0.mjs",
+      "localAcceptedSourceSha256": "e8acd21e919734c04aea9c041b4c152f196bdb12da3275e1470e145cf20b1495",
+      "publicSourceSha256": "e8acd21e919734c04aea9c041b4c152f196bdb12da3275e1470e145cf20b1495"
+    },
+    {
+      "path": "scripts/start-personal-agent-p0.mjs",
+      "localAcceptedSourceSha256": "6940884344644ed39620e01293a5f3988f98ec369cb8ee60273a43dd32f57e56",
+      "publicSourceSha256": "6940884344644ed39620e01293a5f3988f98ec369cb8ee60273a43dd32f57e56"
+    },
+    {
+      "path": "omo-pilot/macos-app/IrixiMacApp.swift",
+      "localAcceptedSourceSha256": "e5db7de1eb61e9637efe375af7b4ccbb7c4450ee1502d1a697bec2f4c26746d8",
+      "publicSourceSha256": "1dbbbfa03dd7ddb5ce5649b2077ace85c8e264bb0de308973056d18974348dbb"
+    },
+    {
+      "path": "omo-pilot/macos-app/build-mac-app.mjs",
+      "localAcceptedSourceSha256": "09df593b407c81d4e2883d671d393db08550b48951c420d2a976ef7d25e650e6",
+      "publicSourceSha256": "09df593b407c81d4e2883d671d393db08550b48951c420d2a976ef7d25e650e6"
+    },
+    {
+      "path": "scripts/install-browser-checker.mjs",
+      "localAcceptedSourceSha256": "d30614a43f487bbb3cc19ec6711725bb08ea19db953863e0168001eab7f8a63b",
+      "publicSourceSha256": "d30614a43f487bbb3cc19ec6711725bb08ea19db953863e0168001eab7f8a63b"
+    }
+  ]
+}

@@ -315,6 +315,33 @@ test('到达同事后重复点击会再次确认已到身边，不会误报不�
   assert.equal(dispatched.some(({ type }) => type === 'irixi:unreachable'), false);
 });
 
+test('弹窗打开时忽略Phaser命中的同事；普通点击仍能打开对话', async () => {
+  const runtime = movementScene();
+  runtime.scene.playerCell = { x: 14, y: 12 };
+  const writer = { role: 'writer', name: '小鼠写作员', interactionPoint: ROOM.workstations.writer.interactionPoint, statusText: { text: '待命' } };
+  const originalQuerySelector = document.querySelector;
+  const originalActiveElement = document.activeElement;
+  let dialogOpen = true;
+  document.querySelector = (selector) => selector === 'dialog[open]' && dialogOpen ? {} : null;
+  runtime.scene.inputLocked = OfficeScene.prototype.inputLocked.bind(runtime.scene);
+  try {
+    await runtime.scene.talkTo(writer);
+    assert.deepEqual(dispatched, [], 'a modal close press routed through Phaser must not open an occluded coworker');
+
+    dialogOpen = false;
+    document.activeElement = { matches: (selector) => selector.includes('textarea'), closest: () => null };
+    assert.equal(runtime.scene.inputLocked(), true, 'the ordinary chat textarea still locks movement');
+    await runtime.scene.talkTo(writer);
+    runtime.scene.people = new Map([['writer', writer]]);
+    createOfficeBridge(runtime.scene).talkToRole('writer');
+    assert.deepEqual(dispatched.map(({ type }) => type), ['irixi:coworker', 'irixi:arrival', 'irixi:coworker', 'irixi:arrival'],
+      'ordinary coworker clicks and the role entry remain available while chat text is focused');
+  } finally {
+    document.querySelector = originalQuerySelector;
+    document.activeElement = originalActiveElement;
+  }
+});
+
 test('移动中鼹鼠被点击会先暂停，猫头鹰目标改为其实时脚点邻格', async () => {
   const runtime = movementScene();
   runtime.scene.playerCell = { x: 15, y: 13 };

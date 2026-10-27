@@ -1,10 +1,44 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { canCreateNativeTask, canReviewNativeCandidate, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeCoworkerTask, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, renderNativeMarkup, renderTaskListMarkup, safeLocalPath } from '../public/native-product-state.js';
+import { bindNativeGoalSubmission, canCreateNativeTask, canReviewNativeCandidate, continuationDraftMatches, continuationReplyTargetsChat, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeCoworkerTask, nativeExecutionStatusLabel, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, persistNativeGoalDraft, renderNativeMarkup, renderTaskListMarkup, restoreNativeGoalDraft, retainBoundCheckboxChoice, retainContinuationSourceSelection, safeLocalPath } from '../public/native-product-state.js';
 
 const PLAN_SHA256 = 'a'.repeat(64);
 const INSTRUCTION_SNAPSHOT_SHA256 = 'f'.repeat(64);
+
+test('目标表单提交失败后重绘与会话恢复保留全量草稿和同一幂等请求号', () => {
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  let sequence = 0;
+  const newId = () => `goal-request-${String(++sequence).padStart(12, '0')}`;
+  const binding = 'task-a:goal-v1';
+  let draft = restoreNativeGoalDraft(binding, '旧目标', storage, newId);
+  draft.values = { statement: '新目标正文', successCriteria: '条件一\n条件二', boundaries: '只改范围内文件' };
+  const submittedBody = { statement: '新目标正文', successCriteria: ['条件一', '条件二'], boundaries: ['只改范围内文件'] };
+  const first = bindNativeGoalSubmission(draft, submittedBody, newId);
+  persistNativeGoalDraft(draft, storage); // model the saved request followed by an HTTP failure
+
+  draft = restoreNativeGoalDraft(binding, '旧目标', storage, newId); // render and reload after failure
+  assert.deepEqual(draft.values, { statement: '新目标正文', successCriteria: '条件一\n条件二', boundaries: '只改范围内文件' });
+  const retry = bindNativeGoalSubmission(draft, submittedBody, newId);
+  assert.equal(retry.requestId, first.requestId);
+  assert.equal(retry.serialized, first.serialized);
+
+  const edited = bindNativeGoalSubmission(draft, { ...submittedBody, boundaries: ['新边界'] }, newId);
+  assert.notEqual(edited.requestId, retry.requestId);
+  persistNativeGoalDraft(draft, storage);
+  assert.notEqual(restoreNativeGoalDraft('task-a:goal-v2', '新版基准', storage, newId).requestId, edited.requestId);
+});
+
+test('过期计划不再显示可启动状态；过期在途工作保留待核实语义', () => {
+  const deadline = new Date(Date.now() - 60_000).toISOString();
+  const expiredPlanned = { current: true, status: 'planned', execution: { phase: 'planned', deadline, modelCalls: [] },
+    taskLifecycle: { inFlight: false }, native: { actions: { canApprovePlan: true }, plan: { sha256: PLAN_SHA256 } } };
+  assert.equal(nativeExecutionStatusLabel(expiredPlanned), '本轮执行已到期，调用记录保留');
+  const expiredInFlight = { ...expiredPlanned, taskLifecycle: { inFlight: true }, execution: { ...expiredPlanned.execution,
+    modelCalls: [{ status: 'running' }] } };
+  assert.equal(nativeExecutionStatusLabel(expiredInFlight), '执行时限已到，仍有在途工作待核实');
+});
 
 test('办公室职能归属独立于原生执行角色', () => {
   assert.equal(officeFunctionForStation('researcher'), 'learning');
@@ -12,9 +46,43 @@ test('办公室职能归属独立于原生执行角色', () => {
   assert.equal(officeFunctionForStation('writer'), 'utility');
   assert.equal(officeFunctionForStation('reviewer'), 'game');
   assert.equal(officeFunctionForStation('steward'), 'agent');
-  assert.equal(officeFunctionForStation('archivist'), 'archive');
+  assert.equal(officeFunctionForStation('archivist'), 'document');
   assert.equal(officeFunctionForStation('developer'), null);
   assert.equal(officeFunctionForCoworker({ officeRole: 'researcher', role: 'writer', stationRole: 'writer' }), 'learning');
+});
+
+test('需求快照覆盖不足时保留确认阻断原因供界面说明', () => {
+  const reason = '原 PASS 报告未覆盖本执行批准的工作要求。请先对当前候选重新独立审阅；原报告会保留在历史记录中。';
+  const value = normalizeNativeProductState(projection({
+    nextStep: '旧 PASS 未覆盖本执行批准的工作要求。',
+    artifact: { id: 'artifact-old-pass', version: 2, status: 'candidate', candidateSha256: 'a'.repeat(64),
+      review: { id: 'review-old-pass', passed: true, nativeVerdict: 'PASS', fullOutputSha256: 'b'.repeat(64) }, confirmation: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', sessions: [],
+      actions: { canConfirm: false, confirmationBlockReason: reason, instructionSnapshotValid: true } },
+  }));
+  assert.equal(value.native.actions.canConfirm, false);
+  assert.equal(value.native.actions.confirmationBlockReason, reason);
+  const office = nativeOfficeWaitingPresentation(value, {
+    id: value.taskId, status: 'waiting_user', goal: { activeVersionId: value.goalVersionId },
+  });
+  assert.equal(office.statusLabel, '新增要求尚未检查');
+  assert.match(office.office.detail, /批准的工作要求/u);
+});
+
+test('快照绑定无效时将状态显示为需恢复，不误导为可重新审阅', () => {
+  const reason = '本执行批准的工作要求快照缺失或绑定校验失败；当前候选不能确认，也不能启动 Reviewer。';
+  const value = normalizeNativeProductState(projection({
+    nextStep: reason,
+    artifact: { id: 'artifact-invalid-snapshot', version: 2, status: 'candidate', candidateSha256: 'a'.repeat(64),
+      review: { id: 'review-old-pass', passed: true, nativeVerdict: 'PASS', fullOutputSha256: 'b'.repeat(64) }, confirmation: null },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1', sessions: [],
+      actions: { canConfirm: false, canReview: false, confirmationBlockReason: reason, instructionSnapshotValid: false } },
+  }));
+  assert.equal(value.native.actions.instructionSnapshotValid, false);
+  const office = nativeOfficeWaitingPresentation(value, {
+    id: value.taskId, status: 'waiting_user', goal: { activeVersionId: value.goalVersionId },
+  });
+  assert.equal(office.statusLabel, '批准要求快照异常');
 });
 
 test('NPC优先打开当前同职能任务，否则找最近已结算同职能任务，不跨职能代选', () => {
@@ -64,6 +132,29 @@ function projection(overrides = {}) {
   };
 }
 
+test('计划补充要求保留文本并绑定重新规划和仅批准旧计划的请求', () => {
+  const value = normalizeNativeProductState(projection({
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      actions: { canApprovePlan: true, canReplan: true },
+      plan: { text: '原计划', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256,
+        instructionIds: ['original'], pendingInstructions: [{ id: 'added', text: '增加负责人列' }] } },
+  }));
+  assert.equal(value.native.actions.canReplan, true);
+  assert.deepEqual(value.native.plan.pendingInstructions, [{ id: 'added', text: '增加负责人列' }]);
+  const replan = nativeActionPayload(value, 'replan');
+  assert.equal(replan.expectedTaskId, value.taskId);
+  assert.equal(replan.expectedExecutionId, value.execution.id);
+  assert.equal(replan.expectedPlanSha256, PLAN_SHA256);
+  assert.equal(replan.expectedInstructionSnapshotSha256, INSTRUCTION_SNAPSHOT_SHA256);
+  assert.deepEqual(replan.expectedPendingInstructionIds, ['added']);
+  const approve = nativeActionPayload(value, 'approve_plan');
+  assert.equal(approve.acknowledgeExcludedInstructions, undefined, 'payload builder never supplies consent');
+  assert.deepEqual(approve.expectedPendingInstructionIds, ['added']);
+  assert.equal(nativeActionPayload(value, 'approve_plan', { acknowledgeExcludedInstructions: true }).acknowledgeExcludedInstructions, true);
+  value.native.actions.canReplan = false;
+  assert.throws(() => nativeActionPayload(value, 'replan'), /不能/u);
+});
+
 test('接受目标条件与原生当前阶段独立于未改写的执行账本', () => {
   const value = normalizeNativeProductState(projection({
     status: 'ready_to_export',
@@ -93,6 +184,17 @@ test('execution 未提供调用记录时保持待核，不从 native sessions �
     execution: { id: 'execution-1', phase: 'prepared', stopReason: null, modelCalls: [] },
   }));
   assert.deepEqual(explicitNone.execution.modelCalls, []);
+});
+
+test('共享预算投影保留共同用量与原截止，供正常界面显示', () => {
+  const deadlineAt = '2026-10-24T13:00:00.000Z';
+  const value = normalizeNativeProductState(projection({
+    execution: { id: 'execution-2', phase: 'planned', stopReason: null, deadline: deadlineAt, modelCalls: [],
+      sharedBudget: { maxModelCalls: 8, usedCalls: 3, remainingCalls: 5, deadlineAt } },
+  }));
+  assert.deepEqual(value.execution.sharedBudget, {
+    maxModelCalls: 8, usedCalls: 3, remainingCalls: 5, deadlineAt,
+  });
 });
 
 test('完成态产品投影保留后台登记项目供工程选择器使用', () => {
@@ -204,6 +306,7 @@ test('新建原生任务保持空成功条件和边界，不由前端补写', ()
     title: '', statement: '目标', successCriteria: ['条件一', '条件二'], boundaries: ['边界一'],
   });
   assert.equal(normalizeNativeTaskDraft({ statement: '目标', functionId: 'game' }).functionId, 'game');
+  assert.equal(normalizeNativeTaskDraft({ statement: '学习目标', functionId: 'learning' }).functionId, 'learning');
   assert.equal(Object.hasOwn(normalizeNativeTaskDraft({ statement: '旧目标', functionId: 'reviewer' }), 'functionId'), false);
 });
 
@@ -350,6 +453,37 @@ test('待选范围与待授权是正常设置态，并保留完整目标和登�
     action: 'prepare_run',
     expectedGoalVersionId: task.goalVersionId,
   });
+  assert.deepEqual(nativeActionPayload(authorized, 'prepare_run', {
+    expectedScopeFingerprint: project.scopeFingerprint, shareBudgetAcrossConfirmedContinuation: true,
+  }), {
+    expectedScopeFingerprint: project.scopeFingerprint, shareBudgetAcrossConfirmedContinuation: true,
+    action: 'prepare_run', expectedGoalVersionId: task.goalVersionId,
+  }, 'the normal prepare payload preserves the user selected shared budget option');
+  const failedForFreshRound = normalizeNativeProductState(projection({
+    taskLifecycle: { status: 'failed', inFlight: false },
+    execution: { id: 'run-failed', phase: 'partial', stopReason: 'omo_role_session_failed', bindingCurrent: true,
+      deadline: '2026-10-12T01:20:00.000Z', modelCalls: Array.from({ length: 5 }, (_, index) => ({ id: `call-${index}`, status: 'completed' })) },
+    registry: { status: 'registered', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: 'registry-failed' },
+    product: { ...projection().product, registrySha256: 'registry-failed' },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-failed',
+      actions: { canStartNewSharedBudgetExecution: true } },
+    artifact: null,
+  }));
+  assert.equal(failedForFreshRound.native.actions.canStartNewSharedBudgetExecution, true);
+  assert.deepEqual(nativeActionPayload(failedForFreshRound, 'prepare_run', {
+    mode: 'new_execution', startFreshSharedBudget: true, newExecutionRequestId: 'fresh-round-request-001',
+  }), {
+    mode: 'new_execution', startFreshSharedBudget: true, newExecutionRequestId: 'fresh-round-request-001',
+    action: 'prepare_run', expectedGoalVersionId: 'goal-native-1', expectedTaskId: 'task-native-1',
+    expectedExecutionId: 'run-failed', expectedRegistrySha256: 'registry-failed',
+    expectedProjectId: 'project-1', expectedScopeFingerprint: 'scope-1',
+  });
+  assert.throws(() => nativeActionPayload(authorized, 'prepare_run', {
+    mode: 'new_execution', startFreshSharedBudget: true, newExecutionRequestId: 'fresh-round-request-001',
+  }), /未开放安全/u);
+  assert.throws(() => nativeActionPayload(authorized, 'prepare_run', {
+    expectedScopeFingerprint: project.scopeFingerprint, shareBudgetAcrossConfirmedContinuation: 'yes',
+  }), /布尔/u);
 
   const failed = normalizeNativeProductState({
     task, status: 'ready_to_run', taskLifecycle: { status: 'failed', inFlight: false },
@@ -470,6 +604,122 @@ test('只从当前任务、当前范围和无在途工作的只读绑定恢复�
   assert.equal(normalizeNativeProductState({ ...raw, registry: { ...raw.registry, registrySha256: 'd'.repeat(64) } }).currentResultRecovery, null);
 });
 
+test('从已确认版本继续时只生成与当前执行及明确新要求绑定的载荷', () => {
+  const digest = (char) => char.repeat(64);
+  const source = {
+    taskId: 'task-native-1', goalVersionId: 'goal-native-1', projectId: 'project-1', scopeFingerprint: 'scope-1',
+    artifactId: 'artifact-confirmed-2', artifactVersion: 2, artifactGoalVersionId: 'goal-native-1',
+    sourceExecutionId: 'execution-archived', sourceRegistrySha256: digest('1'),
+    candidateSha256: digest('2'), diffSha256: digest('3'), reviewId: 'review-confirmed-2',
+    reviewFullOutputSha256: digest('4'), approvalId: 'approval-confirmed-2', patchSha256: digest('5'),
+    zipSha256: digest('6'), manifestSha256: digest('7'),
+    instructions: [{ id: 'instruction-new-1', text: '明确选择的续改要求。' }],
+  };
+  const value = normalizeNativeProductState(projection({
+    setup: { projects: [], selectedProject: { projectId: 'project-1', label: '项目', scopeFingerprint: 'scope-1', current: true },
+      selectedScope: { projectId: 'project-1', scopeFingerprint: 'scope-1', goalVersionId: 'goal-native-1', authorized: true, current: true } },
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      continuationSources: [source], actions: { canInstructions: true, canContinueFromConfirmed: true } },
+  }));
+  const saved = nativeActionPayload(value, 'instructions', {
+    instructionArtifactId: source.artifactId, text: '从这版继续修复导出。', requestId: 'continue-source-001',
+  });
+  assert.equal(saved.expectedArtifactId, source.artifactId);
+  assert.equal(saved.expectedExecutionId, value.execution.id);
+  assert.equal(saved.expectedRegistrySha256, value.product.registrySha256);
+  const prepared = nativeActionPayload(value, 'prepare_run', {
+    mode: 'continue_from_confirmed_artifact', sourceArtifactId: source.artifactId, instructionIds: ['instruction-new-1'], continuationRequestId: 'continuation-request-001',
+    shareBudgetAcrossConfirmedContinuation: false,
+  });
+  assert.equal(prepared.expectedSourceArtifactId, source.artifactId);
+  assert.equal(prepared.expectedSourceReviewId, source.reviewId);
+  assert.equal(prepared.expectedSourceZipSha256, source.zipSha256);
+  assert.deepEqual(prepared.expectedInstructionIds, ['instruction-new-1']);
+  const taskScoped = nativeActionPayload(value, 'prepare_run', {
+    mode: 'continue_from_confirmed_artifact', sourceArtifactId: source.artifactId,
+    instructionIds: ['instruction-new-1'], continuationRequestId: 'continuation-request-task-scoped',
+    continuationBudgetPolicy: 'task_scoped_no_aggregate_v1', acknowledgeNoAggregateLimit: true,
+  });
+  assert.equal(taskScoped.continuationBudgetPolicy, 'task_scoped_no_aggregate_v1');
+  assert.equal(taskScoped.acknowledgeNoAggregateLimit, true);
+  assert.equal(Object.hasOwn(prepared, 'shareBudgetAcrossConfirmedContinuation'), false,
+    'confirmed-source continuation cannot choose or reset its server-owned budget');
+  assert.throws(() => nativeActionPayload(value, 'prepare_run', {
+    mode: 'continue_from_confirmed_artifact', sourceArtifactId: source.artifactId, instructionIds: [], continuationRequestId: 'continuation-request-002',
+  }), /选择来源和本次新要求/u);
+  assert.throws(() => nativeActionPayload(value, 'prepare_run', {
+    mode: 'continue_from_confirmed_artifact', sourceArtifactId: 'spoofed', instructionIds: ['instruction-new-1'], continuationRequestId: 'continuation-request-003',
+  }), /选择来源和本次新要求/u);
+});
+
+test('首次无累计上限执行载荷绑定当前目标与已授权范围并保留空执行 CAS', () => {
+  const digest = (char) => char.repeat(64);
+  const value = normalizeNativeProductState({
+    task: { id: 'task-native-1', title: '初始任务', statement: '当前目标', goalVersionId: 'goal-native-1',
+      successCriteria: [], boundaries: [] },
+    status: 'ready_to_run', execution: null, registry: null,
+    canPrepareRun: true,
+    setup: { projects: [{ projectId: 'project-1', label: '隔离项目', scopeFingerprint: digest('a'), current: true }],
+      selectedProject: { projectId: 'project-1', label: '隔离项目', scopeFingerprint: digest('a'), current: true },
+      selectedScope: { projectId: 'project-1', scopeFingerprint: digest('a'), goalVersionId: 'goal-native-1', authorized: true, current: true } },
+    native: { actions: { canStartTaskScopedExecution: true } },
+    links: { actions: '/api/product/tasks/task-native-1/actions' },
+  });
+  const payload = nativeActionPayload(value, 'prepare_run', {
+    mode: 'new_execution', startTaskScopedExecution: true, newExecutionRequestId: 'first-task-run-001',
+    continuationBudgetPolicy: 'task_scoped_no_aggregate_v1', acknowledgeNoAggregateLimit: true,
+    expectedTaskId: 'forged-task', expectedGoalVersionId: 'forged-goal', expectedExecutionId: 'forged-run',
+    expectedRegistrySha256: 'forged-registry', expectedProjectId: 'forged-project', expectedScopeFingerprint: digest('f'),
+  });
+  assert.equal(payload.continuationBudgetPolicy, 'task_scoped_no_aggregate_v1');
+  assert.equal(payload.acknowledgeNoAggregateLimit, true);
+  assert.equal(payload.expectedTaskId, 'task-native-1');
+  assert.equal(payload.expectedGoalVersionId, 'goal-native-1');
+  assert.equal(payload.expectedExecutionId, null);
+  assert.equal(payload.expectedRegistrySha256, null);
+  assert.equal(payload.expectedProjectId, 'project-1');
+  assert.equal(payload.expectedScopeFingerprint, digest('a'));
+  assert.throws(() => nativeActionPayload(value, 'prepare_run', {
+    mode: 'new_execution', startTaskScopedExecution: true, newExecutionRequestId: 'first-task-run-002',
+  }), /明确选择无累计上限/u);
+  assert.throws(() => nativeActionPayload({ ...value, native: { ...value.native, actions: { canStartTaskScopedExecution: false } } }, 'prepare_run', {
+    mode: 'new_execution', startTaskScopedExecution: true, newExecutionRequestId: 'first-task-run-003',
+    continuationBudgetPolicy: 'task_scoped_no_aggregate_v1', acknowledgeNoAggregateLimit: true,
+  }), /未开放安全/u);
+});
+
+test('项目记录只显示已确认版本号，不把审计编号作为用户文案', () => {
+  const value = normalizeNativeProductState(projection({
+    native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
+      confirmedDeliveries: [{ artifactId: 'artifact-secret-id', artifactVersion: 3, approvalId: 'approval-secret-id' }], actions: {} },
+  }));
+  assert.deepEqual(value.native.confirmedDeliveries, [
+    { artifactId: 'artifact-secret-id', artifactVersion: 3, approvalId: 'approval-secret-id', hasDocument: false },
+  ]);
+});
+
+test('轮询保留同任务同来源选择；切任务或来源失效时清空', () => {
+  const sources = [{ artifactId: 'artifact-v1' }, { artifactId: 'artifact-v2' }];
+  assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-1', 'artifact-v1', sources), 'artifact-v1');
+  assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-2', 'artifact-v1', sources), '');
+  assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-1', 'artifact-removed', sources), '');
+  const selectedSharedBudget = retainBoundCheckboxChoice({ binding: 'task-binding-1', checked: true }, 'task-binding-1');
+  assert.equal(selectedSharedBudget.checked, true, 'a normal status refresh preserves the choice for the same bound task/scope');
+  assert.equal(retainBoundCheckboxChoice(selectedSharedBudget, 'task-binding-2').checked, false,
+    'changing task or scope resets the unsaved choice');
+});
+
+test('续改回执只作用于原项目聊天，草稿变化后不清理', () => {
+  const submitted = { taskId: 'task-a', projectId: 'project-a' };
+  assert.equal(continuationReplyTargetsChat('task-a', 'project-a', false, submitted), true);
+  assert.equal(continuationReplyTargetsChat('task-b', 'project-b', false, submitted), false);
+  assert.equal(continuationReplyTargetsChat('task-a', 'project-a', true, submitted), false);
+  const draft = { text: '修改标题', requestId: 'request-a', continuationRequestId: 'prepare-a' };
+  assert.equal(continuationDraftMatches(draft, draft), true);
+  assert.equal(continuationDraftMatches({ ...draft, text: '后来输入的新内容' }, draft), false);
+  assert.equal(continuationDraftMatches({ ...draft, requestId: 'request-b' }, draft), false);
+});
+
 test('prepared execution without a persisted Lead plan is waiting to start, not plan-ready', () => {
   const waiting = normalizeNativeProductState(projection({
     status: 'waiting_user', execution: { id: 'run-planned', phase: 'planned', stopReason: null }, artifact: null,
@@ -512,7 +762,7 @@ test('原生来源标记的真实 roster 与 Lead 可以在无 session 时投影
   }));
   assert.deepEqual(value.team.map((agent) => agent.id), ['product-lead', 'product-senior-developer', 'product-reviewer']);
   assert.equal(value.native.runAgentId, 'product-lead');
-  assert.deepEqual(value.native.plan, { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256, instructionCount: 0, instructionIds: [] });
+  assert.deepEqual(value.native.plan, { text: '先核对范围，再修改并检查。', sha256: PLAN_SHA256, instructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256, instructionCount: 0, instructionIds: [], pendingInstructions: [] });
   assert.equal(value.native.agents.find((agent) => agent.id === value.native.runAgentId).isTeamLead, true);
   assert.equal(value.native.actions.canRun, true);
   assert.equal(value.native.actions.canContinue, false);
@@ -524,11 +774,13 @@ test('原生来源标记的真实 roster 与 Lead 可以在无 session 时投影
     action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
     expectedPlanSha256: PLAN_SHA256,
     expectedInstructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256,
+    expectedPendingInstructionIds: [],
   });
   assert.deepEqual(nativeActionPayload(value, 'approve_plan', { expectedPlanSha256: 'spoofed-plan' }), {
     action: 'approve_plan', expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
     expectedPlanSha256: PLAN_SHA256,
     expectedInstructionSnapshotSha256: INSTRUCTION_SNAPSHOT_SHA256,
+    expectedPendingInstructionIds: [],
   });
   const officeTask = nativeProductAsOfficeTask(value);
   assert.deepEqual(nativeCoworkerPresence(value, officeTask, 'writer'), {
@@ -756,7 +1008,7 @@ test('审阅通过与确认分别映射为等待确认和允许下载', () => {
 test('UNVERIFIED 本身不代表已停止；仅服务端明确的结算失败绑定显示停止', () => {
   const unverified = normalizeNativeProductState(projection({
     status: 'waiting_user', taskLifecycle: { status: 'idle', inFlight: false },
-    execution: { id: 'execution-1', phase: 'partial', stopReason: 'native_process_failed', deadline: '2026-10-22T14:31:02.757Z' },
+    execution: { id: 'execution-1', phase: 'partial', stopReason: 'native_process_failed', deadline: '2099-10-22T14:31:02.757Z' },
     artifact: { id: 'artifact-1', version: 1, candidateSha256: 'a'.repeat(64), hostCheck: { passed: true },
       review: { id: 'review-attempt-1', passed: false, nativeVerdict: 'UNVERIFIED', scopeOutcome: 'unverified' } },
     nextStep: '宿主固定检查已通过，但当前候选尚无有效的同版独立审阅结果；等待审阅完成后再查看成果，不要确认或交付。',
@@ -906,7 +1158,7 @@ test('当前执行的非Reviewer预留前失败不要求候选SHA，并排除身
     status: 'failed', error: '工作区准备失败。', createdAt: '2026-10-19T12:00:01.000Z' };
   const value = normalizeNativeProductState(projection({
     status: 'in_progress', taskLifecycle: { status: 'running', inFlight: false },
-    execution: { id: 'execution-1', phase: 'executing', deadline: '2026-10-19T12:20:00.000Z', modelCalls: [
+    execution: { id: 'execution-1', phase: 'executing', deadline: '2099-10-19T12:20:00.000Z', modelCalls: [
       { status: 'completed' }, { status: 'completed' },
     ] },
     native: { source: 'openoffice-native', bindingCurrent: true, registrySha256: 'registry-1',
@@ -1078,7 +1330,24 @@ test('原生动作始终绑定当前目标、执行与产品登记，调用输�
     expectedExecutionId: 'execution-1',
     expectedRegistrySha256: 'registry-1',
   });
-  assert.equal(nativeActionPayload(product, 'materials', { name: '资料', text: '正文' }).action, 'materials');
+  const materialsProduct = normalizeNativeProductState(projection({
+    product: { ...projection().product, workspaceScopeFingerprint: 'a'.repeat(64) },
+    native: { ...projection().native, actions: { canRun: true, canMaterials: true } },
+  }));
+  assert.throws(() => nativeActionPayload(product, 'materials', {
+    name: '资料', text: '正文', requestId: 'material-request-0001',
+  }), /当前任务未开放材料保存/u);
+  assert.throws(() => nativeActionPayload(materialsProduct, 'materials', {
+    name: '资料', text: '正文', requestId: 'bad',
+  }), /材料请求编号无效/u);
+  assert.deepEqual(nativeActionPayload(materialsProduct, 'materials', {
+    name: '资料', text: '正文', requestId: 'material-request-0001',
+    expectedTaskId: 'task-forged', expectedProjectId: 'project-forged', expectedScopeFingerprint: 'b'.repeat(64),
+  }), {
+    name: '资料', text: '正文', requestId: 'material-request-0001', action: 'materials',
+    expectedGoalVersionId: 'goal-native-1', expectedExecutionId: 'execution-1', expectedRegistrySha256: 'registry-1',
+    expectedTaskId: 'task-native-1', expectedProjectId: 'project-1', expectedScopeFingerprint: 'a'.repeat(64),
+  });
 });
 
 test('记忆保存和修正绑定当前目标，但不附带无关执行与登记字段', () => {
@@ -1120,6 +1389,21 @@ test('设置态没有执行或产品登记时仍可提交设置动作，但不�
     expectedCandidateSha256: null, expectedDiffSha256: null,
   });
   assert.throws(() => nativeActionPayload(draft, 'run'), /执行绑定不完整/);
+});
+
+test('新版目标动作保留表单打开时的任务目标绑定和稳定请求编号', () => {
+  const draft = normalizeNativeProductState(projection({
+    status: 'draft', execution: null, product: null,
+    native: { bindingCurrent: false, sessions: [], actions: { canGoal: true } },
+  }));
+  const body = { statement: 'new goal', successCriteria: [], boundaries: [], expectedTaskId: 'task-native-1',
+    expectedGoalVersionId: 'goal-native-1', requestId: 'goal-request-0001' };
+  assert.deepEqual(nativeActionPayload(draft, 'goal', body), {
+    ...body, action: 'goal',
+  });
+  assert.throws(() => nativeActionPayload(draft, 'goal', { ...body, expectedTaskId: 'task-other' }), /旧任务版本/);
+  assert.throws(() => nativeActionPayload(draft, 'goal', { ...body, expectedGoalVersionId: 'goal-old' }), /旧任务版本/);
+  assert.throws(() => nativeActionPayload(draft, 'goal', { ...body, requestId: 'unstable' }), /旧任务版本/);
 });
 
 test('旧范围已失效时只给设置输入附带独立旧绑定，不恢复旧执行资格', () => {

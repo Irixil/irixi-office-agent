@@ -4,16 +4,216 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { codexRoleProcessTimeoutMs, OmoPilotController } from './server.mjs';
+import { __test as serverTest, codexRoleProcessTimeoutMs, OmoPilotController } from './server.mjs';
 import { createFakeOmoRoleRunner } from './test-omo-runner.mjs';
 import { buildCodexRoleInvocation } from '../app/codex-role-adapter.mjs';
 import { buildUnifiedPatch, readRelativeFileMap, sha256Buffer, sha256Text } from './omo-harness.mjs';
+import { createNativeToolReceiptCollector } from './native-rpc-runner.mjs';
+
+function attachFixtureInstructionSnapshot(task, project) {
+  const artifact = task.artifacts?.find((item) => item.id === (task.execution.continuationSource?.artifactId || task.activeArtifactId)) || null;
+  const snapshot = {
+    taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, projectId: project.projectId,
+    scopeFingerprint: project.scopeFingerprint,
+    artifact: artifact ? { id: artifact.id, version: artifact.version, candidateSha256: artifact.candidateSha256, diffSha256: artifact.diffSha256 } : null,
+    continuationSource: task.execution.continuationSource ? structuredClone(task.execution.continuationSource) : null,
+    instructions: [], materials: [],
+  };
+  task.execution.plan.instructionSnapshot = { ...snapshot, sha256: sha256Text(JSON.stringify(snapshot)) };
+}
+
+function attachFixturePlanApproval(task) {
+  const instructionSnapshotSha256 = task.execution.plan.instructionSnapshot?.sha256;
+  task.execution.planApproval = {
+    id: `plan-approval-${task.execution.id}`, actor: 'user', action: 'approve_plan', approvedAt: new Date().toISOString(),
+    taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, planSha256: task.execution.plan.sha256,
+    instructionSnapshotSha256,
+  };
+  task.execution.approvedInstructionSnapshotSha256 = instructionSnapshotSha256;
+}
 
 test('Reviewer gets a bounded six-minute CLI window while Lead and Chat keep their limits', () => {
   assert.equal(codexRoleProcessTimeoutMs('Reviewer'), 360_000);
   assert.equal(codexRoleProcessTimeoutMs('Developer'), 360_000);
   assert.equal(codexRoleProcessTimeoutMs('Lead'), 60_000);
   assert.equal(codexRoleProcessTimeoutMs('Chat'), 30_000);
+});
+
+test('native OmO tool receipts persist in the same task ledger with execution and work-item binding', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-tool-receipt-ledger-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const controller = new OmoPilotController({ runtimeDir, omoRoleRunner: createFakeOmoRoleRunner() });
+  await controller.init();
+  const task = { id: 'task-receipt-1', goalVersionId: 'goal-receipt-1', title: 'receipt fixture', statement: 'persist receipts',
+    successCriteria: [], boundaries: [], artifacts: [], registry: { registrySha256: 'r'.repeat(64) },
+    execution: { id: 'run-receipt-1', toolReceipts: [], modelCalls: [], sessions: [], omoSessions: [], reviewRounds: [] } };
+  controller.state.tasks.push(task);
+  const binding = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, workItemId: 'work-dev-1', artifactId: null, artifactVersion: null,
+    candidateSha256: null, diffSha256: null, reviewRoundId: null };
+  const raw = { binding, sessionId: 'session-receipt-1', sequence: 1, eventType: 'end', toolCallId: 'tool-call-1',
+    toolName: 'read', content: { text: '{"ok":true}', utf8Bytes: 11, sha256: sha256Text('{"ok":true}'), sha256Scope: 'sanitized-json-copy',
+      truncated: false, structurallyLimited: false }, isError: false, occurredAt: new Date().toISOString() };
+  await controller.persistNativeToolReceipt(task, binding, { role: 'Developer', phase: 'execute', workItemId: 'work-dev-1' }, raw);
+  const stored = JSON.parse(await fs.readFile(path.join(runtimeDir, 'pilot-ledger.json'), 'utf8')).tasks[0].execution.toolReceipts[0];
+  assert.equal(stored.taskId, task.id);
+  assert.equal(stored.binding.executionId, task.execution.id);
+  assert.equal(stored.workItemId, 'work-dev-1');
+  const { sha256, ...body } = stored;
+  assert.equal(sha256, sha256Text(JSON.stringify(body)));
+  await controller.persistNativeToolReceipt(task, binding, { role: 'Developer', phase: 'execute', workItemId: 'work-dev-1' }, raw);
+  assert.equal(task.execution.toolReceipts.length, 1, 'duplicate receipt identity is idempotent');
+});
+
+test('review receipt evidence binds the exact artifact version and labels content excerpts incomplete', () => {
+  const task = { id: 'task-evidence', goalVersionId: 'goal-evidence', registry: { registrySha256: 'r'.repeat(64) },
+    execution: { id: 'run-evidence', toolReceipts: [] } };
+  const receiptBody = { taskId: task.id, binding: { taskId: task.id, goalVersionId: task.goalVersionId,
+    executionId: task.execution.id, registrySha256: task.registry.registrySha256 }, role: 'Developer', phase: 'execute',
+    workItemId: 'work-dev-evidence', sessionId: 'session-evidence', sequence: 1, eventType: 'end', toolCallId: 'call-evidence',
+    toolName: 'read', isError: false, content: { text: 'x'.repeat(500), utf8Bytes: 500, sha256: sha256Text(JSON.stringify('x'.repeat(500))),
+      sha256Scope: 'sanitized-json-copy', truncated: false, structurallyLimited: false, redactions: [] } };
+  const receipt = { ...receiptBody, sha256: sha256Text(JSON.stringify(receiptBody)) };
+  task.execution.toolReceipts.push(receipt);
+  const binding = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, artifactId: 'artifact-evidence', artifactVersion: 2,
+    candidateSha256: 'a'.repeat(64), diffSha256: 'd'.repeat(64) };
+  const evidence = serverTest.buildToolReceiptEvidence(task, binding, null,
+    [{ sessionId: receipt.sessionId, sequence: receipt.sequence, sha256: receipt.sha256 }], ['work-dev-evidence']);
+  assert.equal(evidence.binding.artifactVersion, 2);
+  assert.deepEqual(evidence.binding.sourceWorkItemIds, ['work-dev-evidence']);
+  assert.equal(evidence.complete, false);
+  assert.ok(evidence.problems.some((item) => item.issue === 'content_excerpted_for_review'));
+  assert.equal(evidence.sourceEvents[0].content.text.length, 420);
+  assert.equal(evidence.sourceEvents[0].content.textExcerpted, true);
+});
+
+test('persisted native session overflow keeps candidate tool evidence incomplete after the 512-event prefix', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-tool-receipt-overflow-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const controller = new OmoPilotController({ runtimeDir, omoRoleRunner: createFakeOmoRoleRunner() });
+  await controller.init();
+  const task = { id: 'task-receipt-overflow', goalVersionId: 'goal-receipt-overflow', title: 'overflow fixture',
+    statement: 'retain the incomplete session marker', successCriteria: [], boundaries: [], artifacts: [],
+    registry: { registrySha256: 'r'.repeat(64), projectId: 'project-overflow', scopeFingerprint: 's'.repeat(64) },
+    execution: { id: 'run-receipt-overflow', toolReceipts: [], toolReceiptSessions: [], modelCalls: [], sessions: [], omoSessions: [], reviewRounds: [] } };
+  controller.state.tasks.push(task);
+  const binding = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, workItemId: 'work-dev-overflow', artifactId: null,
+    artifactVersion: null, candidateSha256: null, diffSha256: null, reviewRoundId: null };
+  const rawReceipts = [];
+  const collector = createNativeToolReceiptCollector({ binding, onReceipt: (receipt) => rawReceipts.push(receipt) });
+  collector.setSessionId('session-overflow');
+  collector.ingest({ type: 'tool_execution_start', toolCallId: 'first', toolName: 'read', args: {} });
+  for (let i = 0; i < 510; i += 1) collector.ingest({ type: 'tool_execution_update', toolCallId: 'first', partialResult: { index: i } });
+  collector.ingest({ type: 'tool_execution_end', toolCallId: 'first', toolName: 'read', result: { ok: true }, isError: false });
+  collector.ingest({ type: 'tool_execution_start', toolCallId: 'second', toolName: 'read', args: {} });
+  collector.ingest({ type: 'tool_execution_end', toolCallId: 'second', toolName: 'read', result: { error: 'missing' }, isError: true });
+  const collected = collector.finish();
+  assert.equal(collected.receipts.length, 512);
+  assert.equal(collected.complete, false);
+  assert.equal(collected.overflowEventCount, 2);
+  task.execution.toolReceipts = rawReceipts.map((receipt) => {
+    const record = { ...structuredClone(receipt), taskId: task.id, role: 'Developer', phase: 'execute',
+      workItemId: binding.workItemId, binding: structuredClone(binding) };
+    record.sha256 = sha256Text(JSON.stringify(record));
+    return record;
+  });
+  await controller.save();
+  await controller.persistNativeToolReceiptSummary(task, binding, { role: 'Developer', phase: 'execute', workItemId: binding.workItemId }, {
+    sessionId: 'session-overflow', receiptCount: collected.receipts.length, complete: collected.complete,
+    overflowEventCount: collected.overflowEventCount, errorCounts: { receipt_event_limit: 2 },
+  });
+  const persisted = JSON.parse(await fs.readFile(path.join(runtimeDir, 'pilot-ledger.json'), 'utf8')).tasks[0].execution.toolReceiptSessions[0];
+  assert.equal(persisted.complete, false);
+  assert.equal(persisted.overflowEventCount, 2);
+  const reviewBinding = { ...binding, artifactId: 'artifact-overflow', artifactVersion: 1,
+    candidateSha256: 'c'.repeat(64), diffSha256: 'd'.repeat(64) };
+  const evidence = serverTest.buildToolReceiptEvidence(task, reviewBinding, null,
+    task.execution.toolReceipts.map(({ sessionId, sequence, sha256 }) => ({ sessionId, sequence, sha256 })), [binding.workItemId]);
+  assert.equal(evidence.complete, false);
+  assert.ok(evidence.problems.some((problem) => problem.issue === 'tool_receipt_session_incomplete'));
+  assert.equal(evidence.sourceSessionSummaries[0].overflowEventCount, 2);
+});
+
+test('actual OmO role decision composition includes the full pinned DZ core and only its bound TaskStore state', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-host-task-prompt-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  let composedPrompt = '';
+  const codexRoleRunner = async (request) => {
+    composedPrompt = request.prompt;
+    const invocation = buildCodexRoleInvocation(request.role, request.prompt, request.executionMode);
+    const reservation = await request.reserve({ role: request.role, binding: request.binding,
+      idempotencyKey: request.idempotencyKey, deadlineAt: request.deadlineAt, maxCalls: 8,
+      promptSha256: sha256Text(JSON.stringify(invocation)), promptUtf8Bytes: Buffer.byteLength(invocation.prompt, 'utf8') });
+    await request.recordCliSpawn(reservation);
+    await request.recordTurnStarted(reservation);
+    const output = { text: 'synthetic provider response' };
+    const workCompleted = await request.acceptResult(output, { role: request.role, binding: request.binding });
+    await request.settle(reservation, { status: 'model_returned', workCompleted, cliSpawned: true, turnStarted: true,
+      providerRequestCount: null, output });
+    return { status: 'model_returned', workCompleted, roleCallReserved: true, cliSpawned: true, turnStarted: true,
+      providerRequestCount: null, output };
+  };
+  const omoRoleRunner = async ({ runModelDecision, signal }) => {
+    await runModelDecision({ provider: 'irixi-codex-bridge', modelId: 'gpt-6-luna',
+      messages: [{ role: 'user', content: 'synthetic request' }],
+      tools: [{ name: 'read', description: 'Read an allowed file.', parameters: { type: 'object' } }] }, 1, signal);
+    return { status: 'model_returned', output: { text: 'native role returned' }, sessionId: 'session-host-task-prompt' };
+  };
+  const controller = new OmoPilotController({ runtimeDir, codexRoleRunner, omoRoleRunner });
+  await controller.init();
+  const taskId = 'task-host-prompt';
+  const goalVersionId = 'goal-host-prompt';
+  const executionId = 'run-host-prompt';
+  const scopeFingerprint = 's'.repeat(64);
+  const registrySha256 = 'r'.repeat(64);
+  const project = { projectId: 'project-host-prompt', scopeFingerprint, rootPath: runtimeDir,
+    allowedWritePaths: ['core.js'], checks: [{ id: 'syntax-check', name: 'Syntax' }] };
+  const task = { id: taskId, goalVersionId, title: 'Prompt fixture', statement: 'Maintain one current goal',
+    successCriteria: ['Keep scope'], boundaries: ['Only core.js'], instructions: [], artifacts: [
+      { id: 'old-confirmed', version: 1, goalVersionId: 'goal-old', executionId: 'run-old',
+        registrySha256: 'old-registry-sha', candidateSha256: 'old-candidate-sha', diffSha256: 'old-diff-sha',
+        confirmation: { approvalId: 'approval-old-confirmed', artifactVersion: 1, goalVersionId: 'goal-old',
+          executionId: 'run-old', registrySha256: 'old-registry-sha', candidateSha256: 'old-candidate-sha',
+          diffSha256: 'old-diff-sha', reviewId: 'old-review', reviewFullOutputSha256: 'old-review-output-sha',
+          confirmedAt: '2026-10-25T00:00:00.000Z' },
+        review: { id: 'old-review', nativeVerdict: 'PASS', fullOutputSha256: 'old-review-output-sha' } },
+      { id: 'current-candidate', version: 2, goalVersionId, executionId,
+        confirmation: null, review: { nativeVerdict: 'UNVERIFIED' } },
+    ], selectedScope: { projectId: project.projectId, scopeFingerprint, goalVersionId, authorized: true, current: true },
+    registry: { projectId: project.projectId, scopeFingerprint, registrySha256, current: true, bindingCurrent: true, status: 'registered' },
+    execution: { id: executionId, phase: 'planned', status: 'planned', bindingCurrent: true,
+      deadline: new Date(Date.now() + 60_000).toISOString(), leadAgentId: 'lead-host-prompt',
+      devAgentId: 'dev-host-prompt', reviewerAgentId: 'review-host-prompt', modelCalls: [], sessions: [], omoSessions: [],
+      workItems: [], reviewRounds: [], planApprovalStatus: 'not_ready' } };
+  controller.state.tasks.push(task);
+  controller.state.tasks.push({ id: 'other-task', goalVersionId: 'other-goal', statement: 'secret-cross-task-state' });
+  await controller.save();
+  const prompt = 'Registered Lead prompt with task-specific work.';
+  const result = await controller.runOmoCodexProductRole(task, { role: 'Lead', workItemId: 'work-plan-host-prompt',
+    phase: 'planning', prompt, project, expectedBinding: { taskId, goalVersionId, executionId, registrySha256,
+      scopeFingerprint, workItemId: 'work-plan-host-prompt', artifactId: null, artifactVersion: null,
+      candidateSha256: null, diffSha256: null } });
+  assert.equal(result.status, 'model_returned');
+  const savedCall = task.execution.modelCalls[0];
+  assert.equal(savedCall.status, 'completed');
+  assert.match(prompt, /task-specific work/u);
+  assert.match(composedPrompt, /COMPLETE FROZEN DZ CORE/u);
+  assert.match(composedPrompt, /Maintain one current goal/u);
+  assert.match(composedPrompt, /"currentGoal":false/u);
+  assert.match(composedPrompt, /"currentGoal":true/u);
+  assert.match(composedPrompt, /"confirmed":true/u, 'snapshot uses the Host approval record schema for a historical confirmed artifact');
+  assert.match(composedPrompt, /"confirmed":false/u, 'unconfirmed current candidate stays explicitly unconfirmed');
+  assert.doesNotMatch(composedPrompt, /secret-cross-task-state/u);
+  assert.match(composedPrompt, /core\.js/u);
+  assert.deepEqual(task.artifacts[0].confirmation, { approvalId: 'approval-old-confirmed', artifactVersion: 1,
+    goalVersionId: 'goal-old', executionId: 'run-old', registrySha256: 'old-registry-sha',
+    candidateSha256: 'old-candidate-sha', diffSha256: 'old-diff-sha', reviewId: 'old-review',
+    reviewFullOutputSha256: 'old-review-output-sha',
+    confirmedAt: '2026-10-25T00:00:00.000Z' }, 'model prompt composition cannot change Host confirmation state');
 });
 
 function candidateSha256ForTest(filesMap) {
@@ -25,24 +225,6 @@ async function fixturePatch(sourceRoot, candidateRoot, changedPaths) {
   const patch = buildUnifiedPatch(await readRelativeFileMap(sourceRoot), await readRelativeFileMap(candidateRoot), changedPaths);
   const diffSha256 = sha256Text(patch);
   return { patch, diffSha256, patchSha256: diffSha256 };
-}
-
-function makePlanInstructionSnapshotForTest(task, project) {
-  const artifact = task.artifacts?.find((item) => item.id === task.activeArtifactId) || null;
-  const body = {
-    taskId: task.id,
-    goalVersionId: task.goalVersionId,
-    executionId: task.execution.id,
-    registrySha256: task.registry?.registrySha256 || null,
-    projectId: project.projectId,
-    scopeFingerprint: project.scopeFingerprint,
-    artifact: artifact ? {
-      id: artifact.id, version: artifact.version,
-      candidateSha256: artifact.candidateSha256, diffSha256: artifact.diffSha256,
-    } : null,
-    instructions: [],
-  };
-  return { ...body, sha256: sha256Text(JSON.stringify(body)) };
 }
 
 test('Codex role is durably reserved before CLI spawn and completed output replays without a second start', async (t) => {
@@ -132,6 +314,12 @@ test('settled Developer CLI failure closes the current execution without retryin
       status: 'cli_failed', workCompleted: false, cliSpawned: true, turnStarted: true, error,
       diagnostics: {
         cliPathExists: true, startupCwdExists: true, authorizedWorkspaceExists: true,
+        providerDecisionContract: {
+          role: 'Developer', actualToolNames: ['read', 'write'], requiredToolNames: ['read'],
+          outputSchemaSha256: 'e'.repeat(64), outputSchemaUtf8Bytes: 1234,
+          cliOutputSchemaArgBound: true, codexInternalSchemaReceipt: 'not_exposed',
+          schemaText: 'DO_NOT_PERSIST_SCHEMA_BODY', prompt: 'DO_NOT_PERSIST_PROMPT', path: '/private/schema.json',
+        },
         toolExecutionTrace: 'observed', toolExecutionEventCount: 15,
         toolExecutions: Array.from({ length: 15 }, (_unused, index) => ({
           eventType: 'item.completed', itemId: `item-${index}`, toolType: 'command_execution',
@@ -181,6 +369,11 @@ test('settled Developer CLI failure closes the current execution without retryin
   assert.deepEqual(task.execution.modelCalls.map((call) => [call.role, call.status]), [['Lead', 'completed'], ['Developer', 'failed']]);
   assert.equal(task.execution.sessions.at(-1).status, 'failed');
   assert.equal(task.execution.modelCalls[1].cliDiagnostics.toolExecutionTrace, 'observed');
+  assert.deepEqual(task.execution.modelCalls[1].cliDiagnostics.providerDecisionContract, {
+    role: 'Developer', actualToolNames: ['read', 'write'], requiredToolNames: ['read'],
+    outputSchemaSha256: 'e'.repeat(64), outputSchemaUtf8Bytes: 1234,
+    cliOutputSchemaArgBound: true, codexInternalSchemaReceipt: 'not_exposed',
+  });
   assert.equal(task.execution.modelCalls[1].cliDiagnostics.toolExecutionEventCount, 15);
   assert.equal(task.execution.modelCalls[1].cliDiagnostics.toolExecutions.length, 12);
   assert.equal(task.execution.modelCalls[1].cliDiagnostics.toolExecutions.at(-1).cwdExists, false);
@@ -195,11 +388,12 @@ test('settled Developer CLI failure closes the current execution without retryin
   assert.equal(task.execution.modelCalls[1].cliDiagnostics.toolExecutions.at(-1).commandExecutableHint, null);
   const serializedDiagnostics = JSON.stringify(task.execution.modelCalls[1].cliDiagnostics);
   assert.ok(Buffer.byteLength(serializedDiagnostics, 'utf8') < 16_384);
-  for (const secret of ['secret-token-123456789', 'private-value', '/Users/alice', 'secret-work', 'PRIVATE_SCRIPT_FROM_ERROR', 'PRIVATE_ABSOLUTE_PATH', 'PRIVATE_RELATIVE_CWD', 'PRIVATE_RELATIVE_WORKDIR', 'PRIVATE_SHELL', 'PRIVATE_MARKER']) {
+  for (const secret of ['secret-token-123456789', 'private-value', '/Users/alice', 'secret-work', 'PRIVATE_SCRIPT_FROM_ERROR', 'PRIVATE_ABSOLUTE_PATH', 'PRIVATE_RELATIVE_CWD', 'PRIVATE_RELATIVE_WORKDIR', 'PRIVATE_SHELL', 'PRIVATE_MARKER', 'DO_NOT_PERSIST_SCHEMA_BODY', 'DO_NOT_PERSIST_PROMPT', '/private/schema.json']) {
     assert.equal(serializedDiagnostics.includes(secret), false);
   }
   assert.equal(task.artifacts.length, 0);
   assert.equal(runnerCalls, 1, 'a settled failed Developer call is not automatically retried or followed by Reviewer');
+  assert.equal(globalThis.__IRIXI_TEST_ISOLATION__?.blockedCalls || 0, 0);
 });
 
 test('repeated prepare reuses every live phase without resetting its deadline or call ledger', async (t) => {
@@ -276,14 +470,20 @@ test('a settled expired execution is archived before a new prepared execution re
     (error) => error.code === 'EXECUTION_REQUIRES_EXPLICIT_NEW_RUN' && error.statusCode === 409);
   assert.equal(task.execution.id, 'run-expired');
   assert.equal(task.executionHistory, undefined);
-  const result = await controller.handleTaskAction(task.id, { action: 'prepare_run', mode: 'new_execution' });
+  const result = await controller.handleTaskAction(task.id, { action: 'prepare_run', mode: 'new_execution',
+    startFreshSharedBudget: true, newExecutionRequestId: 'test-prepare-history-new',
+    expectedTaskId: task.id, expectedGoalVersionId: task.goalVersionId,
+    expectedExecutionId: task.execution.id, expectedRegistrySha256: task.registry.registrySha256,
+    expectedProjectId: project.projectId, expectedScopeFingerprint: project.scopeFingerprint,
+  });
+  const prepared = controller.state.tasks.find((item) => item.id === task.id);
   assert.equal(result.ok, true);
-  assert.notEqual(task.execution.id, 'run-expired');
-  assert.equal(task.execution.modelCalls.length, 0);
-  assert.equal(task.executionHistory.length, 1);
-  assert.equal(task.executionHistory[0].execution.id, 'run-expired');
-  assert.equal(task.executionHistory[0].execution.deadline, oldDeadline);
-  assert.equal(task.executionHistory[0].execution.modelCalls[0].id, 'call-failed');
+  assert.notEqual(prepared.execution.id, 'run-expired');
+  assert.equal(prepared.execution.modelCalls.length, 0);
+  assert.equal(prepared.executionHistory.length, 1);
+  assert.equal(prepared.executionHistory[0].execution.id, 'run-expired');
+  assert.equal(prepared.executionHistory[0].execution.deadline, oldDeadline);
+  assert.equal(prepared.executionHistory[0].execution.modelCalls[0].id, 'call-failed');
 });
 
 test('chat request IDs replay the saved reply and reject changed content under the same ID', async (t) => {
@@ -311,6 +511,196 @@ test('chat request IDs replay the saved reply and reject changed content under t
   assert.ok(first.ok);
 });
 
+test('goal replacement persists an idempotent target with no current execution', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-goal-replacement-no-run-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const controller = new OmoPilotController({ runtimeDir, preferLocalFallback: true });
+  await controller.init();
+  controller.listRegisteredProjects = async () => [];
+  const task = { id: 'task-goal-no-run', goalVersionId: 'goal-one', title: 'Goal replacement',
+    statement: 'Old target', successCriteria: [], boundaries: [], goalVersions: [{ id: 'goal-one', statement: 'Old target' }],
+    artifacts: [{ id: 'old-artifact', goalVersionId: 'goal-one' }], instructions: [] };
+  controller.state.tasks.push(task);
+  const payload = { action: 'goal', expectedTaskId: task.id, expectedGoalVersionId: 'goal-one', requestId: 'goal-request-0001',
+    statement: 'New target', successCriteria: [], boundaries: [] };
+  const first = await controller.handleTaskAction(task.id, payload);
+  assert.notEqual(first.goalVersionId, 'goal-one');
+  assert.equal(task.goalVersionId, first.goalVersionId);
+  assert.equal(task.goalVersions.length, 2);
+  assert.deepEqual(task.artifacts, [{ id: 'old-artifact', goalVersionId: 'goal-one' }]);
+  assert.equal((await controller.handleTaskAction(task.id, payload)).idempotentReplay, true);
+  await assert.rejects(controller.handleTaskAction(task.id, { ...payload, statement: 'Different target' }),
+    (error) => error.code === 'GOAL_REQUEST_CONFLICT' && error.statusCode === 409);
+  await assert.rejects(controller.handleTaskAction(task.id, { ...payload, requestId: 'goal-request-0002', expectedGoalVersionId: 'goal-one' }),
+    (error) => error.code === 'GOAL_VERSION_STALE' && error.statusCode === 409);
+});
+
+test('goal replacement aborts concurrent non-continuation native roles and rejects late results', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-goal-replacement-abort-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const started = [];
+  const controller = new OmoPilotController({ runtimeDir, preferLocalFallback: true, omoRoleRunner: async (request) => {
+    assert.equal(request.stopOnIdenticalDecision, false);
+    let markStarted;
+    const ready = new Promise((resolve) => { markStarted = resolve; });
+    let release;
+    const result = new Promise((resolve) => { release = () => resolve({ status: 'model_returned',
+      output: { text: 'late result must not be adopted' }, sessionId: `late-${started.length + 1}` }); });
+    markStarted();
+    started.push({ ready, signal: request.signal, release });
+    await ready;
+    return result;
+  } });
+  await controller.init();
+  controller.listRegisteredProjects = async () => [];
+  const projectId = 'synthetic-project';
+  const scopeFingerprint = 'b'.repeat(64);
+  const registrySha256 = 'a'.repeat(64);
+  const task = { id: 'task-goal-live', goalVersionId: 'goal-live', title: 'Goal replacement', statement: 'Old target',
+    successCriteria: [], boundaries: [], goalVersions: [{ id: 'goal-live', statement: 'Old target' }], artifacts: [], instructions: [],
+    selectedScope: { authorized: true, current: true, projectId, scopeFingerprint, goalVersionId: 'goal-live' },
+    registry: { projectId, scopeFingerprint, registrySha256 },
+    execution: { id: 'run-non-continuation', phase: 'executing', status: 'running', bindingCurrent: true,
+      deadline: new Date(Date.now() + 60_000).toISOString(), plan: { text: 'Old plan' }, planApprovalStatus: 'saved',
+      modelCalls: [], sessions: [], omoSessions: [], workItems: [], reviewRounds: [] } };
+  controller.state.tasks.push(task);
+  const binding = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256, scopeFingerprint, workItemId: 'work-live-role', artifactId: null, artifactVersion: null,
+    candidateSha256: null, diffSha256: null };
+  const roleRuns = ['Developer', 'Frontend Developer'].map((role) => controller.runOmoCodexProductRole(task, {
+    role, workItemId: `work-${role.replaceAll(' ', '-')}`, phase: 'implementation', prompt: 'Synthetic pending role.',
+    expectedBinding: { ...binding, workItemId: `work-${role.replaceAll(' ', '-')}` },
+  }));
+  const settledRoles = Promise.allSettled(roleRuns);
+  while (started.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.executionAbortControllers.get(task.execution.id).size, 2);
+  const updated = await controller.handleTaskAction(task.id, { action: 'goal', expectedTaskId: task.id,
+    expectedGoalVersionId: 'goal-live', requestId: 'goal-request-live1', statement: 'New target', successCriteria: [], boundaries: [] });
+  assert.notEqual(updated.goalVersionId, 'goal-live');
+  assert.equal(started.every((entry) => entry.signal.aborted), true);
+  assert.equal(task.execution.phase, 'partial');
+  assert.equal(task.execution.stopReason, 'goal_replaced');
+  assert.match(task.execution.failureReason, /尚未全部结清/u);
+  for (const entry of started) entry.release();
+  const results = await settledRoles;
+  assert.deepEqual(results.map((item) => item.status), ['rejected', 'rejected']);
+  assert.ok(results.every((item) => item.reason.code === 'STALE_ROLE_BINDING'));
+  assert.equal(task.execution.phase, 'cancelled', JSON.stringify({ phase: task.execution.phase, stopReason: task.execution.stopReason, failureReason: task.execution.failureReason, bindingCurrent: task.execution.bindingCurrent }));
+  assert.equal(task.execution.stopReason, 'goal_replaced');
+  assert.equal(task.execution.bindingCurrent, false);
+  assert.equal(task.planReconciliations[0].status, 'required');
+  assert.equal(task.execution.omoSessions.every((session) => session.status === 'stale_binding'), true);
+  assert.equal(controller.executionAbortControllers.has(task.execution.id), false);
+});
+
+test('a normal run releases the input lock while Lead waits so goal replacement aborts and rejects its late plan', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-run-goal-lock-race-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  let markLeadStarted;
+  let releaseLead;
+  let leadSignal;
+  const leadStarted = new Promise((resolve) => { markLeadStarted = resolve; });
+  const leadResult = new Promise((resolve) => { releaseLead = () => resolve({
+    status: 'model_returned', output: { text: 'A deliberately late plan that must be rejected.' }, sessionId: 'late-lead-goal-race',
+  }); });
+  const project = { projectId: 'project-run-goal-race', scopeFingerprint: 'scope-run-goal-race',
+    label: 'Synthetic', rootPath: runtimeDir, allowedWritePaths: ['document.md'], projectKind: 'document' };
+  const controller = new OmoPilotController({ runtimeDir, preferLocalFallback: false, omoRoleRunner: async ({ role, signal }) => {
+    assert.equal(role, 'Lead');
+    leadSignal = signal;
+    markLeadStarted();
+    return leadResult;
+  } });
+  await controller.init();
+  controller.modelStatus = () => ({ liveExecutionBlocked: false });
+  controller.listRegisteredProjects = async () => [project];
+  const task = { id: 'task-run-goal-race', goalVersionId: 'goal-run-goal-race', title: 'Run/goal race', functionId: 'document',
+    statement: 'Old goal', successCriteria: ['Old criterion'], boundaries: ['Only index.html'], goalVersions: [
+      { id: 'goal-run-goal-race', statement: 'Old goal', successCriteria: ['Old criterion'], boundaries: ['Only index.html'] },
+    ], instructions: [], rejectionHistory: [], artifacts: [], conversations: [], memoryEntries: [],
+    selectedScope: { authorized: true, current: true, projectId: project.projectId,
+      scopeFingerprint: project.scopeFingerprint, goalVersionId: 'goal-run-goal-race' },
+    registry: { status: 'registered', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint,
+      registrySha256: 'r'.repeat(64), current: true, bindingCurrent: true },
+    execution: { id: 'run-run-goal-race', phase: 'planned', status: 'planned', bindingCurrent: true,
+      deadline: new Date(Date.now() + 60_000).toISOString(), leadAgentId: 'lead-race', devAgentId: 'dev-race',
+      reviewerAgentId: 'review-race', modelCalls: [], sessions: [], omoSessions: [], workItems: [], reviewRounds: [] } };
+  controller.state.tasks.push(task);
+
+  const runPromise = controller.handleTaskAction(task.id, { action: 'run' });
+  await leadStarted;
+  assert.equal(task.execution.planInProgress, true);
+  await assert.rejects(controller.handleTaskAction(task.id, { action: 'run' }),
+    (error) => error.code === 'PLAN_GENERATION_IN_FLIGHT', 'a second run is rejected while the first Lead is waiting');
+  await assert.rejects(controller.handleTaskAction(task.id, { action: 'materials', expectedTaskId: task.id,
+    expectedGoalVersionId: task.goalVersionId, expectedProjectId: project.projectId,
+    expectedScopeFingerprint: project.scopeFingerprint, expectedExecutionId: task.execution.id,
+    expectedRegistrySha256: task.registry.registrySha256 }),
+  (error) => error.code === 'MATERIAL_TASK_BUSY', 'materials remain unavailable while the Lead is pending');
+  let timeout;
+  const goalPromise = controller.handleTaskAction(task.id, { action: 'goal', expectedTaskId: task.id,
+    expectedGoalVersionId: task.goalVersionId, requestId: 'goal-request-run-race1', statement: 'New goal',
+    successCriteria: ['New criterion'], boundaries: ['Keep the scope'] });
+  const goalBeforeLeadSettles = await Promise.race([
+    goalPromise.then(() => true),
+    new Promise((resolve) => { timeout = setTimeout(() => resolve(false), 250); }),
+  ]);
+  clearTimeout(timeout);
+  if (!goalBeforeLeadSettles) {
+    releaseLead();
+    await runPromise.catch(() => {});
+    await goalPromise;
+    assert.fail('The real goal handler stayed queued behind the pending Lead.');
+  }
+
+  assert.equal(leadSignal.aborted, true, 'goal replacement aborts the pending Lead signal');
+  assert.notEqual(task.goalVersionId, 'goal-run-goal-race');
+  assert.equal(task.execution.bindingCurrent, false);
+  releaseLead();
+  await assert.rejects(runPromise, (error) => error.code === 'STALE_ROLE_BINDING');
+  assert.equal(task.execution.plan, undefined, 'the late plan is never adopted');
+  assert.equal(task.execution.phase, 'cancelled');
+  assert.equal(task.execution.stopReason, 'goal_replaced');
+  assert.equal(controller.executionAbortControllers.has(task.execution.id), false);
+  assert.deepEqual(task.execution.modelCalls, [], 'the pending fake Lead made no provider/model call');
+  assert.equal(globalThis.__IRIXI_TEST_ISOLATION__?.blockedCalls || 0, 0);
+});
+
+test('goal replacement exposes a stopped pending request after target persistence fails and the same ID can finish', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-goal-replacement-retry-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const controller = new OmoPilotController({ runtimeDir, preferLocalFallback: true });
+  await controller.init();
+  controller.listRegisteredProjects = async () => [];
+  const task = { id: 'task-goal-retry', goalVersionId: 'goal-old', title: 'Goal replacement', statement: 'Old target',
+    successCriteria: [], boundaries: [], goalVersions: [{ id: 'goal-old', statement: 'Old target' }], artifacts: [], instructions: [],
+    execution: { id: 'run-old', phase: 'executing', status: 'running', bindingCurrent: true, modelCalls: [], sessions: [], omoSessions: [],
+      workItems: [], reviewRounds: [], plan: { text: 'Old plan' }, planApprovalStatus: 'saved' } };
+  controller.state.tasks.push(task);
+  const saveMutation = controller.persistMutation.bind(controller);
+  let writes = 0;
+  controller.persistMutation = (...args) => {
+    writes += 1;
+    if (writes === 2) return Promise.reject(new Error('isolated target-write failure'));
+    return saveMutation(...args);
+  };
+  const payload = { action: 'goal', expectedTaskId: task.id, expectedGoalVersionId: 'goal-old', requestId: 'goal-request-retry1',
+    statement: 'New target', successCriteria: [], boundaries: [] };
+  await assert.rejects(controller.handleTaskAction(task.id, payload), /isolated target-write failure/u);
+  assert.equal(task.goalVersionId, 'goal-old');
+  assert.equal(task.execution.phase, 'cancelled');
+  assert.equal(task.execution.stopReason, 'goal_replacement_pending');
+  assert.equal(task.goalRequests[payload.requestId].status, 'cancellation_persisted');
+  const saved = JSON.parse(await fs.readFile(path.join(runtimeDir, 'pilot-ledger.json'), 'utf8')).tasks[0];
+  assert.equal(saved.goalVersionId, 'goal-old');
+  assert.equal(saved.execution.stopReason, 'goal_replacement_pending');
+  assert.equal(saved.goalRequests[payload.requestId].status, 'cancellation_persisted');
+  const result = await controller.handleTaskAction(task.id, payload);
+  assert.notEqual(result.goalVersionId, 'goal-old');
+  assert.equal(task.goalRequests[payload.requestId].status, 'committed');
+  assert.equal(task.goalVersions.length, 2);
+});
+
 test('synthetic Lead approval to automatic Reviewer completes one candidate with three durable role starts', async (t) => {
   const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-qa-positive-flow-'));
   const projectRoot = path.join(runtimeDir, 'project');
@@ -333,6 +723,22 @@ test('synthetic Lead approval to automatic Reviewer completes one candidate with
     let output;
     if (request.role === 'Lead') output = { text: 'Plan: update the authorized HTML fixture and run Host checks.' };
     else if (request.role === 'Developer') {
+      assert.equal(task.execution.phase, 'executing');
+      assert.equal(task.execution.status, 'running');
+      assert.equal(task.execution.planApprovalStatus, 'saved');
+      assert.equal(task.execution.planApproval?.actor, 'user');
+      assert.equal(task.execution.planApproval?.action, 'approve_plan');
+      assert.equal(task.execution.planApproval?.planSha256, task.execution.plan.sha256);
+      assert.equal(task.execution.planApproval?.instructionSnapshotSha256, task.execution.plan.instructionSnapshot.sha256);
+      assert.equal(task.execution.workItems.find((item) => item.id === `work-plan-${task.execution.id}`)?.status, 'completed');
+      assert.equal(task.execution.workItems.find((item) => item.id === `work-dev-${task.execution.id}`)?.status, 'running');
+      const saved = JSON.parse(await fs.readFile(controller.stateFile, 'utf8'));
+      const savedExecution = saved.tasks.find((item) => item.id === task.id).execution;
+      assert.equal(savedExecution.planApproval?.id, task.execution.planApproval.id, 'Host persists the exact approval before Developer starts');
+      assert.equal(savedExecution.status, 'running');
+      assert.equal(savedExecution.workItems.find((item) => item.id === `work-dev-${task.execution.id}`)?.status, 'running');
+      assert.match(request.prompt, /"planApproval":\{"id":"plan-approval-/u,
+        'the Developer host snapshot carries the persisted approval record');
       await fs.writeFile(path.join(request.workspacePath, 'index.html'), '<!doctype html><html><body>after</body></html>');
       output = { text: 'Updated the authorized fixture.' };
     } else {
@@ -373,10 +779,28 @@ test('synthetic Lead approval to automatic Reviewer completes one candidate with
 
   await controller.handleTaskAction(task.id, { action: 'run' });
   assert.equal(task.execution.phase, 'awaiting_plan_approval');
-  await controller.handleTaskAction(task.id, {
-    action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
-    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256,
-  });
+  const persistMutation = controller.persistMutation.bind(controller);
+  let failApprovalWrite = true;
+  controller.persistMutation = (...args) => {
+    if (failApprovalWrite) {
+      failApprovalWrite = false;
+      return Promise.reject(new Error('isolated approval persistence failure'));
+    }
+    return persistMutation(...args);
+  };
+  await assert.rejects(controller.handleTaskAction(task.id, { action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
+    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256 }), /isolated approval persistence failure/u);
+  assert.equal(task.execution.phase, 'awaiting_plan_approval', 'failed persistence does not mutate live execution state');
+  assert.equal(task.execution.status, 'waiting_user');
+  assert.equal(task.execution.planApprovalStatus, 'not_persisted');
+  assert.equal(task.execution.planApproval, undefined);
+  assert.equal(calls.filter((call) => call.role === 'Developer').length, 0, 'failed persistence cannot launch Developer');
+  const failedWriteSnapshot = JSON.parse(await fs.readFile(controller.stateFile, 'utf8'));
+  const failedWriteExecution = failedWriteSnapshot.tasks.find((item) => item.id === task.id).execution;
+  assert.equal(failedWriteExecution.planApproval, undefined);
+  assert.equal(failedWriteExecution.phase, 'awaiting_plan_approval');
+  await controller.handleTaskAction(task.id, { action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
+    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256 });
 
   assert.deepEqual(calls.map((call) => call.role), ['Lead', 'Developer', 'Reviewer'], JSON.stringify({ modelCalls: task.execution.modelCalls, workItems: task.execution.workItems, check: task.artifacts[0]?.hostCheck }));
   assert.equal(task.execution.modelCalls.length, 3);
@@ -387,11 +811,57 @@ test('synthetic Lead approval to automatic Reviewer completes one candidate with
   assert.equal(task.artifacts[0].hostCheck.passed, true);
   assert.equal(task.execution.pendingCandidateBinding, undefined);
   assert.equal(calls[2].binding.artifactId, task.artifacts[0].id);
+  assert.equal(calls[2].binding.artifactVersion, task.artifacts[0].version);
   assert.equal(calls[2].binding.candidateSha256, task.artifacts[0].candidateSha256);
   assert.ok(!reviewerPrompt.includes('<body>after</body>'));
   assert.ok(reviewerPrompt.includes('完整差异文件'));
   assert.ok(reviewerPrompt.includes('候选源码目录'));
   assert.ok(reviewerPrompt.includes(task.artifacts[0].candidateSha256));
+});
+
+test('绑定在计划批准后的异步准备期间变化时，不保存批准或启动 Developer', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'irixi-plan-approval-stale-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const projectRoot = path.join(runtimeDir, 'project');
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.writeFile(path.join(projectRoot, 'index.html'), '<!doctype html><html><body>before</body></html>');
+  const project = { projectId: 'project-stale-approval', scopeFingerprint: 'scope-stale-approval', label: 'Synthetic', rootPath: projectRoot, allowedWritePaths: ['index.html'] };
+  const controller = new OmoPilotController({ runtimeDir, preferLocalFallback: true, omoRoleRunner: createFakeOmoRoleRunner() });
+  await controller.init();
+  controller.modelStatus = () => ({ liveExecutionBlocked: false });
+  controller.listRegisteredProjects = async () => [project];
+  const task = {
+    id: 'task-stale-approval', goalVersionId: 'goal-stale-approval', title: 'Stale approval fixture',
+    statement: 'Update one authorized file.', successCriteria: ['The page is updated.'], boundaries: ['Only index.html may change.'],
+    instructions: [], rejectionHistory: [], artifacts: [], conversations: [], memoryEntries: [],
+    selectedScope: { authorized: true, current: true, projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: 'goal-stale-approval' },
+    registry: { status: 'prepared', projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: 'd'.repeat(64) },
+    execution: {
+      id: 'run-stale-approval', phase: 'planned', status: 'waiting_start', bindingCurrent: true,
+      deadline: new Date(Date.now() + 10 * 60_000).toISOString(), limits: { maxModelCalls: 8 },
+      leadAgentId: 'lead-stale', devAgentId: 'dev-stale', reviewerAgentId: 'review-stale',
+      modelCalls: [], sessions: [], workItems: [], plan: null, planApprovalStatus: 'not_ready',
+      reviewContinuation: { authorized: false, status: 'disabled', maxModelCalls: 1 },
+    },
+  };
+  controller.state.tasks.push(task);
+  let developerCalls = 0;
+  controller.developerRunner = async () => { developerCalls += 1; throw new Error('unexpected Developer launch'); };
+  await controller.handleTaskAction(task.id, { action: 'run' });
+  const originalStage = controller.stageMaterialFiles.bind(controller);
+  controller.stageMaterialFiles = async (...args) => {
+    const result = await originalStage(...args);
+    task.registry.registrySha256 = 'f'.repeat(64);
+    return result;
+  };
+  await assert.rejects(controller.handleTaskAction(task.id, {
+    action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
+    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256,
+  }), (error) => error.code === 'PLAN_APPROVAL_BINDING_STALE');
+  assert.equal(developerCalls, 0);
+  assert.equal(task.execution.planApprovalStatus, 'not_persisted');
+  assert.equal(task.execution.phase, 'awaiting_plan_approval');
+  assert.equal(task.execution.planApproval, undefined);
 });
 
 test('正式退回仅在同一有效执行内复制旧候选并以新身份续改，再自动审阅新候选', async (t) => {
@@ -447,8 +917,9 @@ test('正式退回仅在同一有效执行内复制旧候选并以新身份续�
       reviewContinuation: { authorized: true, status: 'blocked_host_checks', maxModelCalls: 1 },
     },
   };
-  task.execution.plan.instructionSnapshot = makePlanInstructionSnapshotForTest(task, project);
   const oldPreviewToken = `omo-preview-${taskId}-1`;
+  attachFixtureInstructionSnapshot(task, project);
+  attachFixturePlanApproval(task);
   task.preview = { status: 'ready', token: oldPreviewToken, worktreePath: oldWorkspace, artifactId: oldArtifact.id, artifactVersion: oldArtifact.version, candidateSha256: oldCandidateSha };
   controller.previewTokens.set(oldPreviewToken, { taskId, worktreePath: oldWorkspace });
   controller.state.tasks.push(task);
@@ -478,6 +949,14 @@ test('正式退回仅在同一有效执行内复制旧候选并以新身份续�
   assert.deepEqual(task.execution.requestFingerprints, {});
   const revisionResult = await controller.handleTaskAction(task.id, revisePayload);
   assert.equal(revisionResult.canContinue, true);
+  const originalPlanApproval = task.execution.planApproval;
+  task.execution.planApproval = undefined;
+  const missingApprovalBefore = JSON.stringify(task);
+  await assert.rejects(controller.handleTaskAction(task.id, {
+    action: 'continue', revisionId: revisionResult.revisionId, ...bindingInput,
+  }), (error) => error.code === 'REVISION_PLAN_APPROVAL_MISSING');
+  assert.equal(JSON.stringify(task), missingApprovalBefore, 'missing original human approval creates no revision side effect');
+  task.execution.planApproval = originalPlanApproval;
   assert.equal(task.execution.phase, 'partial', 'formal return does not replay or reset the approved execution');
   assert.equal(task.execution.modelCalls.length, 2);
   assert.deepEqual(task.artifacts[0].review, oldReview);
@@ -533,6 +1012,11 @@ test('正式退回仅在同一有效执行内复制旧候选并以新身份续�
     let output;
     if (request.role === 'Developer') {
       developerRuns += 1;
+      assert.equal(task.execution.pendingRevision.continuationAuthorization?.actor, 'user');
+      assert.equal(task.execution.pendingRevision.continuationAuthorization?.action, 'continue');
+      assert.equal(task.execution.pendingRevision.continuationAuthorization?.status, 'consumed');
+      assert.equal(task.execution.planApproval?.id, `plan-approval-${executionId}`, 'same-run revision preserves the original human approval without fabricating another');
+      assert.match(request.prompt, /"continuationAuthorization":\{"id":"revision-authorization-/u);
       assert.equal(request.binding.workItemId, task.execution.pendingRevision.workItemId);
       if (developerRuns === 1) {
         assert.equal(request.binding.artifactId, oldArtifact.id, 'the first revision worker is bound to its exact source candidate');
@@ -672,7 +1156,8 @@ test('正式退回以原始字节继承含二进制资源的候选，并在Devel
       sessions: [], workItems: [], requestFingerprints: {}, reviewContinuation: { authorized: false, status: 'disabled' },
     },
   };
-  task.execution.plan.instructionSnapshot = makePlanInstructionSnapshotForTest(task, project);
+  attachFixtureInstructionSnapshot(task, project);
+  attachFixturePlanApproval(task);
   controller.state.tasks.push(task);
   const binding = {
     expectedGoalVersionId: goalVersionId, expectedExecutionId: executionId, expectedRegistrySha256: registrySha256,
@@ -786,7 +1271,8 @@ test('在途退回不落账；过期、失败、取消、预算耗尽或范围�
         stopReason: override.stopReason || null, modelCalls: baseCalls, sessions: [], workItems: [], requestFingerprints: {},
       },
     };
-    task.execution.plan.instructionSnapshot = makePlanInstructionSnapshotForTest(task, project);
+    attachFixtureInstructionSnapshot(task, project);
+    attachFixturePlanApproval(task);
     controller.state.tasks.push(task);
     const bindingInput = {
       expectedGoalVersionId: goalVersionId, expectedExecutionId: executionId,
@@ -905,6 +1391,7 @@ test('a late Lead plan after goal replacement is retained as invalidated and nev
   const task = {
     id: 'task-stale-lead', goalVersionId: 'goal-original', title: 'Stale plan', statement: 'Original goal',
     successCriteria: [], boundaries: [], instructions: [], rejectionHistory: [], artifacts: [],
+    selectedScope: { authorized: true, current: true, projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: 'goal-original' },
     registry: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: 'f'.repeat(64) },
     execution: {
       id: 'run-stale-lead', phase: 'planned', deadline: new Date(Date.now() + 60_000).toISOString(),
@@ -1033,6 +1520,7 @@ test('goal change during Developer Host checks prevents the candidate from being
   task = {
     id: 'task-stale-dev-host', goalVersionId: 'goal-dev-host', title: 'Developer host race', statement: 'Update the authorized HTML fixture.',
     successCriteria: [], boundaries: ['Only index.html may change.'], instructions: [], rejectionHistory: [], artifacts: [],
+    selectedScope: { authorized: true, current: true, projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, goalVersionId: 'goal-dev-host' },
     registry: { projectId: project.projectId, scopeFingerprint: project.scopeFingerprint, registrySha256: '3'.repeat(64) },
     execution: {
       id: 'run-stale-dev-host', phase: 'planned', deadline: new Date(Date.now() + 60_000).toISOString(),
@@ -1040,16 +1528,10 @@ test('goal change during Developer Host checks prevents the candidate from being
       planApprovalStatus: 'not_ready',
     },
   };
-  task.selectedScope = {
-    authorized: true, current: true, projectId: project.projectId,
-    scopeFingerprint: project.scopeFingerprint, goalVersionId: task.goalVersionId,
-  };
   controller.state.tasks.push(task);
   await controller.handleTaskAction(task.id, { action: 'run' });
-  await assert.rejects(controller.handleTaskAction(task.id, {
-    action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
-    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256,
-  }),
+  await assert.rejects(controller.handleTaskAction(task.id, { action: 'approve_plan', expectedPlanSha256: task.execution.plan.sha256,
+    expectedInstructionSnapshotSha256: task.execution.plan.instructionSnapshot.sha256 }),
     (error) => error.code === 'STALE_ROLE_BINDING');
   assert.equal(task.artifacts.length, 0);
   assert.deepEqual(task.execution.modelCalls.map((call) => call.role), ['Lead', 'Developer']);

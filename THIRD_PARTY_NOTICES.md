@@ -1,28 +1,19 @@
 # Third-party notices
 
-## OmO native harness integration
+## Current OmO workbench (2026-10-27)
 
-- Upstream project: <https://github.com/code-yeongyu/oh-my-openagent>
-- The iRIXI source snapshot contains a local integration and provider bridge targeting OmO `5.1.40`; it does not vendor or redistribute OmO source, binaries, runtime packages, or installation metadata.
-- OmO is an external prerequisite. Review the upstream repository's current `LICENSE.md` and release terms before obtaining or redistributing its software.
-- The controlled model-decision bridge targets an existing Desktop Codex CLI and does not redistribute that executable.
+The current conversation workbench uses [OmO / oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) as its sole execution harness, through the locally prepared OmO 5.1.40 native RPC runtime. iRIXI's bridge, conversation store, tools, and macOS wrapper are included under `omo-pilot/`. OmO runtime packages and the existing authenticated Desktop Codex CLI are not redistributed by this source update. Obtain each runtime from its original distributor and retain its applicable license. The historical OpenOffice adaptations below remain attributed and are not the current workbench execution route.
 
-This stage source snapshot includes the previously adapted local OpenOffice and agent-office source under `native/`. Their original LICENSE files and existing attribution are retained. Historical integration notes below describe their dated implementation scope.
 
-## 2026-10-19 source preview
+## Historical native runtime integration candidate (2026-10-11)
 
-This preview refreshes the adapted runtime and integration sources from the 2026-10-18 local development snapshot. The upstream revisions below identify the original bases; local adaptations have continued since then. Current desktop task memory, project continuity, review/delivery adapters, office floor extension, and the selected office recording are included in this publication. Original upstream license texts remain intact.
+**Status:** historical implementation record, not the current formal application entry. The current macOS product entry is `iRIXI Personal Agent.app` (`local.irixi.personal-agent.p0`) with the OmO runtime. The repository still contains this older OpenOffice integration; its orderly retirement is not yet complete.
 
-## Native runtime integration candidate (2026-10-11)
+At the time of this candidate, the reviewed local OpenOffice revision was `5b0246c396aed041c5262ab0132623bf2b8b067b` and the agent-office revision was `b00de4e8615c02605be7b90694dccda55d5d8168`. These fixed revisions identify reviewed historical source, not current upstream releases. Historical OpenOffice call sites included Gateway, Orchestrator, AgentManager, AgentSession, DelegationRouter, managed worktrees and PreviewServer. The Irixi authority adaptations added goal/input/scope guards, model-call reservations, bounded context admission, candidate checks and exact-version review/confirmation/export around that candidate chain. This does not claim those call sites are the current formal route.
 
-The current Desktop native entry uses the existing, locally adapted OpenOffice runtime at fixed revision `5b0246c396aed041c5262ab0132623bf2b8b067b` and agent-office at fixed revision `b00de4e8615c02605be7b90694dccda55d5d8168`. These are reviewed local revisions, not a claim about the latest upstream release or popularity.
+The historical 3847 scene reused the agent-office scene/grid adaptation and existing art. Its product adapter projected office state; this does not make the older server the current app entry. Sources and retained licenses: <https://github.com/longyangxi/OpenOffice> (MIT text in `third_party/OpenOffice-MIT.txt`) and <https://github.com/harishkotra/agent-office> (MIT text in `third_party/agent-office-MIT.txt`).
 
-OpenOffice native call sites include Gateway, Orchestrator, AgentManager, AgentSession, DelegationRouter, managed Git worktrees and PreviewServer. The Irixi authority supplies goal/input/scope version guards, canonical model-call reservations, bounded context admission, candidate checks and exact-version review/confirmation/export around that native chain. No new replacement executor is introduced. Source and license: <https://github.com/longyangxi/OpenOffice>, MIT text in `third_party/OpenOffice-MIT.txt`.
-
-The Desktop scene retains the existing agent-office scene/grid adaptation and existing art. Its native state and actions use the same-origin product adapter; the original agent-office server also projects the real native roster without its own inference. Source and license: <https://github.com/harishkotra/agent-office>, MIT text in `third_party/agent-office-MIT.txt`.
-
-The integration reuses the existing external local source workspace and installed dependencies. It does not vendor or redistribute a newly downloaded runtime in this change. The earlier adaptation-only exclusions below describe their respective historical implementations and do not describe the current native route. Development zero-model checks and historical toy evidence are separate from the later formal project acceptance test.
-
+The candidate reused an existing external local source workspace and installed dependencies; it did not vendor a newly downloaded runtime. Other adaptation-specific exclusions below describe their historical implementations. Development zero-model checks and toy evidence remain distinct from later formal project acceptance.
 ## OpenOffice orchestration adaptation
 
 - Upstream: <https://github.com/longyangxi/OpenOffice>
@@ -77,3 +68,6 @@ The upstream hard-ceiling behavior that force-completes work was deliberately no
 - SHA-256: `a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da`
 - Local use: embedded in generated DOCX candidates and exposed through an isolated Fontconfig file while rendering previews. It is not installed globally.
 - License: SIL Open Font License 1.1; official text retained in `third_party/fonts/OFL.txt` (SHA-256 `1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9`).
+# Chromium Headless Shell (workbench functional checks)
+
+The local workbench uses Chrome Headless Shell 156.0.8078.4, Playwright browser revision 1248, installed through `playwright@1.64.1` from the official Playwright CDN. It is a separate browser for isolated functional checks and never uses the user's Chrome profile. Installer: `scripts/install-browser-checker.mjs`. Vendor license: `third_party/chromium-headless-shell/LICENSE.headless_shell`. Runtime is in `.irixi-runtime/browser/chromium-headless-shell-1248`.

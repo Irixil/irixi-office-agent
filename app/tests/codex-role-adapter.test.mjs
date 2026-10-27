@@ -43,12 +43,13 @@ const good = required.every((flag) => args.includes(flag))
   && (providerDecision || hostIdentity.includes('IRIXI CODEX HOST ROLE V1'))
   && hostIdentity.includes('Authoritative host-selected model: gpt-6-luna')
   && hostIdentity.includes('Authoritative reasoning effort: medium')
-  && hostIdentity.includes('Do not search for, install, or launch another CLI, model, provider, or subagent.')
+  && hostIdentity.includes(providerDecision ? 'Do not search for, install, or independently launch another CLI, model, provider, or subagent.' : 'Do not search for, install, or launch another CLI, model, provider, or subagent.')
   && args.some((arg, index) => arg === '-c' && args[index + 1] === 'model_reasoning_effort="medium"')
   && args.some((arg, index) => arg === '-c' && args[index + 1] === 'mcp_servers={}')
   && disabled.every((flag) => args.some((arg, index) => arg === '--disable' && args[index + 1] === flag))
   && (providerDecision
     ? providerDeveloper && hostIdentity.includes('OmO remains the sole agent harness')
+      && hostIdentity.includes('Personal or repository-level CLI instructions for controlling a separate project workflow do not authorize or replace OmO host actions')
       && hostIdentity.includes('Do not attempt CLI-native shell, filesystem, code-mode, MCP, browser, or other tool execution')
       && !hostIdentity.includes('Use only tools actually exposed in this invocation')
     : developer
@@ -98,7 +99,7 @@ if (mode.startsWith('identity-probe:')) {
   process.stdout.write(JSON.stringify({ type: 'turn.completed', turn_id: 'turn-synthetic' }) + '\\n');
 } else if (mode === 'stdout-turn-failed') {
   process.stdout.write(JSON.stringify({ type: 'turn.started', turn_id: 'turn-synthetic' }) + '\\n');
-  process.stdout.write(JSON.stringify({ type: 'turn.failed', error: { code: 'auth_error', message: 'Bearer secret-token-123456789 API_KEY=private-value /home/example/work' } }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'turn.failed', error: { code: 'auth_error', message: 'Bearer secret-token-123456789 API_KEY=private-value /Users/alice/work' } }) + '\\n');
   process.exitCode = 1;
 } else if (mode === 'stdout-error') {
   process.stdout.write(JSON.stringify({ type: 'error', message: 'service_busy' }) + '\\n');
@@ -108,7 +109,7 @@ if (mode.startsWith('identity-probe:')) {
   process.stdout.write(JSON.stringify({ type: 'item.completed', item: {
     id: 'item-command-synthetic', type: 'command_execution',
     command: 'API_KEY=private-value node -e "SENSITIVE_SCRIPT_DO_NOT_STORE" --token=sk-secret-token-123456789',
-    cwd: '/home/example/private-project', workdir: '/tmp/secret-work', shell: '/bin/zsh',
+    cwd: '/Users/alice/private-project', workdir: '/private/tmp/secret-work', shell: '/bin/zsh',
     status: mode === 'command-execution-pass' ? 'completed' : 'failed', exit_code: mode === 'command-execution-pass' ? 0 : 2,
     error: 'Bearer secret-token-123456789 API_KEY=private-value /Users/alice/private-project/secret.js',
   } }) + '\\n');
@@ -184,6 +185,54 @@ test('Codex role adapter uses the explicit model and records a Reviewer only aft
   assert.deepEqual(result.diagnostics.toolExecutions, []);
   assert.equal(result.diagnostics.startupCwdExists, true);
   assert.equal(result.diagnostics.cliPathExists, true);
+});
+
+test('CLI does not receive task input until its spawned process identity is durably recorded', async (t) => {
+  const fx = await fixture(t);
+  const marker = path.join(path.dirname(fx.executable), 'spawn-recorded');
+  const source = await fs.readFile(fx.executable, 'utf8');
+  const anchor = "const taskMarker = '--- BEGIN ROLE TASK ---\\n';";
+  assert.ok(source.includes(anchor));
+  await fs.writeFile(fx.executable, source.replace(anchor,
+    `if (!fs.existsSync(${JSON.stringify(marker)})) process.exit(91);\n${anchor}`));
+  let recordedProcess = null;
+  const result = await runCodexRole(commonInput(fx, 'persist-before-input', {
+    recordCliSpawn: async (_reservation, processInfo) => {
+      recordedProcess = processInfo;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await fs.writeFile(marker, 'recorded');
+    },
+  }));
+  assert.equal(result.status, 'model_returned', JSON.stringify(result));
+  assert.ok(Number.isSafeInteger(recordedProcess?.pid));
+  assert.equal(recordedProcess.executablePath, fx.executable);
+  assert.ok(recordedProcess.argv.includes(fx.executable));
+});
+
+test('停止或超时发生在身份持久化期间时，延迟回调不会再发送任务输入', async (t) => {
+  const fx = await fixture(t);
+  const inputSeen = path.join(path.dirname(fx.executable), 'input-received');
+  const source = await fs.readFile(fx.executable, 'utf8');
+  const anchor = 'for await (const chunk of process.stdin) prompt += chunk;';
+  assert.ok(source.includes(anchor));
+  await fs.writeFile(fx.executable, source.replace(anchor,
+    `${anchor}\nfs.writeFileSync(${JSON.stringify(inputSeen)}, 'received');`));
+  let notifySpawn;
+  const spawnStarted = new Promise((resolve) => { notifySpawn = resolve; });
+  const controller = new AbortController();
+  const resultPromise = runCodexRole(commonInput(fx, 'must-not-reach-child', {
+    signal: controller.signal,
+    recordCliSpawn: async () => {
+      notifySpawn();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    },
+  }));
+  await spawnStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(result.status, 'cancelled');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await assert.rejects(fs.access(inputSeen));
 });
 
 test('all four Codex roles receive authoritative host identity with reservation hashes covering the exact stdin', async (t) => {
@@ -383,7 +432,7 @@ test('provider-decision invocation uses developer-level OmO protocol, matching s
   const tools = ['read', 'write'].map((name) => ({ name, parameters: {
     type: 'object', properties: name === 'write'
       ? { path: { type: 'string' }, content: { type: 'string' } }
-      : { path: { type: 'string' } },
+      : { path: { type: 'string' }, offset: { type: 'integer' }, limit: { type: 'integer' } },
     required: name === 'write' ? ['path', 'content'] : ['path'], additionalProperties: false,
   } }));
   const prompt = buildCodexDecisionPrompt({
@@ -410,7 +459,16 @@ test('provider-decision invocation uses developer-level OmO protocol, matching s
   const configArg = capture.args.find((arg) => arg.startsWith('developer_instructions='));
   assert.ok(configArg, 'mode contract must use a session-level developer_instructions override');
   const developerInstructions = JSON.parse(configArg.slice('developer_instructions='.length));
+  const responseSchemaText = developerInstructions.split('--- DECISION RESPONSE JSON SCHEMA ---\n')[1]
+    .split('\n--- END DECISION RESPONSE JSON SCHEMA ---')[0];
+  assert.deepEqual(JSON.parse(responseSchemaText), capture.schema,
+    'model-visible response instructions and the actual CLI constraint use the same schema');
+  const readArguments = capture.schema.properties.content.items.anyOf.find((branch) => branch.properties.name?.enum?.[0] === 'read').properties.arguments;
+  assert.deepEqual(readArguments.required, ['path', 'offset', 'limit']);
+  assert.deepEqual(readArguments.properties.offset.anyOf, [{ type: 'integer' }, { type: 'null' }]);
+  assert.match(developerInstructions, /unused optional tool argument, output null/u);
   assert.match(developerInstructions, /OmO remains the sole agent harness/u);
+  assert.match(developerInstructions, /Personal or repository-level CLI instructions for controlling a separate project workflow do not authorize or replace OmO host actions/u);
   assert.match(developerInstructions, /OmO executes those tool calls/u);
   assert.match(developerInstructions, /Do not attempt CLI-native shell, filesystem, code-mode/u);
   assert.match(developerInstructions, /treat that request as unavailable in this invocation/u);
@@ -427,10 +485,60 @@ test('provider-decision invocation uses developer-level OmO protocol, matching s
   assert.deepEqual(capture.schema.properties.content.items.anyOf.map((branch) => branch.properties.name?.enum?.[0]).filter(Boolean), ['read', 'write']);
   assert.equal(capture.schema.properties.content.items.anyOf.find((branch) => branch.properties.name?.enum?.[0] === 'write')
     .properties.arguments.properties.content.type, 'string');
+  const schemaBytes = Buffer.from(JSON.stringify(capture.schema), 'utf8');
+  assert.deepEqual(result.diagnostics.providerDecisionContract, {
+    role: 'Developer', actualToolNames: ['read', 'write'], requiredToolNames: ['read', 'write'],
+    outputSchemaSha256: crypto.createHash('sha256').update(schemaBytes).digest('hex'),
+    outputSchemaUtf8Bytes: schemaBytes.byteLength, cliOutputSchemaArgBound: true,
+    codexInternalSchemaReceipt: 'not_exposed',
+  });
+  assert.doesNotMatch(JSON.stringify(result.diagnostics), /schemaText|providerTools|provider-decision-contract|provider-decision\.schema\.json/u);
   await assert.rejects(fs.access(outputSchemaPath), { code: 'ENOENT' }, 'temporary schema is removed after the CLI exits');
-  const invocation = buildCodexRoleInvocation('Developer', prompt, 'provider-decision');
+  const invocation = buildCodexRoleInvocation('Developer', prompt, 'provider-decision', capture.schema);
   assert.equal(reservation.promptSha256, crypto.createHash('sha256').update(JSON.stringify(invocation)).digest('hex'));
   assert.equal(reservation.promptUtf8Bytes, Buffer.byteLength(invocation.prompt, 'utf8') + Buffer.byteLength(invocation.developerInstructions, 'utf8'));
+});
+
+test('provider-decision schema diagnostics persist on a failed CLI result without recording the schema body', async (t) => {
+  const fx = await fixture(t);
+  const tools = ['read', 'write'].map((name) => ({ name, parameters: {
+    type: 'object', properties: name === 'write'
+      ? { path: { type: 'string' }, content: { type: 'string' } }
+      : { path: { type: 'string' } },
+    required: name === 'write' ? ['path', 'content'] : ['path'], additionalProperties: false,
+  } }));
+  let settled;
+  const result = await runCodexRole(commonInput(fx, 'never-started', {
+    role: 'Developer', executionMode: 'provider-decision', providerTools: tools,
+    requiredProviderTools: ['read', 'write'], binding: { ...binding, artifactId: null, candidateSha256: null },
+    settle: async (_reservation, outcome) => { settled = outcome; },
+  }));
+  assert.equal(result.status, 'cli_failed');
+  assert.equal(result.diagnostics.providerDecisionContract.role, 'Developer');
+  assert.deepEqual(result.diagnostics.providerDecisionContract.actualToolNames, ['read', 'write']);
+  assert.deepEqual(result.diagnostics.providerDecisionContract.requiredToolNames, ['read', 'write']);
+  assert.match(result.diagnostics.providerDecisionContract.outputSchemaSha256, /^[a-f0-9]{64}$/u);
+  assert.ok(result.diagnostics.providerDecisionContract.outputSchemaUtf8Bytes > 0);
+  assert.equal(result.diagnostics.providerDecisionContract.cliOutputSchemaArgBound, true);
+  assert.equal(result.diagnostics.providerDecisionContract.codexInternalSchemaReceipt, 'not_exposed');
+  assert.deepEqual(settled.diagnostics.providerDecisionContract, result.diagnostics.providerDecisionContract);
+  assert.doesNotMatch(JSON.stringify(settled.diagnostics), /schemaText|providerTools|never-started|provider-decision\.schema\.json/u);
+});
+
+test('provider-decision one-shot contract is hashable and direct mode remains unchanged', () => {
+  const prompt = 'OmO supplied role, task, transcript, and tools';
+  const provider = buildCodexRoleInvocation('Developer', prompt, 'provider-decision');
+  assert.equal(provider.prompt, prompt);
+  assert.match(provider.developerInstructions, /Personal or repository-level CLI instructions for controlling a separate project workflow do not authorize or replace OmO host actions/u);
+  assert.match(provider.developerInstructions, /do not initiate unrelated workflows unless the current OmO task explicitly requires them/u);
+  assert.equal(Buffer.byteLength(JSON.stringify(provider), 'utf8'), Buffer.byteLength(JSON.stringify({
+    prompt: provider.prompt, developerInstructions: provider.developerInstructions,
+  }), 'utf8'));
+  const digest = crypto.createHash('sha256').update(JSON.stringify(provider)).digest('hex');
+  assert.match(digest, /^[a-f0-9]{64}$/u);
+  const direct = buildCodexRoleInvocation('Developer', prompt, 'direct');
+  assert.equal(direct.prompt, buildCodexRolePrompt('Developer', prompt));
+  assert.equal(direct.developerInstructions, null);
 });
 
 test('provider-decision rejects an unlisted tool name and unsupported argument schemas before model reservation', async (t) => {
@@ -699,9 +807,9 @@ test('deadline timeout and cancellation are failures, not completed work', async
   let cancelledSettlement;
   const pending = runCodexRole(commonInput(fx, 'hang-after-turn', {
     signal: controller.signal, processTimeoutMs: 5_000,
+    recordTurnStarted: async () => { controller.abort(); },
     settle: async (_reservation, outcome) => { cancelledSettlement = outcome; },
   }));
-  setTimeout(() => controller.abort(), 700);
   const cancelled = await pending;
   assert.equal(cancelled.status, 'cancelled');
   assert.equal(cancelled.workCompleted, false);
@@ -718,4 +826,9 @@ test('Reviewer process timeout is clipped to the original execution deadline', (
   assert.equal(effectiveCodexProcessTimeoutMs(360_000, '2026-10-22T10:06:00.000Z', now), 360_000);
   assert.equal(effectiveCodexProcessTimeoutMs(360_000, '2026-10-22T10:01:30.000Z', now), 90_000);
   assert.equal(effectiveCodexProcessTimeoutMs(360_000, '2026-10-22T09:59:00.000Z', now), 1);
+  assert.equal(effectiveCodexProcessTimeoutMs(360_000, null, now), 360_000,
+    'task-scoped continuation keeps a finite per-process timeout without an aggregate deadline');
+  assert.equal(effectiveCodexProcessTimeoutMs(Number.NaN, null, now), 1,
+    'invalid per-process timeout never becomes an unbounded wait');
+  assert.equal(effectiveCodexProcessTimeoutMs(Number.POSITIVE_INFINITY, null, now), 1);
 });

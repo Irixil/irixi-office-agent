@@ -60,6 +60,12 @@ test('只有实际工作角色显示正在工作，失败与待确认不会被�
   assert.deepEqual(coworkerRuntimeState(waiting, 'writer', { activeConversationRole: 'researcher' }), { active: false, status: 'done', localEligible: true, activitySource: 'local' });
 });
 
+test('同事对话发送按钮排在左侧并为右下角浮层留出空间', () => {
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.coworker-dialog .dialog-actions { position: sticky; bottom: 0; z-index: 1; justify-content: flex-start; flex-wrap: wrap; margin: 0 -4px -4px; padding: 10px 60px 4px 4px;'));
+  assert.ok(css.includes('.coworker-dialog .dialog-actions [type="submit"] { order: -1; }'));
+});
+
 test('原生办公室职能只按明确functionId显示整体任务状态', () => {
   const utility = { nativeProduct: true, functionId: 'utility', status: 'running', activeRole: 'reviewer', workItems: [{ role: 'reviewer', status: 'running' }] };
   assert.deepEqual(coworkerRuntimeState(utility, 'writer'), { active: true, status: 'active', localEligible: false, activitySource: 'task' });

@@ -1,31 +1,27 @@
-# Project examples
+# What the workbench has been used for
 
-Each example has its own evidence boundary; it is not a promise that every similar task will work.
+## Make a command-line tool, then use it
 
-![Running iRIXI office, captured during idle and rest states](media/irixi-office.gif)
+A local expense-calculation task was created through the conversation workbench. The agent wrote the project, checked it, and delivered a runnable tool. Entering total `100` and count `4` returned `25.00` through the product's tool runner.
 
-## Continue an existing learning project
+The example demonstrates a complete project outcome rather than a code snippet. It does not establish success for every command-line project.
 
-**Request:** add a full learning-report download, then add a separate list of weak or untested topics while retaining the full report.
+## Continue an existing web app
 
-**Observed:** native Lead planning, saved requirement changes, team development, independent review and refinement, explicit confirmation, and patch download. Both Markdown files were downloaded and read. Normal project switching, history recovery, and refresh kept the restored session available.
+An existing focus-recording webpage was modified through its project conversation. Its output was used to set a target, add a record, refresh, and delete a record. A later request added target clearing; after that action and refresh, the existing record and 25-minute total remained.
 
-The confirmed version exports the saved server record, keeping the report and review list tied to the current session.
+This exercised modifying existing files, checking the result, opening the working output, and continuing with another requirement.
 
-This selected workflow was validated locally with human supervision. Generated candidates are separate from the example source baseline. Article writing is a future development direction.
+## Carry context across conversations
 
-## Build a small task-list tool
+A second conversation in the same project read relevant project history and actual files. Cross-conversation quotes preserved their source. A chat branch inherited history only up to its selected completed turn, while an edited message created a revision branch without rewriting the original record.
 
-A selected organizer went through native development, review, confirmation, and patch download. Its preview was exercised for import, check-off, filters, refresh, and Markdown/CSV export. This provides one bounded tool example.
+Inherited branch materials were checked for visible records, removal, persistence after refresh, and preservation in the source conversation. Actual read-only child-agent work and history cards were exercised separately.
 
-## Consult a read-only project assistant
+## The office
 
-A selected progress assistant produced suggestions from project material, preserved an accepted result after refresh, and rejected acceptance of an older suggestion after the priority changed. Suggestions and completed user work remained distinct. That session did not establish a cold-restart guarantee.
+![iRIXI office idle and rest recording](media/irixi-office.gif)
 
-## Explore the office
+The office, map, and colleagues provide entry points to projects and conversations. The map has connected floors, keyboard and click-to-walk movement, and local animation. The recording above shows idle/rest behavior. The current workbench's tools and child-agent activity come from actual execution records.
 
-The owl coordinator and animal colleagues share one project backend. Colleagues present learning, tool building, game building, Agent development, and archive/memory entry points. Native Lead, Developer, and Reviewer roles are separate from the front-desk characters.
-
-The map includes two connected floors, click-to-walk and keyboard movement, immediate colleague conversation, and task-related activity states. The GIF records idle/rest states only. Game acceptance and all animation transitions have not been established by that clip.
-
-[Try the desktop](getting-started.md) · [Current limitations](../STAGE_STATUS.md) · [Suggest a use case](https://github.com/Irixil/irixi-office-agent/issues/new?template=feature_request.yml)
+The examples describe selected local acceptance work. The public snapshot excludes the original task records and generated runtime worktrees. [Current scope](../STAGE_STATUS.md) · [Run from source](getting-started.md)

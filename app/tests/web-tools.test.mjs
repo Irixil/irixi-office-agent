@@ -402,7 +402,7 @@ test('受控搜索子进程固定禁用能力，调用方取消会终止整个�
   const spawned = [];
   const terminated = [];
   const runner = __test.createCodexSearchRunner({
-    codexPath: '/fixed/codex', cwd: '/tmp',
+    codexPath: '/fixed/codex', cwd: '/private/tmp',
     spawnProcess(command, args, options) { spawned.push({ command, args, options }); return child; },
     terminate(process) { terminated.push(process.pid); },
   });

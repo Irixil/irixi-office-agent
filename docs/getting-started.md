@@ -1,52 +1,79 @@
 # Getting started
 
-This is a desktop-first source preview, primarily developed on macOS. Node.js 24 or later is required. A fresh-machine native installation has not yet been verified.
+The October 27 source preview includes the conversation workbench and macOS Swift/WebKit shell. The maintainer's installed application has local acceptance and installation evidence. A new machine still needs the runtime prerequisites below.
 
-## Explore the desktop with demo data
+## Prerequisites
+
+- Node.js 24+, npm, Git, and a desktop browser.
+- A prepared OmO 5.1.40 installation at `.irixi-runtime/omo/bin/omo`, with its corresponding local runtime packages. These binaries and packages are not bundled in this repository.
+- An existing authenticated Desktop Codex CLI for real model work. The integration resolves an existing local runtime; credentials are not copied into the repository.
+- On Apple Silicon macOS, the optional functional browser checker can be installed with `node scripts/install-browser-checker.mjs`. This downloads its pinned browser through Playwright. A missing checker does not establish that a generated webpage was functionally tested.
+
+The native app wrapper requires macOS and Swift command-line tools. Other platforms have not been established as supported native app targets.
+
+## Start the current workbench
 
 ```bash
 git clone https://github.com/Irixil/irixi-office-agent.git
 cd irixi-office-agent
 npm ci
-npm run start:legacy
+node scripts/start-personal-agent-p0.mjs
 ```
 
-Open [localhost:3847](http://127.0.0.1:3847). Keep the demo provider selected, create a task, and add synthetic material. Use WASD or the arrow keys to walk; click the floor to move, or click a colleague to open a conversation while approaching them. Esc cancels movement or closes the conversation.
+Open [localhost:58312](http://127.0.0.1:58312/?backend=openoffice&view=office). The default data directory is `~/Library/Application Support/IRiXi/Personal Agent P0/`. Existing port use stops a duplicate launch before it loads conversation state. Stop this foreground service with Ctrl+C.
 
-The demo provider does not use a real model. This route exercises the older desktop backend, rather than the native product development chain. Stop the server with Ctrl+C. Existing tasks are stored in `data/tasks/`; use a separate checkout for experiments.
-
-## Current OmO-backed integration
-
-The current code path is `app/public/` → `omo-pilot/server.mjs` → OmO 5.1.40 native RPC → the constrained provider bridge → an existing Desktop Codex CLI. OmO owns the native tool loop; the bridge does not replace it with a separate executor. The older OpenOffice integration is retained as source and for the legacy/demo route.
-
-Install Node.js 24+ dependencies with `npm ci`, then run `npm start` to open the local server at [127.0.0.1:3848](http://127.0.0.1:3848). Starting the server does not make a model call. A real project run also requires a compatible local OmO 5.1.40 installation, its runtime modules, an existing Desktop Codex CLI, and a trusted local project catalogue that binds paths, allowed files, fixed checks, roles, and limits. The public snapshot does not include these installations, credentials, project registrations, or approvals. `IRIXI_CODEX_PATH` may select an existing Desktop Codex CLI where supported; the bridge does not silently fall back to a global Codex executable.
-
-OmO's source and license are maintained by its upstream project; this repository includes only the iRIXI integration and provider bridge, not the OmO distribution. Review the upstream terms before installing or distributing it.
-
-The historical OpenOffice native setup is retained for compatibility and separate development checks:
+For separate development data and a separate port:
 
 ```bash
-npm run start:zero
+node scripts/start-personal-agent-p0.mjs \
+  --runtime /absolute/path/to/irixi-development-data \
+  --port 58314
 ```
 
-This older zero-model entry may require the original upstream workspaces and is not the current OmO path. The public preview has not verified a clean-machine OmO installation or end-to-end execution.
+Choose a new canonical absolute directory. Keep it separate from your existing application data and actual projects.
 
-The optional local XERJ index uses an existing installation. The launcher does not download it; when unavailable, the desktop continues with local task and memory storage. Search indexing and full cross-machine memory behavior are separate validation items.
+Starting the interface does not start model work. A submitted discussion may call the configured model; an execution instruction can read or change files within the selected project and actual permissions.
 
-## What is intentionally local
+## Use it
 
-The public source omits personal project catalogues, task databases, original materials, credentials, raw model-call records, runtime approvals, generated candidate worktrees, and private recovery data. `*.local.json` files are ignored by Git.
+1. Open the map or project/conversation list. Start a conversation and describe the idea.
+2. Say “discuss first” to explore it, or give an explicit instruction to start making it.
+3. Select the project folder when needed. A saved start request can continue after the folder is selected without resending it.
+4. Open the delivered result, inspect it, and request a change. Expand the work activity for tools, checks, and sub-agent results.
+5. Stop work when needed. Reopen the project or create another conversation in the same project to continue.
 
-Historical recovery uses the existing `historical-bindings.example.json` schema with disabled placeholders. Its exact version, hash, budget, and CAS guards remain present. Missing private history never grants new execution permission.
+Materials and project folders are separate. Attachments provide reference material; choosing a folder determines where project work takes place. Editing a sent message creates a revision branch and preserves the source record. A chat branch does not roll back actual files.
 
-The Noobi adapter retains a fixed-root guard with a disabled public placeholder. Its original external checkout and build outputs are not included; the game route is not a ready-to-run public demo.
+## Build the macOS wrapper
+
+After preparing the runtime and source prerequisites:
+
+```bash
+node omo-pilot/macos-app/build-mac-app.mjs \
+  --output /absolute/path/to/iRIXI-Personal-Agent.app
+```
+
+The builder records the checkout location in the app's configuration. The wrapper uses that checkout and its locally installed runtime; it is not a self-contained signed installer. Keep the checkout available after building. This source publication does not rebuild or replace an existing installed app.
 
 ## Checks
 
+The workbench test files use generated temporary projects and controlled model runners. Some checks deliberately run local Git, command tools, or a prepared browser. Provider-protocol checks can run with the process/network isolation preload:
+
 ```bash
-npm test
+node --import ./omo-pilot/test-isolation-preload.mjs \
+  --test omo-pilot/codex-provider-protocol.test.mjs
 ```
 
-Desktop tests use generated fixtures, mocks, and temporary local servers. Real-model smoke scripts are separate and require a new explicit budget. See [the changelog](../CHANGELOG.md) for this preview's publication checks.
+`npm run test:workbench` runs the selected workbench test files. `npm test` is the broader legacy desktop collection. These are separate from new real-model acceptance, which requires its own explicit account and usage budget.
 
-For setup failures, [open an installation report](https://github.com/Irixil/irixi-office-agent/issues/new?template=bug_report.yml) with your OS, Node version, entry command, expected result, and sanitized error. Never attach tokens or your task database.
+## Source layout and historical entries
+
+- `omo-pilot/`: OmO integration, conversations, tool/check bridges, and macOS wrapper source.
+- `scripts/`: persistent workbench launch, reopen, and browser-checker setup.
+- `app/public/`: current conversation UI and office scene.
+- `native/`: historical adapted OpenOffice sources and integration.
+- `npm run start:omo`: earlier OmO project-workflow entry on port 3848.
+- `npm run start:legacy`: older desktop/demo backend on port 3847.
+- `npm run start:zero`: retained historical native setup, not the current conversation workbench.
+
+Private runtime data, user conversations and materials, credentials, `.local.json` configuration, and installed binaries are excluded from the public source. Report setup problems with sanitized OS/version/command details through the [issue form](https://github.com/Irixil/irixi-office-agent/issues/new?template=bug_report.yml).

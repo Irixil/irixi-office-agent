@@ -110,6 +110,132 @@ test('真实OmO Reviewer材料绝对路径回执在同一系统临时目录别�
   assert.match(reviewerPrompt, /页面\/UI行为必须标为未实测/u);
 });
 
+test('Reviewer只接收当前执行批准快照中的交代并把快照摘要绑定结果', async (t) => {
+  const sourceRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'omo-review-instruction-snapshot-'));
+  t.after(() => fsp.rm(sourceRoot, { recursive: true, force: true }));
+  const content = 'candidate';
+  await fsp.writeFile(path.join(sourceRoot, 'index.html'), content);
+  const file = { path: 'index.html', bytes: Buffer.byteLength(content), sha256: sha256Buffer(Buffer.from(content)) };
+  const candidateSha256 = sha256Text(`${file.path}:${file.sha256}`);
+  const diffText = 'candidate diff';
+  const task = { id: 'task-review-snapshot', goalVersionId: 'goal-review-snapshot', title: 'snapshot',
+    statement: 'goal', successCriteria: [], boundaries: [], registry: { registrySha256: 'registry-review-snapshot' },
+    execution: { id: 'run-review-snapshot', continuationSource: null, planApprovalStatus: 'saved' } };
+  const project = { projectId: 'project-review-snapshot', scopeFingerprint: 'scope-review-snapshot', allowedWritePaths: [] };
+  task.registry.projectId = project.projectId;
+  task.registry.scopeFingerprint = project.scopeFingerprint;
+  const snapshotBody = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, projectId: project.projectId, scopeFingerprint: project.scopeFingerprint,
+    artifact: null, continuationSource: null, instructions: [{ id: 'inst-approved-17', text: '保留原文中的空格与换行。' }] };
+  const instructionSnapshot = { ...snapshotBody, sha256: sha256Text(JSON.stringify(snapshotBody)) };
+  task.execution.approvedInstructionSnapshotSha256 = instructionSnapshot.sha256;
+  task.execution.approvedInstructionIds = ['inst-approved-17'];
+  task.execution.approvedInstructionCount = 1;
+  let reviewerPrompt = '';
+  const runRole = async ({ prompt }) => { reviewerPrompt = prompt; return { output: { text: 'VERDICT: PASS\nReviewed.' } }; };
+  const result = await runIndependentReviewerWithOmo({ task, project, worktreePath: sourceRoot, candidateSha256,
+    diffSha256: sha256Text(diffText), patchText: diffText, changedFiles: [file],
+    candidateFilesMap: { 'index.html': { ...file, content } }, checks: [{ status: 'passed', name: 'fixture', summary: 'pass' }],
+    instructionSnapshot, runRole });
+  assert.match(reviewerPrompt, /inst-approved-17/u);
+  assert.match(reviewerPrompt, /保留原文中的空格与换行。/u);
+  assert.match(reviewerPrompt, new RegExp(instructionSnapshot.sha256, 'u'));
+  assert.equal(result.instructionSnapshotSha256, instructionSnapshot.sha256);
+
+  let called = false;
+  const tampered = { ...instructionSnapshot, instructions: [{ id: 'inst-changed', text: 'not approved' }] };
+  await assert.rejects(runIndependentReviewerWithOmo({ task, project, worktreePath: sourceRoot, candidateSha256,
+    diffSha256: sha256Text(diffText), patchText: diffText, changedFiles: [file],
+    candidateFilesMap: { 'index.html': { ...file, content } }, checks: [{ status: 'passed', name: 'fixture', summary: 'pass' }],
+    instructionSnapshot: tampered, runRole: async () => { called = true; } }), /绑定不一致/u);
+  assert.equal(called, false);
+
+  const mustNotRun = async () => { called = true; return { output: { text: 'VERDICT: PASS' } }; };
+  task.execution.continuationSource = { instructionIds: ['inst-approved-17'] };
+  await assert.rejects(runIndependentReviewerWithOmo({ task, project, worktreePath: sourceRoot, candidateSha256,
+    diffSha256: sha256Text(diffText), patchText: diffText, changedFiles: [file],
+    candidateFilesMap: { 'index.html': { ...file, content } }, checks: [{ status: 'passed', name: 'fixture', summary: 'pass' }],
+    instructionSnapshot: null, runRole: mustNotRun }), /快照缺失/u);
+  await assert.rejects(runIndependentReviewerWithOmo({ task, project, worktreePath: sourceRoot, candidateSha256,
+    diffSha256: sha256Text(diffText), patchText: diffText, changedFiles: [file],
+    candidateFilesMap: { 'index.html': { ...file, content } }, checks: [{ status: 'passed', name: 'fixture', summary: 'pass' }],
+    instructionSnapshot: { ...instructionSnapshot, sha256: '0'.repeat(64) }, runRole: mustNotRun }), /绑定不一致/u);
+  assert.equal(called, false, 'missing or tampered approval bindings must fail before the Reviewer runner');
+});
+
+test('Reviewer 只使用候选冻结的工具回执引用，忽略后加回执并拒绝换候选借用', async (t) => {
+  const sourceRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'omo-review-receipt-source-'));
+  t.after(() => fsp.rm(sourceRoot, { recursive: true, force: true }));
+  const content = 'receipt-bound candidate';
+  await fsp.writeFile(path.join(sourceRoot, 'index.html'), content);
+  const file = { path: 'index.html', bytes: Buffer.byteLength(content), sha256: sha256Buffer(Buffer.from(content)) };
+  const candidateSha256 = sha256Text(`${file.path}:${file.sha256}`);
+  const diffText = 'receipt-bound diff';
+  const task = { id: 'receipt-task', title: 'receipt fixture', goalVersionId: 'receipt-goal', statement: 'inspect candidate',
+    successCriteria: [], boundaries: [], registry: { registrySha256: 'receipt-registry', projectId: 'receipt-project', scopeFingerprint: 'receipt-scope' },
+    execution: { id: 'receipt-run', toolReceipts: [], toolReceiptSessions: [] } };
+  const project = { projectId: 'receipt-project', scopeFingerprint: 'receipt-scope', allowedWritePaths: [] };
+  const receiptBody = { binding: { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256 }, sessionId: 'session-before-review', sequence: 1, eventType: 'end',
+    toolCallId: 'tool-1', toolName: 'read', workItemId: 'work-dev', content: { text: 'read done', utf8Bytes: 9,
+      sha256: sha256Text('{"result":"safe-copy"}'), sha256Scope: 'sanitized-json-copy', truncated: false,
+      structurallyLimited: false }, taskId: task.id, role: 'Developer', phase: 'execute', workItemId: 'work-dev' };
+  const receipt = { ...receiptBody, sha256: sha256Text(JSON.stringify(receiptBody)) };
+  task.execution.toolReceipts.push(receipt);
+  const summaryBody = { taskId: task.id, binding: structuredClone(receipt.binding), role: 'Developer', phase: 'execute',
+    workItemId: 'work-dev', sessionId: receipt.sessionId, receiptCount: 1, complete: true,
+    overflowEventCount: 0, errorCounts: {}, recordedAt: '2026-10-25T00:00:00.000Z' };
+  const sessionSummary = { ...summaryBody, sha256: sha256Text(JSON.stringify(summaryBody)) };
+  task.execution.toolReceiptSessions.push(sessionSummary);
+  const binding = { taskId: task.id, goalVersionId: task.goalVersionId, executionId: task.execution.id,
+    registrySha256: task.registry.registrySha256, artifactId: 'receipt-artifact', artifactVersion: 1,
+    candidateSha256, diffSha256: sha256Text(diffText), instructionSnapshotSha256: null, sourceWorkItemIds: ['work-dev'] };
+  const evidenceBody = { binding, receiptCount: 1, operationCount: 1, complete: true,
+    sourceReceiptRefs: [{ sessionId: receipt.sessionId, sequence: receipt.sequence, sha256: receipt.sha256 }],
+    sourceSessionSummaries: [{ sessionId: sessionSummary.sessionId, role: sessionSummary.role, phase: sessionSummary.phase,
+      workItemId: sessionSummary.workItemId, receiptCount: sessionSummary.receiptCount, complete: sessionSummary.complete,
+      overflowEventCount: sessionSummary.overflowEventCount, errorCounts: sessionSummary.errorCounts, sha256: sessionSummary.sha256 }],
+    operations: [{ status: 'completed', toolName: 'read' }], operationsOmitted: 0, problems: [] };
+  const toolReceiptEvidence = { ...evidenceBody, sha256: sha256Text(JSON.stringify(evidenceBody)) };
+  let prompt = '';
+  const base = { task, project, worktreePath: sourceRoot, candidateSha256, diffSha256: binding.diffSha256, patchText: diffText,
+    artifactId: binding.artifactId, artifactVersion: binding.artifactVersion, changedFiles: [file],
+    candidateFilesMap: { 'index.html': { ...file, content } }, checks: [{ status: 'passed', name: 'fixture', summary: 'passed' }],
+    toolReceiptEvidence, toolReceiptSourceWorkItemIds: ['work-dev'],
+    runRole: async ({ prompt: value }) => { prompt = value; return { output: { text: 'VERDICT: PASS\nReviewed.' } }; } };
+  const result = await runIndependentReviewerWithOmo(base);
+  assert.equal(result.toolReceiptEvidenceSha256, toolReceiptEvidence.sha256);
+  assert.match(prompt, /只有带 end 且 isError=false 的操作可视为成功/u);
+  assert.match(prompt, /session-before-review/u);
+
+  const laterReceiptBody = { ...receiptBody, sessionId: 'reviewer-later-session', sequence: 2, role: 'Reviewer' };
+  task.execution.toolReceipts.push({ ...laterReceiptBody, sha256: sha256Text(JSON.stringify(laterReceiptBody)) });
+  await runIndependentReviewerWithOmo(base); // later same-execution receipts do not alter this candidate's frozen evidence.
+
+  let called = false;
+  const changedEvidenceBody = { ...evidenceBody, binding: { ...binding, candidateSha256: 'f'.repeat(64) } };
+  await assert.rejects(runIndependentReviewerWithOmo({ ...base,
+    toolReceiptEvidence: { ...changedEvidenceBody, sha256: sha256Text(JSON.stringify(changedEvidenceBody)) },
+    runRole: async () => { called = true; return { output: { text: 'VERDICT: PASS' } }; },
+  }), /tool receipt evidence does not match/u);
+  assert.equal(called, false);
+
+  const nextContent = 'different candidate';
+  const nextFile = { path: 'index.html', bytes: Buffer.byteLength(nextContent), sha256: sha256Buffer(Buffer.from(nextContent)) };
+  const nextCandidateSha256 = sha256Text(`${nextFile.path}:${nextFile.sha256}`);
+  const nextDiff = 'different candidate diff';
+  const nextBody = { ...evidenceBody, binding: { ...binding, artifactId: 'next-artifact', artifactVersion: 2,
+    candidateSha256: nextCandidateSha256, diffSha256: sha256Text(nextDiff) } };
+  await assert.rejects(runIndependentReviewerWithOmo({ ...base, artifactId: 'next-artifact', artifactVersion: 2,
+    candidateSha256: nextCandidateSha256, diffSha256: sha256Text(nextDiff), patchText: nextDiff,
+    changedFiles: [nextFile], candidateFilesMap: { 'index.html': { ...nextFile, content: nextContent } },
+    toolReceiptSourceWorkItemIds: ['work-dev-next'],
+    toolReceiptEvidence: { ...nextBody, sha256: sha256Text(JSON.stringify(nextBody)) },
+    runRole: async () => { called = true; return { output: { text: 'VERDICT: PASS' } }; },
+  }), /tool receipt evidence does not match/u);
+  assert.equal(called, false, 'a later candidate cannot borrow an earlier candidate work item receipt');
+});
+
 test('Reviewer 宿主拒绝缺失或不匹配材料，读失败与审阅中篡改均不产生 PASS，业务 FAIL 原样保留', async (t) => {
   const sourceRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'omo-review-integrity-source-'));
   t.after(() => fsp.rm(sourceRoot, { recursive: true, force: true }));

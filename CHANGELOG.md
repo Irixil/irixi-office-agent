@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-27 — Conversation workbench
+
+- Publish the current conversation-first workbench, persistent launch scripts, and macOS Swift/WebKit shell source.
+- Add folder-based projects with multiple conversations, short titles, full organization menus, and user-selected project locations.
+- Add message copy, quote, edit/revision branches, chat branches, Git worktree branches, local deep links, and cross-conversation references.
+- Add per-turn model/reasoning selection, expandable actual activity, real read-only child-agent support, and clear runnable results.
+- Update stop/recovery, pending start requests, multiple windows, branch-material registration/removal, and existing-data protection.
+- Rewrite English and Chinese README, setup, examples, architecture, and current status around the delivered workbench.
+
+Local product acceptance and installation were completed before publication. This update reuses the exact current source evidence and adds publication-specific checks; it makes no new real-model calls. Public source excludes credentials, user conversations/materials, runtime records, and installed binaries.
+
+
 ## preview-2026-10-23
 
 - Set OmO 5.1.40 as the documented current harness and add its native RPC and controlled Desktop Codex CLI integration source.

@@ -31,6 +31,7 @@
       <h1 id="office-title" class="visually-hidden">办公室总览</h1>
       <div class="office-shell">
         <div id="office-game" class="office-game" aria-label="可行走的维多利亚像素办公室。使用方向键或 WASD 移动，点击同事交谈。"></div>
+        <button class="office-settings" type="button" data-view-target="connections" aria-label="连接与设置">⚙</button>
         <details class="office-float office-float-left office-drawer">
           <summary class="office-drawer-toggle"><span>任务</span><small>打开账本</small></summary>
           <aside class="task-ledger office-drawer-panel" aria-label="任务账本">
@@ -77,16 +78,16 @@
             <div id="office-actions" class="button-stack"></div>
           </aside>
         </details>
-        <div class="movement-help" aria-hidden="true">WASD / 方向键移动 · 点击同事交谈 · Esc 取消行走</div>
+        <div class="movement-help">方向键或 WASD 移动 · 点同事交谈 · Esc 停下</div>
         <aside id="project-sidebar" class="project-sidebar" aria-label="项目与对话侧栏" hidden>
-          <header class="sidebar-header"><h2>项目与对话</h2><button class="text-button" type="button" data-project-sidebar-close>收起</button></header>
+          <header class="sidebar-header"><h2>项目与对话</h2><button class="text-button" type="button" data-project-sidebar-close>回到办公室</button></header>
           <section class="sidebar-section" aria-labelledby="project-list-heading"><h3 id="project-list-heading">项目</h3><div id="project-list" class="sidebar-list"></div></section>
-          <section class="sidebar-section recent-section" aria-labelledby="recent-list-heading"><div class="sidebar-section-heading"><h3 id="recent-list-heading">最近对话</h3></div><div id="recent-list" class="sidebar-list"></div></section>
+          <section class="sidebar-section recent-section" aria-labelledby="recent-list-heading"><div class="sidebar-section-heading"><h3 id="recent-list-heading">最近对话</h3><button class="text-button sidebar-new-conversation" type="button" data-project-chat-new>新对话</button></div><div id="recent-list" class="sidebar-list"></div></section>
           <p id="storage-note" class="storage-note" role="status">这里显示本机保存的历史，不会生成虚构回复。</p>
         </aside>
         <aside id="project-dialogue-panel" class="dialogue-panel" aria-label="项目对话" hidden>
-          <header class="dialogue-header project-dialogue-header"><div class="coworker-heading"><h1 id="project-dialogue-title">项目对话</h1><p id="project-dialogue-status" class="coworker-status">选择项目和任务后查看真实记录。</p></div><div class="header-actions"><button class="text-button" type="button" data-project-dialogue-list>切换项目</button><button class="text-button" type="button" data-project-dialogue-expand>展开对话</button><button class="close-button" type="button" data-project-dialogue-close aria-label="回到办公室">×</button></div></header>
-          <div class="dialogue-layout"><section class="conversation-column" aria-label="历史消息和项目记录"><div id="project-chat-history" class="message-list" aria-live="polite"></div><details id="project-records" class="project-progress"><summary>查看项目记录</summary><div id="project-record-content" class="project-progress-body"></div></details><form id="project-instructions-form" class="message-form"><label class="visually-hidden" for="project-instructions-text">交代下一步</label><textarea id="project-instructions-text" rows="2" maxlength="2000" placeholder="说说下一步希望完成什么…" required></textarea><div class="composer-footer"><span id="project-instructions-status" class="field-note">保存后不会立即执行。</span><button class="send-button" type="submit">保存</button></div></form></section></div>
+          <header class="dialogue-header project-dialogue-header"><div id="project-dialogue-portrait" class="coworker-portrait" aria-hidden="true"></div><div class="coworker-heading"><h1 id="project-dialogue-title">项目对话</h1><p id="project-dialogue-status" class="coworker-status">选择项目和任务后查看真实记录。</p></div><div class="header-actions"><button class="text-button" type="button" data-project-dialogue-list>项目 / 对话</button><button class="text-button" type="button" data-project-dialogue-expand>展开对话</button><button class="close-button" type="button" data-project-dialogue-close aria-label="回到办公室">×</button></div></header>
+          <div class="dialogue-layout"><section class="conversation-column" aria-label="历史消息和项目记录"><div id="project-chat-history" class="message-list" aria-live="polite" aria-relevant="additions text"></div><section id="project-chat-actions" class="project-chat-actions" aria-label="当前进度与可用操作"></section><details id="project-workspace-tools" class="project-progress workspace-tools"><summary>工作文件与目标</summary><div id="project-workspace-tool-content" class="project-progress-body"></div></details><details id="project-records" class="project-progress"><summary>进度与成果</summary><div id="project-record-content" class="project-progress-body"></div></details><form id="project-instructions-form" class="message-form"><label class="visually-hidden" for="project-instructions-text">交代下一步</label><textarea id="project-instructions-text" rows="2" maxlength="4000" placeholder="说说你希望接下来做什么…" required></textarea><div id="project-continuation-control"></div><div class="composer-footer"><span id="project-instructions-status" class="field-note">发送只保存需求，不会启动AI。</span><button class="send-button" type="submit">发送</button></div></form></section></div>
         </aside>
       </div>
     </section>
@@ -102,7 +103,7 @@
     </section>
 
     <section id="view-connections" class="view parchment-view" aria-labelledby="connections-title">
-      <div class="page-heading"><div><span class="eyebrow">CAPABILITY REGISTER</span><h1 id="connections-title">连接中心</h1><p>这里显示真实可用性、数据边界与验证状态，不把未配置能力装成已连接。</p></div></div>
+      <div class="page-heading"><div><span class="eyebrow">CAPABILITY REGISTER</span><h1 id="connections-title">连接中心</h1><p>这里显示真实可用性、数据边界与验证状态，不把未配置能力装成已连接。</p></div><button class="secondary-button" type="button" data-view-target="office">回到办公室</button></div>
       <div id="connection-list" class="connection-register" aria-live="polite"></div>
     </section>
   </main>
@@ -144,9 +145,11 @@
       <div class="dialog-heading"><div><span class="eyebrow">SOURCE INTAKE</span><h2>加入材料</h2></div><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
       <fieldset class="material-choice"><legend>材料方式</legend><label><input type="radio" name="materialMode" value="text" checked> 粘贴文本</label><label><input type="radio" name="materialMode" value="file"> 选择文件</label><label><input type="radio" name="materialMode" value="url"> 明确网址</label></fieldset>
       <label>材料名称<input name="name" maxlength="200" placeholder="例如：项目周报原稿"></label>
+      <input type="hidden" name="requestId" value="">
       <div data-material-panel="text"><label>正文<textarea name="text" rows="10" placeholder="粘贴你希望 Irixi 使用的材料"></textarea></label></div>
-      <div data-material-panel="file" hidden><label>本地文件<input name="file" type="file" accept=".txt,.md,.markdown,.docx,.pdf"></label><p class="field-note">只读取你选中的文件；支持 TXT、MD、DOCX、可提取文字的 PDF，最大 1.5 MB。</p></div>
+      <div data-material-panel="file" hidden><label>本地文件<input name="file" type="file" accept=".txt,.md,.markdown,.docx,.pdf"></label><p class="field-note">支持 TXT、Markdown 文字文件，最大 1.5 MB。</p></div>
       <div data-material-panel="url" hidden><label>公开网址<input name="url" type="url" placeholder="https://example.com/article"></label><p class="field-note">只读取这个明确地址；本机、内网和非文本内容会被拒绝。</p></div>
+      <p class="field-note" data-material-error role="alert" hidden></p>
       <div class="dialog-actions"><button class="secondary-button" type="button" data-close-dialog>取消</button><button class="primary-button" type="submit">加入材料账本</button></div>
     </form>
   </dialog>

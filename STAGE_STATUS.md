@@ -1,30 +1,31 @@
-# Preview status · 2026-10-23 source snapshot
+# Workbench progress · 2026-10-27
 
-Published as the 2026-10-19 early preview. iRIXI is being developed and exercised on selected local projects with human supervision.
+The current product is a conversation-first desktop personal agent. OmO is the sole harness for current conversations and tool execution. DZ supplies internal goal, planning, change, checking, and continuity rules.
 
-## Available in this source preview
+## Delivered locally
 
-- A visual Victorian office with an owl coordinator, animal colleagues, keyboard and click-to-walk movement, colleague conversation, and a connected upstairs gallery.
-- OmO 5.1.40 integration source with a native RPC loop and constrained Desktop Codex CLI provider bridge. A complete fresh-machine setup and end-to-end OmO project delivery are not verified in this snapshot.
-- Persistent project goals, materials, accepted requirement changes, candidate history, and recovery paths.
-- Local task memory and an optional XERJ index.
+The maintainer's October 27 macOS workbench completed engineering, system acceptance, independent checks, and formal installation checks. The current recorded build is `95b4c2fa`, with 22 source-file identities checked against the installation record. Acceptance covered 23 required outcomes. The product owner’s hands-on adoption decision remains separate from engineering acceptance.
 
-## Selected project validation
+The workbench includes:
 
-The historical OpenOffice route continued an existing article-learning project from a download request, through Lead planning and an additional review-list requirement, to native development, independent review and refinement, explicit confirmation, and patch download.
+- Project folders containing multiple conversations, short titles, and persistent organization menus.
+- A native folder chooser and saved start requests that continue once a project location is selected.
+- Copy, quote, edit, revision branches, chat branches, Git worktree branches, and local deep links.
+- Cross-conversation references with their original source and version.
+- Per-turn model and reasoning selection through the currently connected Desktop Codex CLI.
+- Expandable real activity, host-checked tools, and actual read-only child agents.
+- Clear progress and usable outcomes, stop/recovery handling, multiple windows, text-size controls, and existing-data preservation.
 
-The confirmed v45 preview provided full-report and review-list Markdown downloads from the saved server record. Both downloads were opened and checked. Normal project switching, history recovery, report saving, and refresh preserved the restored session. Earlier selected task-list and read-only progress-assistant examples also have bounded delivery and use evidence.
+## Validation behind this update
 
-These are selected historical validations of the OpenOffice route, not evidence of a completed OmO delivery. Human supervision and platform assistance were part of the process. Generated candidate patches remain separate from the formal example baseline, and original runtime worktrees are not included in this public snapshot.
+The local acceptance exercised eight available models with OmO tools and returned results. Two representative models completed project creation or modification, checking, and actual use of the outputs. Examples included an expense-calculation command tool and changes to an existing focus-recording web app.
 
-## Next development areas
+The latest branch-material change was checked with 77 local regressions, seven independent fault checks, and relevant native UI paths. Installation and existing-data checks are recorded separately from isolated model and function checks.
 
-Fresh-machine native setup, simpler project registration, smoother project continuation, and additional article-writing and game workflows are the next areas of work. See the [setup guide](docs/getting-started.md) for current prerequisites.
+This publication checks current source identities, selected controlled tests, source syntax, public-file boundaries, and repository presentation. It does not run a new real-model acceptance batch or replace the installed application. See the [published source identities](docs/status/source-manifest-20261027.json).
 
-## Source and publication
+## Distribution and next scope
 
-This update includes the current project-chat UI, selected runtime artwork, OmO integration and provider bridge, and retained OpenOffice compatibility sources. It preserves existing exact-version, budget, review, confirmation, and historical-recovery guards.
+This is a source update. It includes the workbench, launcher and macOS wrapper source, plus the existing attributed historical implementations. OmO, model runtimes, credentials, user data, and the installed app binary are not bundled. Follow [getting started](docs/getting-started.md) to prepare a development environment; a signed clean-machine installer is not provided by this update.
 
-Private tasks, credentials, runtime approvals, personal catalogues, model-call records, generated worktrees, dependencies, and compiled outputs are excluded. Historical examples use disabled placeholders. The optional Noobi integration requires its external checkout; this public preview keeps its fixed-root guard with a disabled placeholder.
-
-See [CHANGELOG.md](CHANGELOG.md) for publication checks and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source ownership and licenses.
+Public web sharing is deferred. Additional model providers, expanded automatic personal memory, complex parallel merging, and richer conflict-management flows remain later work. Current model/CLI configuration is replaceable rather than a permanent product restriction.

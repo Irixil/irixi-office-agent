@@ -1,102 +1,85 @@
 # iRIXI Personal Agent
 
-### A personal AI agent in a living Victorian office.
+### Talk through an idea. Build a real project. Pick it up next time.
 
-Turn a project goal into a plan, an agent team, a reviewed deliverable, and a place to continue next time.
+A desktop personal AI agent with a conversation workbench, project files, real tools, and a living Victorian office.
 
-[![Early preview](https://img.shields.io/badge/status-early_preview-b68b4c)](STAGE_STATUS.md)
-[![Node.js 24+](https://img.shields.io/badge/Node.js-24%2B-43853d)](docs/getting-started.md)
-[![Desktop first](https://img.shields.io/badge/desktop-first-254b40)](docs/showcase.md)
+**[简体中文](README.zh-CN.md) · [Get started](docs/getting-started.md) · [Project examples](docs/showcase.md) · [October 27 update](STAGE_STATUS.md) · [Contribute](CONTRIBUTING.md)**
 
-**[简体中文](README.zh-CN.md) · [See the office](#see-the-office) · [Get started](docs/getting-started.md) · [What works today](STAGE_STATUS.md) · [Contribute](CONTRIBUTING.md)**
+![iRIXI's Victorian office with an owl coordinator and animal colleagues](docs/media/irixi-office.gif)
 
-iRIXI is a visual personal AI assistant for people building and maintaining their own projects. An owl coordinates your work in a Victorian miniature office, while animal colleagues make project roles and activity visible. The current native harness is OmO, which coordinates work through its native RPC loop and a constrained provider bridge to an existing Desktop Codex CLI.
+*Office idle/rest recording. The current workbench adds project conversations, messages, model selection, and expandable work activity alongside this office.*
 
-**Early preview.** Built and exercised on selected local projects. [See the current scope →](STAGE_STATUS.md)
+iRIXI helps you discuss, create, modify, and continue your own local projects. Start with a conversation. When you ask it to begin, the agent works on real files, runs checks, and gives you a usable result. A project can have several conversations that share its files and can look up relevant history.
 
-## See the office
+The current workbench uses **OmO as its sole execution harness**. DZ supplies the internal rules for goals, plans, changes, checks, and continuity. The office, map, and animal colleagues are ways into your work; they do not restrict which projects you can tackle.
 
-![iRIXI visual AI office with an owl coordinator and animal colleagues](docs/media/irixi-office.gif)
+## What you can do
 
-*An idle/rest recording from the running desktop interface. The map also has a walkable upstairs gallery.*
-
-## Why iRIXI?
-
-Personal projects often span several conversations and several days. iRIXI is being built to keep the goal, changing requirements, work history, review, and final deliverable together.
-
-| What you need | How iRIXI approaches it |
+| Your workflow | What iRIXI provides |
 | --- | --- |
-| Explain a project in ordinary language | Keep a goal, success conditions, boundaries, materials, and accepted instructions in one task record. |
-| Know who is doing what | Show the native team and its current state in an interactive office. |
-| Change your mind during development | Save the change and carry current requirements into the next planning and execution step. |
-| Inspect work before accepting it | Keep candidate files, checks, independent review, and your confirmation as separate steps. |
-| Come back later | Recover the saved project and its history through the ordinary project list. |
-| Keep control of execution | Use registered file scopes, bounded model calls and deadlines, and exact-version delivery. |
+| Think before you build | Discuss an idea without changing files. An explicit instruction starts work. |
+| Work in your own folder | Choose an existing folder or a new project location. One project can contain multiple conversations. |
+| Make and revise real deliverables | Read and search files, create and edit code, run commands, inspect results, and continue a change. |
+| Explore another direction | Edit a message into a revision branch, or branch from a completed turn. Git projects can also use a separate worktree. |
+| Bring context with you | Quote a message, attach material, or reference another conversation with its source preserved. |
+| Choose the model for the next turn | Select an available model and supported reasoning level in the composer. Running and historical turns retain their selections. |
+| See actual progress | Expand tool activity and real read-only sub-agent tasks, including their status and returned results. |
+| Stop and return later | Save messages, project relationships, progress, and outcomes. Reopening does not silently restart model work. |
 
-## From a request to a deliverable
+Project and conversation menus include rename, pin, unread state, sections, project assignment, new windows, archive, and restore. Text size and connection settings remain available from the office.
+
+## A conversation-first workflow
 
 ```text
-Describe a goal → Plan with the Lead → Approve the plan
-       → Develop in managed worktrees → Independent review
-       → Confirm the specific version → Download → Continue later
+Discuss an idea → Ask it to begin → Choose a folder when needed
+       → Build and check → Open the result → Request a change
+       → Stop, reopen, or continue in another project conversation
 ```
 
-Requirements can change along the way. Failed reviews and earlier versions stay in the project history. A new candidate needs its own review and confirmation.
+There is no mandatory project setup form or repeated plan-approval ladder for ordinary work. The agent asks when a material detail or new permission is actually needed.
 
-### Historical example: an existing project, improved in place
+## Built and exercised on real local projects
 
-This historical example used the earlier OpenOffice route; it is not evidence of the current OmO workflow. The request began with “download the full learning report,” then added a separate review list containing only weak or untested topics.
+The October 27 workbench delivery completed engineering, system acceptance, independent checks, and installation checks on the maintainer's Mac. Its local acceptance covered 23 required outcomes, including project organization, conversation branching, model selection, real tool activity, sub-agents, recovery, and existing-data preservation.
 
-- The native team planned, developed, and refined the change through independent review.
-- The confirmed version downloads the saved server record and provides both a full report and a separate review list.
-- Both Markdown downloads were opened and checked. Switching away, returning to the project, and refreshing preserved the restored session.
+Two representative models completed project creation or modification, checks, and actual use of the resulting tools. Examples included a command-line expense calculator and an existing focus-recording web app that was extended and used after the change. Cross-conversation references and branch-material handling were also exercised.
 
-This selected workflow was validated locally with human supervision. Generated candidate patches remain separate from the application source. [More examples →](docs/showcase.md)
+This is a **source preview**. The maintainer's installed app and the public source have different distribution requirements; fresh-machine setup still needs the local runtimes described below. [Current scope →](STAGE_STATUS.md)
 
-## Get started
+## Run from source
 
-**Requirements:** Node.js 24+, npm, and a desktop browser. Development and interaction testing have primarily used macOS.
-
-### Explore the office with the demo provider
+The current native shell is for macOS. Source development requires Node.js 24+, npm, Git, and a desktop browser. Real agent work additionally requires a locally prepared OmO runtime and an existing authenticated Desktop Codex CLI.
 
 ```bash
 git clone https://github.com/Irixil/irixi-office-agent.git
 cd irixi-office-agent
 npm ci
-npm run start:legacy
+node scripts/start-personal-agent-p0.mjs
 ```
 
-Open [localhost:3847](http://127.0.0.1:3847), keep the **demo provider** selected, and create a task with synthetic material. This is the older desktop backend and is useful for exploring the office and task interface. It does not exercise the native multi-agent development chain.
+Open [localhost:58312](http://127.0.0.1:58312/?backend=openoffice&view=office). This starts the conversation workbench and stores data in the current user's application-support directory. It does not install OmO or authenticate a model account. Model work begins only after a user submission.
 
-### Run the current native integration
+For the runtime layout, isolated development directories, functional browser checks, and the macOS wrapper, see [getting started](docs/getting-started.md). This repository update provides source; it does not publish a signed installer.
 
-`npm start` launches the OmO-backed server on `127.0.0.1:3848`. `npm run start:legacy` remains the older demo backend on port 3847. The public source includes iRIXI's OmO 5.1.40 RPC integration and controlled Desktop Codex CLI bridge, but not the OmO installation, its runtime packages, Codex executable, credentials, personal project catalogue, or local approvals. Real execution requires those existing local prerequisites and a registered project scope. `npm run start:zero` is retained for the earlier native setup and is not the current OmO entry.
+## How it fits together
 
-**The OmO preview is a developer setup; clean-machine installation and execution are not verified.** Read the [setup guide](docs/getting-started.md) before starting it. The default server can start without making a model call; a project execution is a separate user action.
+- **Workbench:** JavaScript and a local Node.js service, with projects, conversations, messages, references, branches, and persistent outcomes.
+- **Execution:** [OmO](https://github.com/code-yeongyu/oh-my-openagent) native RPC, host-enforced tool scopes, and a replaceable model/CLI bridge. The current integration targets OmO 5.1.40.
+- **Continuity:** bundled DZ rules mapped to product task storage. The developer repository's `.dz/` ledger is separate from user conversations.
+- **Office:** Phaser and EasyStar.js, iRIXI artwork, and scene/grid adaptations credited to [agent-office](https://github.com/harishkotra/agent-office).
+- **Desktop shell:** a macOS Swift/WebKit application with folder selection, local deep links, multiple windows, and restart handling.
 
-## Built around one project history
+See the [architecture](docs/architecture/goal-first-agent.md) and [third-party notices](THIRD_PARTY_NOTICES.md). Earlier OpenOffice integration and example projects remain as historical/compatibility source.
 
-- **Desktop:** JavaScript, Node.js, Phaser, and EasyStar.js.
-- **Native agents:** [OmO](https://github.com/code-yeongyu/oh-my-openagent) 5.1.40 as the core harness; the local bridge constrains model decisions to the existing Desktop Codex CLI while OmO owns the native tool loop. Older OpenOffice source remains available for the demo/legacy route.
-- **Office interaction:** adapted scene and grid ideas from [agent-office](https://github.com/harishkotra/agent-office), with iRIXI artwork and interaction.
-- **Project continuity:** task records and local memory, plus an optional local XERJ index. This does not mean that every conversation is remembered automatically.
-- **Review and delivery:** checks bind to the current goal, inputs, scope, and candidate. Code changes are delivered as confirmed patches.
+## Data, accounts, and current scope
 
-See the [architecture](docs/architecture/goal-first-agent.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for ownership and integration boundaries.
+Project files stay at the location you choose. Conversation state and runtime records are saved locally. Model requests and selected context are sent through your configured model connection; local storage does not mean offline inference. Account access and provider usage remain yours.
 
-## Current focus
+The source excludes credentials, private conversations and materials, runtime records, approvals, and installed binaries. Public web sharing, broader provider connections, extended automatic personal memory, and complex parallel merging are later work.
 
-- Make native setup and project registration reproducible on a fresh machine.
-- Make project history and cross-version continuation easier to use.
-- Expand article-writing and game workflows through real project use.
+## Join the project
 
-Detailed status lives in [STAGE_STATUS.md](STAGE_STATUS.md); version changes live in [CHANGELOG.md](CHANGELOG.md).
+Try a concrete personal-project workflow, report a reproducible problem, or improve the setup guide. [Contribution guide](CONTRIBUTING.md) · [Report an issue](https://github.com/Irixil/irixi-office-agent/issues/new?template=bug_report.yml) · [Suggest a use case](https://github.com/Irixil/irixi-office-agent/issues/new?template=feature_request.yml)
 
-## Help shape the project
-
-Useful contributions include reproducible installation reports, project-continuity bugs, clearer documentation, and office interaction improvements. Start with the [contribution guide](CONTRIBUTING.md).
-
-**[Report a bug](https://github.com/Irixil/irixi-office-agent/issues/new?template=bug_report.yml) · [Suggest a use case](https://github.com/Irixil/irixi-office-agent/issues/new?template=feature_request.yml) · [Follow previews](https://github.com/Irixil/irixi-office-agent/releases)**
-
-If the direction is useful to you, a star helps others discover iRIXI. Share the repository with someone working on personal AI assistants, multi-agent workflows, or visual agent offices.
-
+Original iRIXI code and artwork do not yet have a repository-wide license. Upstream components retain their own notices and licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

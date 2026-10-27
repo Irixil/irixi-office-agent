@@ -81,6 +81,18 @@ test('当前执行状态中文展示结束态，其他状态复用已有文案�
     execution: { phase: 'completed' }, taskLifecycle: { status: 'completed', inFlight: false } }), '本轮执行已结束');
   assert.equal(nativeExecutionStatusLabel({ native: { phase: 'executing' }, statusLabel: '原生团队正在执行' }), '原生团队正在执行');
   assert.equal(nativeExecutionStatusLabel({ native: { phase: 'waiting_user' }, status: '等待确认' }), '等待确认');
+  assert.equal(nativeExecutionStatusLabel({ current: true, status: 'cancelling', statusLabel: '正在停止',
+    execution: { phase: 'cancelled', stopReason: 'user_cancelled', modelCalls: [{ status: 'running' }] },
+    taskLifecycle: { status: 'stopping', inFlight: true } }), '正在停止');
+  assert.equal(nativeExecutionStatusLabel({ current: true, status: 'cancelled', statusLabel: '你已停止本轮执行',
+    execution: { phase: 'cancelled', stopReason: 'user_cancelled', modelCalls: [{ status: 'failed' }] },
+    taskLifecycle: { status: 'cancelled', inFlight: false } }), '你已停止本轮执行');
+  assert.equal(nativeExecutionStatusLabel({ current: false, status: 'waiting_user', statusLabel: '旧目标等待处理',
+    execution: { phase: 'partial', stopReason: 'user_cancelled', modelCalls: [{ status: 'failed' }] },
+    taskLifecycle: { status: 'cancelled', inFlight: false } }), '旧目标等待处理');
+  assert.equal(nativeExecutionStatusLabel({ current: false, status: 'waiting_user', statusLabel: '旧目标等待处理',
+    execution: { phase: 'partial', stopReason: 'user_cancelled', modelCalls: [{ status: 'running' }] },
+    taskLifecycle: { status: 'stopping', inFlight: true } }), '旧目标等待处理');
 });
 
 test('状态显示依据当前执行阶段、在途记录与准备失败，不把planned或过期执行说成已结束', () => {

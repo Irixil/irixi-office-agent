@@ -1,5 +1,6 @@
 const STATUS_MAP = {
   running: 'running',
+  cancelling: 'running',
   in_progress: 'running',
   waiting_user: 'waiting_user',
   ready_to_export: 'ready_to_export',
@@ -14,10 +15,10 @@ const STATUS_MAP = {
   completed: 'completed',
 };
 const SHA256 = /^[a-f0-9]{64}$/;
-const OFFICE_FUNCTION_IDS = new Set(['utility', 'game', 'agent']);
+const OFFICE_FUNCTION_IDS = new Set(['learning', 'utility', 'game', 'agent', 'document']);
 const OFFICE_FUNCTION_BY_STATION = {
   researcher: 'learning', writer: 'utility', reviewer: 'game', steward: 'agent',
-  archivist: 'archive', coordinator: 'coordination',
+  archivist: 'document', coordinator: 'coordination',
 };
 
 export function escapeHtml(value) {
@@ -245,7 +246,7 @@ function normalizeSetupProject(item) {
     ...(Array.isArray(item.allowedRoles) && item.allowedRoles.every((value) => typeof value === 'string')
       ? { allowedRoles: [...item.allowedRoles], maxAgents: Number.isInteger(item.maxAgents) ? item.maxAgents : null,
         maxModelCalls: Number.isInteger(item.maxModelCalls) ? item.maxModelCalls : null } : {}),
-    ...(item.projectKind === 'utility' ? { projectKind: 'utility' } : {}),
+    ...(item.projectKind === 'utility' || item.projectKind === 'document' ? { projectKind: item.projectKind } : {}),
     ...(optionalString(item.location) ? { location: optionalString(item.location) } : {}),
     current: item.current === true,
   };
@@ -261,6 +262,7 @@ function normalizeSetup(raw) {
       scopeFingerprint: optionalString(raw.selectedScope.scopeFingerprint),
       goalVersionId: optionalString(raw.selectedScope.goalVersionId),
       selectedAt: optionalString(raw.selectedScope.selectedAt),
+      authorized: raw.selectedScope.authorized === true,
       current: raw.selectedScope.current === true,
     } : null,
   };
@@ -376,6 +378,13 @@ function normalizeInstructions(raw) {
   });
 }
 
+function normalizeMaterials(raw) {
+  return Array.isArray(raw) ? raw.flatMap((item) => item && typeof item === 'object' && optionalString(item.id) && optionalString(item.name)
+    ? [{ id: item.id, name: item.name, source: optionalString(item.kind) || 'text', kind: optionalString(item.kind),
+      bytes: Number.isSafeInteger(item.bytes) ? item.bytes : 0, status: 'ready', sha256: optionalString(item.sha256), createdAt: optionalString(item.createdAt) }]
+    : []) : [];
+}
+
 function normalizeNative(raw, currentBinding = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const bindingCurrent = raw.bindingCurrent === true;
@@ -417,17 +426,22 @@ function normalizeNative(raw, currentBinding = {}) {
       createdAt: optionalString(item.createdAt) }];
   }) : [];
   const actions = raw.actions && typeof raw.actions === 'object' ? Object.fromEntries(
-    ['canRun', 'canReview', 'canReviewSameRun', 'canOpenReviewRound', 'canReconnectReview', 'canConfirm', 'canAdjudicateConfirm', 'canPreview', 'canGoal', 'canScope', 'canAuthorizeScope', 'canPause', 'canCancel', 'canChat', 'canInstructions', 'canMaterials', 'canInspectDiff', 'canRevise', 'canApprovePlan', 'canContinue'].map((key) => [key, raw.actions[key] === true]),
+    ['canRun', 'canReview', 'canReviewSameRun', 'canOpenReviewRound', 'canReconnectReview', 'canConfirm', 'canAdjudicateConfirm', 'canPreview', 'canGoal', 'canScope', 'canAuthorizeScope', 'canPause', 'canCancel', 'canChat', 'canInstructions', 'canMaterials', 'canInspectDiff', 'canRevise', 'canApprovePlan', 'canReplan', 'canContinue', 'canContinueFromConfirmed', 'canStartNewSharedBudgetExecution', 'canStartTaskScopedExecution'].map((key) => [key, raw.actions[key] === true]),
   ) : {
     canRun: false, canReview: false, canReviewSameRun: false, canOpenReviewRound: false, canReconnectReview: false, canConfirm: false, canAdjudicateConfirm: false, canPreview: false, canGoal: false, canScope: false, canAuthorizeScope: false, canPause: false,
     canCancel: false, canChat: false, canInstructions: false, canMaterials: false, canInspectDiff: false, canRevise: false, canApprovePlan: false,
+    canStartNewSharedBudgetExecution: false,
+    canStartTaskScopedExecution: false,
   };
   actions.phase = optionalString(raw.actions?.phase);
+  actions.instructionSnapshotValid = typeof raw.actions?.instructionSnapshotValid === 'boolean'
+    ? raw.actions.instructionSnapshotValid : null;
   actions.canContinue = raw.actions?.canResume === true || raw.actions?.canContinue === true;
   actions.revisionId = optionalString(raw.actions?.revisionId);
   actions.canResume = raw.actions?.canResume === true;
   actions.resumeReason = optionalString(raw.actions?.resumeReason);
   actions.stopClass = optionalString(raw.actions?.stopClass);
+  actions.confirmationBlockReason = optionalString(raw.actions?.confirmationBlockReason);
   // Model execution is a separate capability gate. Only the documented
   // native-level field can open it; action metadata is informative but is not
   // accepted as a substitute for the runtime mode contract.
@@ -453,10 +467,14 @@ function normalizeNative(raw, currentBinding = {}) {
     ? { text: planText, sha256: planSha256,
       instructionSnapshotSha256: optionalString(raw.plan.instructionSnapshotSha256),
       instructionCount: Number.isInteger(raw.plan.instructionCount) && raw.plan.instructionCount >= 0 ? raw.plan.instructionCount : null,
-      instructionIds: Array.isArray(raw.plan.instructionIds) ? raw.plan.instructionIds.filter((id) => typeof id === 'string') : [] } : null;
+      instructionIds: Array.isArray(raw.plan.instructionIds) ? raw.plan.instructionIds.filter((id) => typeof id === 'string') : [],
+      pendingInstructions: Array.isArray(raw.plan.pendingInstructions) ? raw.plan.pendingInstructions
+        .filter((item) => typeof item?.id === 'string' && typeof item.text === 'string')
+        .map(({ id, text }) => ({ id, text })) : [] } : null;
   const planApprovalStatus = ['saved', 'not_persisted', 'unavailable', 'mismatch', 'not_ready'].includes(raw.planApprovalStatus)
     ? raw.planApprovalStatus : 'not_ready';
   actions.canApprovePlan = actions.canApprovePlan && Boolean(plan && SHA256.test(plan.instructionSnapshotSha256 || ''));
+  actions.canReplan = actions.canReplan === true && actions.canApprovePlan && plan.pendingInstructions.length > 0;
   const round = raw.reviewRound && typeof raw.reviewRound === 'object' ? raw.reviewRound : null;
   const reviewRound = round && typeof round.id === 'string' && ['open', 'running', 'expired', 'stale', 'completed', 'failed', 'cancelled'].includes(round.status)
     && SHA256.test(round.candidateSha256 || '') && Number.isInteger(round.maxModelCalls) && Number.isInteger(round.modelCalls)
@@ -476,9 +494,43 @@ function normalizeNative(raw, currentBinding = {}) {
     runAgentId: optionalString(raw.runAgentId),
     phase: optionalString(raw.phase),
     plan,
+    instructionArtifact: bindingCurrent && optionalString(raw.instructionArtifact?.id)
+      && Number.isInteger(raw.instructionArtifact.version) && SHA256.test(raw.instructionArtifact.candidateSha256 || '')
+      && SHA256.test(raw.instructionArtifact.diffSha256 || '') ? {
+        id: raw.instructionArtifact.id, version: raw.instructionArtifact.version,
+        candidateSha256: raw.instructionArtifact.candidateSha256, diffSha256: raw.instructionArtifact.diffSha256,
+      } : null,
     planApprovalStatus,
     sessions,
     preparationFailures,
+    continuationSources: Array.isArray(raw.continuationSources) ? raw.continuationSources.flatMap((item) => {
+      if (!item || typeof item !== 'object' || !optionalString(item.artifactId) || !Number.isInteger(item.artifactVersion)
+        || !SHA256.test(item.candidateSha256 || '') || !SHA256.test(item.diffSha256 || '')
+        || !SHA256.test(item.reviewFullOutputSha256 || '') || !SHA256.test(item.patchSha256 || '')
+        || !SHA256.test(item.zipSha256 || '') || !SHA256.test(item.manifestSha256 || '')) return [];
+      return [{
+        taskId: optionalString(item.taskId), goalVersionId: optionalString(item.goalVersionId),
+        projectId: optionalString(item.projectId), scopeFingerprint: optionalString(item.scopeFingerprint),
+        artifactId: item.artifactId, artifactVersion: item.artifactVersion,
+        artifactGoalVersionId: optionalString(item.artifactGoalVersionId),
+        sourceExecutionId: optionalString(item.sourceExecutionId), sourceRegistrySha256: optionalString(item.sourceRegistrySha256),
+        candidateSha256: item.candidateSha256, diffSha256: item.diffSha256,
+        reviewId: optionalString(item.reviewId), reviewFullOutputSha256: item.reviewFullOutputSha256,
+        approvalId: optionalString(item.approvalId), patchSha256: item.patchSha256, zipSha256: item.zipSha256,
+        manifestSha256: item.manifestSha256,
+        sharedBudget: item.sharedBudget && Number.isInteger(item.sharedBudget.maxModelCalls)
+          && Number.isInteger(item.sharedBudget.usedCalls) && Number.isInteger(item.sharedBudget.remainingCalls)
+          ? { maxModelCalls: item.sharedBudget.maxModelCalls, usedCalls: item.sharedBudget.usedCalls,
+            remainingCalls: item.sharedBudget.remainingCalls, deadlineAt: optionalString(item.sharedBudget.deadlineAt) } : null,
+        instructions: Array.isArray(item.instructions) ? item.instructions.flatMap((entry) =>
+          entry && typeof entry.id === 'string' && typeof entry.text === 'string' && entry.text.trim()
+            ? [{ id: entry.id, text: entry.text, createdAt: optionalString(entry.createdAt) }] : []) : [],
+      }];
+    }) : [],
+    confirmedDeliveries: Array.isArray(raw.confirmedDeliveries) ? raw.confirmedDeliveries.flatMap((item) =>
+      item && typeof item.artifactId === 'string' && item.artifactId && Number.isInteger(item.artifactVersion)
+        && typeof item.approvalId === 'string' && item.approvalId
+        ? [{ artifactId: item.artifactId, artifactVersion: item.artifactVersion, approvalId: item.approvalId, hasDocument: item.hasDocument === true }] : []) : [],
     reviewRound,
     reviewRoundOffer: raw.reviewRoundOffer && Number.isInteger(raw.reviewRoundOffer.maxModelCalls)
       && Number.isInteger(raw.reviewRoundOffer.maxDurationMs) ? {
@@ -518,6 +570,29 @@ export function safeLocalPath(value) {
   } catch {
     return null;
   }
+}
+
+export function retainContinuationSourceSelection(previousBinding, currentBinding, previousArtifactId, sources) {
+  return previousBinding === currentBinding && Array.isArray(sources)
+    && sources.some((source) => source?.artifactId === previousArtifactId) ? previousArtifactId : '';
+}
+
+export function retainBoundCheckboxChoice(previous, binding) {
+  return previous?.binding === binding && typeof previous.checked === 'boolean'
+    ? previous : { binding, checked: false };
+}
+
+export function continuationReplyTargetsChat(currentTaskId, currentProjectId, selectionPending, expected) {
+  return selectionPending !== true && currentTaskId === expected?.taskId && currentProjectId === expected?.projectId;
+}
+
+export function nativeMaterialBindingMatches(boundAtOpen, currentBinding) {
+  return typeof boundAtOpen === 'string' && boundAtOpen.length > 0 && boundAtOpen === currentBinding;
+}
+
+export function continuationDraftMatches(current, expected) {
+  return Boolean(current && expected && current.text === expected.text
+    && current.requestId === expected.requestId && current.continuationRequestId === expected.continuationRequestId);
 }
 
 const GAME_WORKSPACE_BINDING_KEYS = Object.freeze([
@@ -600,6 +675,14 @@ function latestPreparationFailure(product) {
 
 function nextStepFor(product) {
   if (!product.current) return '目标或授权已变化；旧执行与旧候选不能继续作为当前结果。';
+  const execution = product.execution;
+  const calls = execution?.modelCalls || [];
+  const deadline = Date.parse(execution?.deadline || '');
+  const expired = Number.isFinite(deadline) && deadline <= Date.now();
+  const active = product.taskLifecycle?.inFlight === true
+    || calls.some((call) => ['reserved', 'running', 'started', 'in_progress', 'working'].includes(call.status));
+  if (expired && active) return '执行时限已到，仍有工作待核实；不会把在途工作当作已结束。';
+  if (expired && product.taskLifecycle?.inFlight === false) return '本轮已结束，调用记录保留；不会启动或批准过期计划。';
   const preparationFailure = latestPreparationFailure(product);
   if (preparationFailure) return `最近一次原生成员准备失败，未创建模型调用：${preparationFailure.error} 已完成的调用记录保留；本轮状态仍以当前执行和后台调用记录为准。`;
   if (product.nextStep) return product.nextStep;
@@ -615,6 +698,9 @@ function taskStatus(product) {
   if (!product.current) return 'partial';
   if (product.artifact?.confirmation) return 'ready_to_export';
   if (product.artifact?.review?.passed) return 'waiting_user';
+  const deadline = Date.parse(product.execution?.deadline || '');
+  const expired = Number.isFinite(deadline) && deadline <= Date.now();
+  if (expired) return 'partial';
   if (!product.artifact && product.execution?.phase === 'planned') return product.native?.plan ? 'ready' : 'waiting_start';
   if (product.native?.actions?.canApprovePlan) return 'waiting_user';
   if (['failed', 'cancelled', 'paused', 'blocked', 'completed'].includes(product.status)) {
@@ -625,13 +711,12 @@ function taskStatus(product) {
     && product.native.source === 'openoffice-native'
     && Boolean(product.execution?.id)
     && product.native.registrySha256 === product.product?.registrySha256;
-  const deadline = Date.parse(product.execution?.deadline || '');
   const withinDeadline = !Number.isFinite(deadline) || deadline > Date.now();
-  const hasActiveCall = bindingMatches && withinDeadline && (
+  const hasBoundActiveCall = bindingMatches && withinDeadline && (
     product.execution?.modelCalls?.some((call) => activeStatuses.includes(call.status))
     || product.native.sessions.some((session) => activeStatuses.includes(session.status))
   );
-  if (hasActiveCall) return 'running';
+  if (hasBoundActiveCall) return 'running';
   if (product.status === 'waiting_user') return 'waiting_user';
   if (['running', 'in_progress'].includes(product.status)) return 'partial';
   return STATUS_MAP[product.status] || 'idle';
@@ -745,7 +830,13 @@ export function normalizeNativeProductState(raw) {
         id: optionalString(execution.id), phase: optionalString(execution.phase), stopReason: optionalString(execution.stopReason),
         bindingCurrent: execution.bindingCurrent === true,
         deadline: optionalString(execution.deadline),
+        taskScopedContinuation: execution.taskScopedContinuation === true,
+        continuationRequestId: optionalString(execution.continuationRequestId),
         modelCalls: Array.isArray(execution.modelCalls) ? execution.modelCalls.map((call) => ({ role: optionalString(call?.role), status: optionalString(call?.status) })) : null,
+        sharedBudget: execution.sharedBudget && Number.isInteger(execution.sharedBudget.maxModelCalls)
+          && Number.isInteger(execution.sharedBudget.usedCalls) && Number.isInteger(execution.sharedBudget.remainingCalls)
+          ? { maxModelCalls: execution.sharedBudget.maxModelCalls, usedCalls: execution.sharedBudget.usedCalls,
+            remainingCalls: execution.sharedBudget.remainingCalls, deadlineAt: optionalString(execution.sharedBudget.deadlineAt) } : null,
         plan: execution.plan && typeof execution.plan.text === 'string' && SHA256.test(execution.plan.sha256 || '')
           ? { text: execution.plan.text, sha256: execution.plan.sha256,
             instructionIds: Array.isArray(execution.plan.instructionIds) ? execution.plan.instructionIds.filter((id) => typeof id === 'string') : [] } : null,
@@ -762,6 +853,7 @@ export function normalizeNativeProductState(raw) {
       workItems: [],
       conversations: [],
       instructions: normalizeInstructions(raw.instructions),
+      materials: normalizeMaterials(raw.materials),
       native: { bindingCurrent: false, registrySha256: null, sessions: [], actions },
       product: null,
       setup,
@@ -829,6 +921,12 @@ export function normalizeNativeProductState(raw) {
     && raw.artifact?.confirmation?.approvalId
     && raw.artifact.confirmation.artifactVersion === raw.artifact.version
     && raw.artifact.confirmation.goalVersionId === goalVersionId);
+  const confirmedDocumentAvailable = Boolean(authorityCurrent && bindingCurrent
+    && safeLocalPath(raw.links?.document)
+    && raw.artifact?.review?.passed === true
+    && raw.artifact?.confirmation?.approvalId
+    && raw.artifact.confirmation.artifactVersion === raw.artifact.version
+    && raw.artifact.confirmation.goalVersionId === goalVersionId);
   const nativeSessionAgentIds = new Set(native?.sessions.map((session) => session.agentId).filter(Boolean) || []);
   const nativeRosterAgentIds = new Set(native?.source === 'openoffice-native' ? native.agents.map((agent) => agent.id) : []);
   const rosterIsNative = raw.team?.source === 'openoffice-native' && native?.source === 'openoffice-native';
@@ -859,7 +957,13 @@ export function normalizeNativeProductState(raw) {
       phase: optionalString(raw.execution.phase),
       stopReason: optionalString(raw.execution.stopReason),
       deadline: optionalString(raw.execution.deadline),
+      taskScopedContinuation: raw.execution.taskScopedContinuation === true,
+      continuationRequestId: optionalString(raw.execution.continuationRequestId),
       modelCalls: Array.isArray(raw.execution.modelCalls) ? raw.execution.modelCalls.map((call) => ({ status: optionalString(call?.status) })) : null,
+      sharedBudget: raw.execution.sharedBudget && Number.isInteger(raw.execution.sharedBudget.maxModelCalls)
+        && Number.isInteger(raw.execution.sharedBudget.usedCalls) && Number.isInteger(raw.execution.sharedBudget.remainingCalls)
+        ? { maxModelCalls: raw.execution.sharedBudget.maxModelCalls, usedCalls: raw.execution.sharedBudget.usedCalls,
+          remainingCalls: raw.execution.sharedBudget.remainingCalls, deadlineAt: optionalString(raw.execution.sharedBudget.deadlineAt) } : null,
       reviewContinuation: raw.execution.reviewContinuation && typeof raw.execution.reviewContinuation === 'object' ? {
         authorized: raw.execution.reviewContinuation.authorized === true,
         status: optionalString(raw.execution.reviewContinuation.status),
@@ -911,6 +1015,7 @@ export function normalizeNativeProductState(raw) {
     workItems: normalizeWorkItems(raw.workItems),
     conversations: normalizeConversations(raw.conversations),
     instructions: normalizeInstructions(raw.instructions),
+    materials: normalizeMaterials(raw.materials),
     memory: normalizeMemory(raw.memory),
     canPrepareRun: raw.canPrepareRun === true,
     currentResultRecovery,
@@ -945,6 +1050,7 @@ export function normalizeNativeProductState(raw) {
       confirm: safeLocalPath(raw.links?.confirm),
       patch: safeLocalPath(raw.links?.patch),
       zip: confirmedToolZipAvailable ? safeLocalPath(raw.links?.zip) : null,
+      document: confirmedDocumentAvailable ? safeLocalPath(raw.links?.document) : null,
       preview: previewBindingCurrent && preview?.status === 'ready'
         ? safeLocalPath(raw.previewLink || raw.links?.preview) : null,
     },
@@ -986,7 +1092,7 @@ export function nativeProductAsOfficeTask(product) {
         boundaries: product.boundaries || [],
       }],
     },
-    materials: [],
+    materials: product.materials || [],
     materialContext: { fingerprint: null, effectiveMaterialIds: [], directory: [] },
     suggestions: [],
     workItems,
@@ -1015,6 +1121,11 @@ export function nativeOfficeWaitingPresentation(product, task) {
   }
   const artifact = product.artifact;
   if (!artifact?.id || artifact.confirmation) return null;
+  if (product.native?.actions?.confirmationBlockReason) {
+    return product.native.actions.instructionSnapshotValid === false
+      ? presentation('批准要求快照异常', 'APPROVED REQUIREMENT SNAPSHOT INVALID', '无法验证本轮批准要求', 'attention')
+      : presentation('新增要求尚未检查', 'APPROVED REQUIREMENT PENDING', '原审阅报告未覆盖本轮批准要求', 'attention');
+  }
   const reviewState = nativeReviewDisposition(artifact.review, {
     canConfirm: product.native?.actions?.canConfirm === true,
     canAdjudicateConfirm: product.native?.actions?.canAdjudicateConfirm === true,
@@ -1065,11 +1176,12 @@ export function nativeExecutionRoleFallback(product) {
 }
 
 export function nativeExecutionStatusLabel(product) {
-  if (!product?.current) return optionalString(product?.statusLabel) || optionalString(product?.status) || '未提供';
-  const execution = product.execution;
+  const execution = product?.execution;
   const calls = execution?.modelCalls || [];
-  const active = product.taskLifecycle?.inFlight === true
+  const active = product?.taskLifecycle?.inFlight === true
     || calls.some((call) => ['reserved', 'running', 'started', 'in_progress', 'working'].includes(call.status));
+  if (!product?.current) return optionalString(product?.statusLabel) || optionalString(product?.status) || '未提供';
+  if (execution?.stopReason === 'user_cancelled') return active ? '正在停止' : '你已停止本轮执行';
   const deadline = Date.parse(execution?.deadline || '');
   const expired = Boolean(execution && Number.isFinite(deadline) && deadline <= Date.now());
   if (active) return expired ? '执行时限已到，仍有在途工作待核实' : '原生团队正在执行当前任务';
@@ -1077,9 +1189,9 @@ export function nativeExecutionStatusLabel(product) {
     || ['completed', 'ready_to_export'].includes(product.status) || product.artifact?.confirmation) return '本轮执行已结束';
   const preparationFailure = latestPreparationFailure(product);
   if (preparationFailure) return '成员执行准备失败（未创建本次模型调用）';
+  if (expired || ['execution_deadline_elapsed', 'execution_expired'].includes(execution?.stopReason)) return '本轮执行已到期，调用记录保留';
   if (product.native?.actions?.canApprovePlan && product.native?.plan) return 'Lead 计划待审批';
   if (execution?.phase === 'planned' && calls.length === 0) return '执行已准备，等待 Lead 启动';
-  if (expired || ['execution_deadline_elapsed', 'execution_expired'].includes(execution?.stopReason)) return '本轮执行已到期，调用记录保留';
   if (product.status === 'failed' && product.taskLifecycle?.inFlight === false) return '本轮已停止';
   if (execution?.phase === 'failed' || product.taskLifecycle?.status === 'failed') return '本轮执行失败';
   return optionalString(product?.statusLabel) || optionalString(product?.status) || '未提供';
@@ -1088,6 +1200,36 @@ export function nativeExecutionStatusLabel(product) {
 export function nativeGoalVersionStamp(versionId) {
   const fullId = optionalString(versionId) || '';
   return { label: fullId.length > 10 ? `${fullId.slice(0, 8)}…` : fullId || '尚未建立', fullId };
+}
+
+export function restoreNativeGoalDraft(binding, initialStatement, storage, createRequestId) {
+  const key = `irixi-native-goal-draft:${binding}`;
+  try {
+    const saved = JSON.parse(storage?.getItem(key) || 'null');
+    if (saved?.binding === binding && /^[A-Za-z0-9_-]{12,128}$/u.test(saved.requestId || '')
+      && saved.values && typeof saved.values === 'object') {
+      return { key, binding, requestId: saved.requestId, lastSubmittedBody: saved.lastSubmittedBody || null,
+        values: { statement: String(saved.values.statement || ''), successCriteria: String(saved.values.successCriteria || ''),
+          boundaries: String(saved.values.boundaries || '') } };
+    }
+  } catch { /* A malformed or unavailable session draft starts from the current host goal. */ }
+  return { key, binding, requestId: createRequestId(), lastSubmittedBody: null,
+    values: { statement: String(initialStatement || ''), successCriteria: '', boundaries: '' } };
+}
+
+export function persistNativeGoalDraft(draft, storage) {
+  try {
+    storage?.setItem(draft.key, JSON.stringify({ binding: draft.binding, requestId: draft.requestId,
+      lastSubmittedBody: draft.lastSubmittedBody, values: draft.values }));
+  } catch { /* Keep the bound draft in page memory if session storage is unavailable. */ }
+}
+
+export function bindNativeGoalSubmission(draft, body, createRequestId) {
+  const serialized = JSON.stringify(body);
+  if (draft.lastSubmittedBody !== null && draft.lastSubmittedBody !== serialized) draft.requestId = createRequestId();
+  draft.lastSubmittedBody = serialized;
+  draft.values = { statement: body.statement, successCriteria: body.successCriteria.join('\n'), boundaries: body.boundaries.join('\n') };
+  return { requestId: draft.requestId, serialized };
 }
 
 export function nativeCoworkerPresence(product, officeTask, role) {
@@ -1110,6 +1252,7 @@ export function nativeFunctionDiscussionMember(product, functionId) {
 
 export function nativeFunctionChatContext(product, functionId, actionBound) {
   if (functionId === 'learning') return { functionOwner: false, member: null, canSend: false };
+  if (functionId === 'document') return { functionOwner: product?.functionId === 'document', member: null, canSend: false };
   if (!['utility', 'game', 'agent'].includes(functionId)) return null;
   const functionOwner = product?.functionId === functionId;
   const member = functionOwner ? nativeFunctionDiscussionMember(product, functionId) : null;
@@ -1174,19 +1317,62 @@ function normalizeMemory(raw) {
 
 export function nativeActionPayload(product, action, input = {}) {
   const setupActions = ['goal', 'instructions', 'materials', 'scope', 'authorize_scope', 'prepare_run', 'memory_save', 'memory_change'];
-  const executionActions = ['pause', 'cancel', 'continue', 'run', 'approve_plan', 'review', 'open_review_round', 'reconnect_review_runtime', 'revise', 'preview', 'chat'];
+  const executionActions = ['pause', 'cancel', 'continue', 'run', 'approve_plan', 'replan', 'review', 'open_review_round', 'reconnect_review_runtime', 'revise', 'preview', 'chat'];
   if (![...setupActions, ...executionActions].includes(action)) throw new Error('不支持这个原生任务动作。');
   if (!product?.authorityCurrent || !product.goalVersionId) throw new Error('当前原生任务目标绑定不完整。');
   if (action === 'prepare_run' && Object.hasOwn(input, 'autoReviewContinuation')
       && typeof input.autoReviewContinuation !== 'boolean') throw new Error('只读审阅接续必须是明确的布尔选择。');
+  if (action === 'prepare_run' && Object.hasOwn(input, 'shareBudgetAcrossConfirmedContinuation')
+      && typeof input.shareBudgetAcrossConfirmedContinuation !== 'boolean') throw new Error('共同预算选择必须是明确的布尔值。');
+  const hasTaskScopedContinuationPolicy = Object.hasOwn(input, 'continuationBudgetPolicy')
+    || Object.hasOwn(input, 'acknowledgeNoAggregateLimit');
+  const newTaskScopedExecution = action === 'prepare_run' && input.mode === 'new_execution'
+    && input.startTaskScopedExecution === true;
+  if (hasTaskScopedContinuationPolicy && (action !== 'prepare_run'
+    || !(input.mode === 'continue_from_confirmed_artifact' || newTaskScopedExecution)
+    || input.continuationBudgetPolicy !== 'task_scoped_no_aggregate_v1'
+    || input.acknowledgeNoAggregateLimit !== true)) {
+    throw new Error('无累计调用数/总时长上限的执行需要明确策略和确认。');
+  }
   if (executionActions.includes(action) && (!product.current || !product.execution?.id || !product.product?.registrySha256)) {
     throw new Error('当前原生任务执行绑定不完整。');
   }
   const payload = {
     ...input,
     action,
-    expectedGoalVersionId: product.goalVersionId,
+    expectedGoalVersionId: action === 'goal' ? input.expectedGoalVersionId : product.goalVersionId,
   };
+  if (action === 'goal') {
+    if (input.expectedTaskId !== product.taskId || input.expectedGoalVersionId !== product.goalVersionId
+      || !/^[A-Za-z0-9_-]{12,128}$/.test(input.requestId || '')) {
+      throw new Error('目标表单已绑定旧任务版本，请刷新后重新核对。');
+    }
+    payload.expectedTaskId = input.expectedTaskId;
+  }
+  if (action === 'prepare_run' && input.mode === 'new_execution'
+      && (input.startFreshSharedBudget === true || newTaskScopedExecution)) {
+    const canStartTaskScoped = product.native?.actions?.canStartTaskScopedExecution === true;
+    const currentSetupScope = product.setupPending === true && product.canPrepareRun === true
+      && product.setup?.selectedScope?.current === true && product.setup.selectedScope.authorized === true;
+    if (!(input.startFreshSharedBudget === true
+      ? product.native?.actions?.canStartNewSharedBudgetExecution === true : canStartTaskScoped)
+      || !(product.current || currentSetupScope) || !/^[A-Za-z0-9_-]{12,128}$/u.test(input.newExecutionRequestId || '')) {
+      throw new Error('当前任务未开放安全的新执行，或请求编号无效。');
+    }
+    if (newTaskScopedExecution && (!hasTaskScopedContinuationPolicy
+      || input.continuationBudgetPolicy !== 'task_scoped_no_aggregate_v1' || input.acknowledgeNoAggregateLimit !== true)) {
+      throw new Error('新执行需要明确选择无累计上限策略并确认。');
+    }
+    Object.assign(payload, {
+      expectedTaskId: product.taskId,
+      expectedGoalVersionId: product.goalVersionId,
+      expectedExecutionId: product.execution?.id || null,
+      expectedRegistrySha256: product.product?.registrySha256 || product.registry?.registrySha256 || null,
+      expectedProjectId: product.product?.projectId || product.registry?.projectId || product.setup?.selectedScope?.projectId,
+      expectedScopeFingerprint: product.registry?.scopeFingerprint || product.product?.workspaceScopeFingerprint
+        || product.setup?.selectedScope?.scopeFingerprint,
+    });
+  }
   if (['goal', 'instructions', 'materials'].includes(action)) {
     const binding = normalizeInputMutationBinding(product.inputMutationBinding, product.goalVersionId);
     delete payload.expectedExecutionId;
@@ -1200,10 +1386,30 @@ export function nativeActionPayload(product, action, input = {}) {
       if (currentRegistrySha256) payload.expectedRegistrySha256 = currentRegistrySha256;
     }
   }
+  if (action === 'materials') {
+    if (product.native?.actions?.canMaterials !== true || !/^[A-Za-z0-9_-]{12,128}$/u.test(input.requestId || '')) {
+      throw new Error('当前任务未开放材料保存，或材料请求编号无效。');
+    }
+    const projectId = product.product?.projectId || product.registry?.projectId || product.setup?.selectedProject?.projectId;
+    const scopeFingerprint = product.product?.workspaceScopeFingerprint || product.registry?.scopeFingerprint || product.setup?.selectedScope?.scopeFingerprint;
+    if (!projectId || !SHA256.test(scopeFingerprint || '')) throw new Error('材料保存缺少当前授权项目范围。');
+    payload.expectedTaskId = product.taskId;
+    payload.expectedProjectId = projectId;
+    payload.expectedScopeFingerprint = scopeFingerprint;
+  }
   if (action === 'instructions') {
     if (!/^[A-Za-z0-9_-]{12,128}$/u.test(input.requestId || '')) throw new Error('保存工作交代需要稳定的请求编号。');
     const scope = product.registry?.scopeFingerprint || product.setup?.selectedScope?.scopeFingerprint || null;
-    const artifact = product.artifact;
+    const continuationSource = input.instructionArtifactId
+      ? product.native?.continuationSources?.find((item) => item.artifactId === input.instructionArtifactId) : null;
+    if (input.instructionArtifactId && (!continuationSource || product.native?.actions?.canContinueFromConfirmed !== true)) {
+      throw new Error('本次工作要求没有绑定到可继续的已确认版本。');
+    }
+    const artifact = continuationSource ? {
+      id: continuationSource.artifactId, version: continuationSource.artifactVersion,
+      candidateSha256: continuationSource.candidateSha256, diffSha256: continuationSource.diffSha256,
+    } : product.artifact || product.native?.instructionArtifact;
+    if (continuationSource) payload.instructionArtifactId = continuationSource.artifactId;
     Object.assign(payload, {
       expectedTaskId: product.taskId,
       expectedProjectId: product.product?.projectId || product.registry?.projectId || product.setup?.selectedScope?.projectId || null,
@@ -1227,6 +1433,42 @@ export function nativeActionPayload(product, action, input = {}) {
       throw new Error('当前没有可安全复用的已确认成果绑定。');
     }
     return { action, ...recovery.reuseInput };
+  }
+  if (action === 'prepare_run' && input.mode === 'continue_from_confirmed_artifact') {
+    const source = product.native?.continuationSources?.find((item) => item.artifactId === input.sourceArtifactId);
+    const ids = Array.isArray(input.instructionIds) ? [...new Set(input.instructionIds)] : [];
+    if (!/^[A-Za-z0-9_-]{12,128}$/u.test(input.continuationRequestId || '')) throw new Error('续改准备需要稳定的请求编号。');
+    if (!product.current || product.native?.actions?.canContinueFromConfirmed !== true || !source
+      || !ids.length || ids.some((id) => !source.instructions.some((item) => item.id === id))
+      || product.setup?.selectedScope?.authorized !== true || product.setup.selectedScope.current !== true) {
+      throw new Error('请从当前明确核验的已确认版本中选择来源和本次新要求。');
+    }
+    return {
+      action, mode: input.mode,
+      ...(hasTaskScopedContinuationPolicy ? {
+        continuationBudgetPolicy: input.continuationBudgetPolicy,
+        acknowledgeNoAggregateLimit: input.acknowledgeNoAggregateLimit,
+      } : {}),
+      continuationRequestId: input.continuationRequestId,
+      expectedTaskId: product.taskId, expectedGoalVersionId: product.goalVersionId,
+      expectedCurrentExecutionId: product.execution?.id,
+      expectedCurrentRegistrySha256: product.product?.registrySha256,
+      expectedProjectId: source.projectId, expectedScopeFingerprint: source.scopeFingerprint,
+      expectedInstructionIds: ids,
+      expectedSourceArtifactId: source.artifactId,
+      expectedSourceArtifactVersion: source.artifactVersion,
+      expectedSourceArtifactGoalVersionId: source.artifactGoalVersionId,
+      expectedSourceExecutionId: source.sourceExecutionId,
+      expectedSourceRegistrySha256: source.sourceRegistrySha256,
+      expectedSourceCandidateSha256: source.candidateSha256,
+      expectedSourceDiffSha256: source.diffSha256,
+      expectedSourceReviewId: source.reviewId,
+      expectedSourceReviewFullOutputSha256: source.reviewFullOutputSha256,
+      expectedSourceApprovalId: source.approvalId,
+      expectedSourcePatchSha256: source.patchSha256,
+      expectedSourceZipSha256: source.zipSha256,
+      expectedSourceManifestSha256: source.manifestSha256,
+    };
   }
   const registrySha256 = product.product?.registrySha256 || product.registry?.registrySha256 || null;
   if (!['prepare_run', 'memory_save', 'memory_change', 'goal', 'instructions', 'materials'].includes(action) && product.execution?.id) payload.expectedExecutionId = product.execution.id;
@@ -1295,17 +1537,38 @@ export function nativeActionPayload(product, action, input = {}) {
     payload.expectedReviewId = product.artifact.review?.id || null;
     payload.expectedScopeFingerprint = scopeFingerprint;
   }
+  if (action === 'cancel' && product.execution?.taskScopedContinuation === true
+    && product.native?.actions?.canCancel === true) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(input.requestId || '')) throw new Error('停止本次执行需要稳定的请求编号。');
+    const scopeFingerprint = product.product?.workspaceScopeFingerprint || product.registry?.scopeFingerprint;
+    const continuationRequestId = product.execution.continuationRequestId;
+    if (!SHA256.test(scopeFingerprint || '') || !/^[A-Za-z0-9_-]{12,128}$/u.test(continuationRequestId || '')) {
+      throw new Error('本次执行停止绑定不完整。');
+    }
+    payload.expectedTaskId = product.taskId;
+    payload.expectedExecutionId = product.execution.id;
+    payload.expectedRegistrySha256 = product.product?.registrySha256 || product.registry?.registrySha256;
+    payload.expectedScopeFingerprint = scopeFingerprint;
+    payload.expectedContinuationRequestId = continuationRequestId;
+  }
   if (action === 'preview') {
     if (!product.artifact?.candidateSha256) throw new Error('当前原生候选摘要绑定不完整。');
     payload.expectedCandidateSha256 = product.artifact.candidateSha256;
   }
-  if (action === 'approve_plan') {
+  if (action === 'approve_plan' || action === 'replan') {
     const planSha256 = product.native?.bindingCurrent === true && product.native?.actions.canApprovePlan === true
       ? product.native?.plan?.sha256 : null;
     const instructionSnapshotSha256 = product.native?.plan?.instructionSnapshotSha256;
     if (!planSha256 || !SHA256.test(instructionSnapshotSha256 || '')) throw new Error('当前没有可批准且绑定有效的 Lead 计划指令快照。');
     payload.expectedPlanSha256 = planSha256;
     payload.expectedInstructionSnapshotSha256 = instructionSnapshotSha256;
+    payload.expectedPendingInstructionIds = (product.native.plan.pendingInstructions || []).map((item) => item.id);
+    if (action === 'replan') {
+      if (!product.native.actions.canReplan) throw new Error('当前计划不能按新增要求重新规划。');
+      payload.expectedTaskId = product.taskId;
+      payload.expectedExecutionId = product.execution.id;
+      payload.expectedRegistrySha256 = product.product.registrySha256;
+    }
   }
   return payload;
 }
