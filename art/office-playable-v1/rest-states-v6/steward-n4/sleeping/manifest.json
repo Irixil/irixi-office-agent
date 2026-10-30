@@ -1,0 +1,174 @@
+{
+  "id": "steward-mole-sleeping-n4-v1",
+  "status": "art-local-verified-independent-static-reviewed-runtime-pending",
+  "action": "sleeping",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "frameCount": 4,
+  "frameDurationsMs": [
+    900,
+    1100,
+    1000,
+    1100
+  ],
+  "cycleDurationMs": 4100,
+  "loop": true,
+  "returnTo": null,
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 4,
+    "rows": 1
+  },
+  "fullframePattern": "frames/sleeping_{index:02d}.png",
+  "previewBackground": "#FFFFFF",
+  "coordinateSpace": "screen-space",
+  "activeLimb": "both empty hands",
+  "activeShoulder": "each hand remains attached to its same screen-space shoulder",
+  "anchorLimb": "both planted feet",
+  "carriedProp": null,
+  "passiveAccessory": "cream sleeves; forest teal apron; brass buckles, chest button and loop",
+  "generation": "builtin image_gen; no scripted pose synthesis",
+  "normalization": [
+    {
+      "sourceFile": "sleeping-v2-source.png",
+      "sourceSHA256": "f68446b50f29740acc89a4c659e68b347562864936d78bd85549fa52cf392802",
+      "sourceGridStride": [
+        614,
+        610
+      ],
+      "sourceCellSize": [
+        627,
+        627
+      ],
+      "scale": 0.256120527306968,
+      "translation": [
+        5,
+        41
+      ],
+      "sourceCells": [
+        {
+          "cell": [
+            0,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            139,
+            62,
+            528,
+            593
+          ]
+        },
+        {
+          "cell": [
+            614,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            136,
+            61,
+            529,
+            593
+          ]
+        },
+        {
+          "cell": [
+            0,
+            610,
+            627,
+            627
+          ],
+          "bbox": [
+            139,
+            63,
+            529,
+            592
+          ]
+        },
+        {
+          "cell": [
+            614,
+            610,
+            627,
+            627
+          ],
+          "bbox": [
+            138,
+            62,
+            529,
+            593
+          ]
+        }
+      ]
+    }
+  ],
+  "baselineSHA256": "c3d7073dd085dbd467599dd760030f8afcfe80932da686cc4414fc38e0b7e9af",
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        40,
+        57,
+        141,
+        194
+      ],
+      "visibleSize": [
+        101,
+        137
+      ],
+      "sha256": "c62ea09485363ea2fdca6ea73c092c224d9202d165513fcace9400843bc8dddc"
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        40,
+        56,
+        141,
+        194
+      ],
+      "visibleSize": [
+        101,
+        138
+      ],
+      "sha256": "93d826f625ce42c20bfc0d120808cd61f670cbce644faef9e452364772939d29"
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        40,
+        57,
+        141,
+        194
+      ],
+      "visibleSize": [
+        101,
+        137
+      ],
+      "sha256": "c82bca975122527d6282861424d5aff58caf86ae9b2d530f39d2d23a84032925"
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        40,
+        57,
+        141,
+        194
+      ],
+      "visibleSize": [
+        101,
+        137
+      ],
+      "sha256": "ee0496e58929877634ceda0aa5dbdba6fec01dfe257223680a4c7b18c84cdb55"
+    }
+  ],
+  "framePlanReason": "Existing v6 runtime contract uses 4-frame loops. Continuous working/sleeping loops do not return to awake idle. Dedicated enter/exit tracks provide exact idle and loop endpoints. Exit reverses generated entry frames; no synthesized motion."
+}

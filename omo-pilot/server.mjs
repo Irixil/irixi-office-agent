@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import http from 'node:http';
@@ -22,6 +22,8 @@ import { CODEX_ROLE_MODEL, buildCodexRoleInvocation, resolveCodexRuntime, runCod
 import { buildCodexDecisionPrompt, composeHostTaskPrompt } from './codex-provider-protocol.mjs';
 import { ConversationStore } from './conversation-store.mjs';
 import { ConversationPreviews } from './conversation-preview.mjs';
+import { DeepSeekConnection } from './deepseek-connection.mjs';
+import { prepareProviderCredentialFile, providerCredentialStatus, readProviderCredential } from '../app/api-key-store.mjs';
 import { nativeRoleTools, runOmoNativeRpcRole } from './native-rpc-runner.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -6487,16 +6489,116 @@ async function serveMappedFile(res, rootDir, relativePath) {
   }
 }
 
+// Only the fixed v8 pack and files explicitly named by its manifests affect the build.
+// No optional pack preserves the historical build; a present, damaged pack fails closed.
+export async function motionQualityBuildChunks(workspaceRoot = WORKSPACE_ROOT) {
+  const packRelative = 'art/office-playable-v1/motion-quality-v8';
+  const packRoot = path.join(workspaceRoot, packRelative);
+  let packStat;
+  try { packStat = await fsp.lstat(packRoot); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const problem = (message) => new Error(`动画 v8 资源包缺损：${message}`);
+  if (!packStat.isDirectory()) throw problem('固定素材目录必须为普通目录。');
+  const expectedRoot = path.join(await fsp.realpath(workspaceRoot), packRelative);
+  if (await fsp.realpath(packRoot) !== expectedRoot) throw problem('素材目录越过了项目边界。');
+  const relativePath = (name) => {
+    if (typeof name !== 'string' || !name || /[\\\x00%?#]/u.test(name) || name.split('/').some((part) => !part || part === '.' || part === '..') || path.posix.isAbsolute(name)) throw problem('清单含非法相对路径。');
+    return name;
+  };
+  const contents = new Map();
+  const read = async (name) => {
+    relativePath(name);
+    if (contents.has(name)) return contents.get(name);
+    const filename = path.join(packRoot, name);
+    try {
+      const realFile = await fsp.realpath(filename);
+      if (!realFile.startsWith(`${expectedRoot}${path.sep}`) || !(await fsp.stat(realFile)).isFile()) throw problem(`${name} 不是包内普通文件。`);
+      const bytes = await fsp.readFile(realFile);
+      if (!bytes.length) throw problem(`${name} 为空。`);
+      contents.set(name, bytes); return bytes;
+    } catch (error) { throw problem(`${name} 无法读取或越界（${error.code || error.message}）。`); }
+  };
+  const json = async (name) => {
+    try { return JSON.parse((await read(name)).toString('utf8')); }
+    catch (error) { throw problem(`${name} 不是可读取的 JSON（${error.message}）。`); }
+  };
+  const manifest = await json('manifest.json');
+  if (!manifest?.roles || typeof manifest.roles !== 'object' || Array.isArray(manifest.roles) || !Object.keys(manifest.roles).length) throw problem('顶层清单没有角色。');
+  for (const role of Object.keys(manifest.roles).sort()) {
+    const name = relativePath(manifest.roles[role]?.manifest);
+    const character = await json(name);
+    if (!character?.states || typeof character.states !== 'object' || Array.isArray(character.states) || !Object.keys(character.states).length) throw problem(`${name} 没有动作。`);
+    for (const state of Object.keys(character.states).sort()) {
+      const sheet = relativePath(character.states[state]?.spritesheet);
+      await read(path.posix.join(path.posix.dirname(name), sheet));
+      const frontSheet = character.states[state]?.frontSpritesheet;
+      if (frontSheet) await read(path.posix.join(path.posix.dirname(name), relativePath(frontSheet)));
+    }
+    if (character.occlusionPatch?.file) await read(path.posix.join(path.posix.dirname(name), relativePath(character.occlusionPatch.file)));
+  }
+  return [...contents.keys()].sort().flatMap((name) => [Buffer.from(`${packRelative}/${name}\0${contents.get(name).length}\0`), contents.get(name)]);
+}
+
+export async function sceneResourceBuildChunks(workspaceRoot = WORKSPACE_ROOT) {
+  const contents = new Map();
+  for (const folder of ['concept-runtime-v4', 'concept-runtime-v5']) {
+    const relativeRoot = `art/office-playable-v1/${folder}`;
+    const root = path.join(workspaceRoot, relativeRoot);
+    try { await fsp.access(root); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    const expectedRoot = path.join(await fsp.realpath(workspaceRoot), relativeRoot);
+    if (await fsp.realpath(root) !== expectedRoot) throw new Error('场景素材目录越过项目边界。');
+    const read = async (name) => {
+      if (typeof name !== 'string' || !name || /[\\\\\x00%?#]/u.test(name) || path.posix.isAbsolute(name) || name.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('场景清单含非法素材路径。');
+      const filename = await fsp.realpath(path.join(root, name));
+      if (!filename.startsWith(`${expectedRoot}${path.sep}`) || !(await fsp.stat(filename)).isFile()) throw new Error('场景素材越过项目边界。');
+      const bytes = await fsp.readFile(filename);
+      if (!bytes.length) throw new Error('场景素材为空。');
+      contents.set(`${relativeRoot}/${name}`, bytes);
+      return bytes;
+    };
+    const manifest = JSON.parse((await read('manifest.json')).toString('utf8'));
+    const items = folder === 'concept-runtime-v4' ? [manifest.world?.background, ...(manifest.foregroundItems || []).map((item) => item.file)] : [manifest.upperFloor?.visual?.runtimeImage, ...(manifest.upperFloor?.foregroundItems || []).map((item) => item.file)];
+    for (const name of items) await read(name);
+  }
+  return [...contents.keys()].sort().flatMap((name) => [Buffer.from(`${name}\0${contents.get(name).length}\0`), contents.get(name)]);
+}
+
+export async function conversationSourceBuild(conversationSources, workspaceRoot = WORKSPACE_ROOT) {
+  const files = await Promise.all(conversationSources.map((name) => fsp.readFile(path.join(workspaceRoot, name))));
+  files.push(...await motionQualityBuildChunks(workspaceRoot));
+  files.push(...await sceneResourceBuildChunks(workspaceRoot));
+  try {
+    const selected = await fsp.readFile(path.join(workspaceRoot, '.irixi-runtime/noobi-specialist/selected.json'));
+    const target = JSON.parse(selected);
+    if (!/^build-[A-Za-z0-9]+$/u.test(target.directory)) throw new Error('Noobi 构建选择无效。');
+    files.push(selected, await fsp.readFile(path.join(workspaceRoot, '.irixi-runtime/noobi-specialist', target.directory, 'manifest.json')));
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  return sha256Buffer(Buffer.concat(files));
+}
+
 export async function createOmoPilotServer(options = {}) {
   const controller = new OmoPilotController(options);
   await controller.init();
-  const conversationSources = ['omo-pilot/server.mjs', 'omo-pilot/conversation-store.mjs', 'omo-pilot/conversation-models.mjs', 'omo-pilot/conversation-command.mjs', 'omo-pilot/conversation-checks.mjs', 'omo-pilot/conversation-preview.mjs', 'omo-pilot/native-rpc-runner.mjs', 'omo-pilot/codex-provider-protocol.mjs', 'omo-pilot/codex-bridge-provider.mjs', 'app/codex-role-adapter.mjs', 'app/public/conversation-app.js', 'app/public/conversation-format.js', 'app/public/conversation-workbench.css', 'app/public/native-project-hotspot.js', 'app/public/office-game.js', 'app/public/index.html', 'app/public/styles.css'];
-  const sourceBuild = async () => sha256Buffer(Buffer.concat(await Promise.all(conversationSources.map((name) => fsp.readFile(path.join(WORKSPACE_ROOT, name))))));
+  const conversationSources = ['omo-pilot/server.mjs', 'omo-pilot/deepseek-connection.mjs', 'app/api-key-store.mjs', 'app/providers.mjs', 'omo-pilot/colleagues.mjs', 'omo-pilot/specialist-skills.mjs', 'omo-pilot/noobi-adapter.mjs', 'omo-pilot/noobi-worker.mjs', 'omo-pilot/noobi-verification.mjs', 'omo-pilot/noobi-events.mjs', 'omo-pilot/noobi-permissions.mjs', 'omo-pilot/conversation-store.mjs', 'omo-pilot/conversation-memory.mjs', 'omo-pilot/conversation-project.mjs', 'omo-pilot/conversation-parallel.mjs', 'omo-pilot/conversation-models.mjs', 'omo-pilot/conversation-command.mjs', 'omo-pilot/conversation-application.mjs', 'omo-pilot/conversation-development.mjs', 'omo-pilot/conversation-checks.mjs', 'omo-pilot/conversation-preview.mjs', 'omo-pilot/native-rpc-runner.mjs', 'omo-pilot/codex-provider-protocol.mjs', 'omo-pilot/codex-bridge-provider.mjs', 'app/codex-role-adapter.mjs', 'app/public/conversation-app.js', 'app/public/conversation-format.js', 'app/public/conversation-workbench.css', 'app/public/native-project-hotspot.js', 'app/public/office-game.js', 'app/public/office-geometry.js', 'app/public/index.html', 'app/public/styles.css', 'art/office-playable-v1/rest-states-v6/steward-n4/enter-sleeping/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/enter-sleeping/spritesheet.png', 'art/office-playable-v1/rest-states-v6/steward-n4/enter-working/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/enter-working/spritesheet.png', 'art/office-playable-v1/rest-states-v6/steward-n4/exit-sleeping/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/exit-sleeping/spritesheet.png', 'art/office-playable-v1/rest-states-v6/steward-n4/exit-working/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/exit-working/spritesheet.png', 'art/office-playable-v1/rest-states-v6/steward-n4/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/sleeping/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/sleeping/spritesheet.png', 'art/office-playable-v1/rest-states-v6/steward-n4/working/manifest.json', 'art/office-playable-v1/rest-states-v6/steward-n4/working/spritesheet.png'];
+  const sourceBuild = () => conversationSourceBuild(conversationSources);
   const conversationBuild = options.conversationMode === true ? await sourceBuild() : null;
   const conversations = options.conversationMode === true ? new ConversationStore({ runtimeDir: controller.runtimeDir,
     build: conversationBuild, checkBuild: async () => { if (await sourceBuild() !== conversationBuild) throw new Error('产品代码已更新。请重启试用入口后继续，现有消息和文件已保留。'); },
     ...(options.conversationOptions || {}) }) : null;
   if (conversations) await conversations.init();
+  const connectionOptions = options.connectionOptions || {};
+  const credentialStatus = connectionOptions.credentialStatus || providerCredentialStatus;
+  const credentialReader = connectionOptions.readCredential || readProviderCredential;
+  const openKeySetup = connectionOptions.openKeySetup || (async (provider) => {
+    const file = await prepareProviderCredentialFile(provider);
+    await new Promise((resolve, reject) => {
+      execFile('/usr/bin/open', ['-a', 'TextEdit', file], { timeout: 5000 },
+        (error) => error ? reject(error) : resolve());
+    });
+  });
+  const deepseek = conversations ? await new DeepSeekConnection({ runtimeDir: controller.runtimeDir,
+    readCredential: () => credentialReader('deepseek'), credentialStatus: () => credentialStatus('deepseek'),
+    ...(connectionOptions.fetchImpl ? { fetchImpl: connectionOptions.fetchImpl } : {}) }).init() : null;
   const conversationPreviews = conversations ? new ConversationPreviews(conversations) : null;
   const codexRuntime = controller.modelStatus();
 
@@ -6510,11 +6612,51 @@ export async function createOmoPilotServer(options = {}) {
       const url = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
       const pathname = url.pathname;
 
+      if (conversations && pathname === '/api/office/memory') {
+        if (req.method === 'POST' && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return sendJson(res, 403, { error: { message: '此页面无权修改记忆。' } });
+        if (req.method === 'GET') return sendJson(res, 200, conversations.memoryView(url.searchParams.get('conversationId')));
+        if (req.method === 'POST') return sendJson(res, 200, await conversations.manageMemory(await readJsonBody(req)));
+        return sendJson(res, 405, { error: { message: '记忆操作方法无效。' } });
+      }
       if (conversations && pathname.startsWith('/api/conversation')) {
         if (req.method === 'POST' && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
           return sendJson(res, 403, { error: { message: '此页面无权修改对话。' } });
         }
-        if (req.method === 'GET' && pathname === '/api/conversation/state') return sendJson(res, 200, conversations.view());
+        const connectionRoute = pathname.match(/^\/api\/conversation\/connections\/(openai|deepseek)(?:\/(configure|verify))?$/);
+        if (connectionRoute) {
+          const [, provider, operation] = connectionRoute;
+          if (req.method === 'GET' && !operation) {
+            if (provider === 'deepseek') return sendJson(res, 200, await deepseek.status());
+            try {
+              const meta = await credentialStatus('openai');
+              const last = meta.configured ? conversations.state.conversations.flatMap((c) => c.turns.flatMap((turn) => turn.calls))
+                .filter((call) => call.connectionId === 'openai-api-key' && call.connectionRevision === meta.revision
+                  && call.result?.cliSpawned === true && call.result?.turnStarted === true && call.result?.status === 'model_returned')
+                .sort((a, b) => a.finishedAt.localeCompare(b.finishedAt)).at(-1) : null;
+              return sendJson(res, 200, { configured: meta.configured, revision: meta.revision, provider: 'openai', connectionId: 'openai-api-key',
+                status: last ? 'recent_success' : meta.configured ? 'saved_unverified' : 'unconfigured',
+                lastSuccessfulGeneration: last ? { requestedModel: last.model, reasoningEffort: last.reasoningEffort, at: last.finishedAt } : null,
+                message: last ? `该连接最近成功生成；请求模型 ${last.model}，思考强度 ${last.reasoningEffort}，时间 ${last.finishedAt}。CLI 未返回实际型号。`
+                  : meta.configured ? '已保存，调用尚未验证。请在对话中明确选择此连接。' : '尚未配置本产品的 OpenAI 官方密钥。' });
+            } catch {
+              return sendJson(res, 200, { provider: 'openai', connectionId: 'openai-api-key', configured: null,
+                revision: null, status: 'credential_unavailable', message: '无法读取密钥文件状态。请检查文件内容和访问权限；调用尚未验证。' });
+            }
+          }
+          if (req.method === 'POST' && (operation === 'configure' || (provider === 'deepseek' && operation === 'verify'))) {
+            const body = await readJsonBody(req);
+            if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) {
+              return sendJson(res, 400, { error: { message: '此入口不接收密钥、模型、地址或项目资料。请打开本机密钥文件填写。' } });
+            }
+            if (operation === 'verify') return sendJson(res, 200, await deepseek.verify());
+            try { await openKeySetup(provider); }
+            catch { return sendJson(res, 503, { error: { message: '无法准备或打开密钥文件。请检查本机文件访问权限；没有调用模型。' } }); }
+            return sendJson(res, 200, { opened: true, provider,
+              message: '已请求用文本编辑打开密钥文件。只粘贴一行 Key，按 Cmd+S 保存，再刷新状态；保存本身不联网。' });
+          }
+          return sendJson(res, 405, { error: { message: '此连接操作不可用；没有启动模型调用。' } });
+        }
+        if (req.method === 'GET' && pathname === '/api/conversation/state') { await Promise.all([...conversations.state.projects, ...(conversations.state.applicationProjects || [])].filter((p) => p.application).map((p) => conversations.applications.status(p))); return sendJson(res, 200, conversations.view()); }
         if (req.method === 'POST' && pathname === '/api/conversation/new') {
           const c = await conversations.create(await readJsonBody(req)); return sendJson(res, 201, { conversationId: c.id });
         }
@@ -6524,10 +6666,10 @@ export async function createOmoPilotServer(options = {}) {
         if (req.method === 'POST' && pathname === '/api/conversation/preferences') return sendJson(res, 200, await conversations.preferences(await readJsonBody(req)));
         if (req.method === 'POST' && pathname === '/api/conversation/sections') return sendJson(res, 201, await conversations.addSection(await readJsonBody(req)));
         if (req.method === 'POST' && pathname === '/api/conversation/reference') return sendJson(res, 200, { references: conversations.references((await readJsonBody(req)).references) });
-        const action = pathname.match(/^\/api\/conversation\/([^/]+)\/(send|stop|update|bind-project|fork|draft|material|run-artifact)$/);
+        const action = pathname.match(/^\/api\/conversation\/([^/]+)\/(send|stop|update|bind-project|fork|draft|material|run-artifact|application|handoff|noobi-approval)$/);
         if (req.method === 'POST' && action) {
           const body = await readJsonBody(req);
-          const methods = { send: 'send', stop: 'stop', update: 'update', 'bind-project': 'bindProject', fork: 'fork', draft: 'draft', material: 'attachMaterial', 'run-artifact': 'runArtifact' };
+          const methods = { send: 'send', stop: 'stop', update: 'update', 'bind-project': 'bindProject', fork: 'fork', draft: 'draft', material: 'attachMaterial', 'run-artifact': 'runArtifact', application: 'applicationAction', handoff: 'handoff', 'noobi-approval': 'resolveNoobiApproval' };
           const result = await conversations[methods[action[2]]](action[1], body);
           return sendJson(res, 200, { ok: true, id: result.id, result });
         }
@@ -6556,6 +6698,7 @@ export async function createOmoPilotServer(options = {}) {
         const activeTask = controller.getActiveTask();
         sendJson(res, 200, {
           ok: true,
+          ...(conversations ? { build: conversationBuild, storagePath: conversations.root } : {}),
           mode: activeTask ? 'native_product_or_setup' : 'waiting_task',
           aiEnabled: controller.aiEnabled(),
           modelStatus: controller.modelStatus(),

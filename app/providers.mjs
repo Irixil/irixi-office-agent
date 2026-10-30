@@ -420,11 +420,12 @@ function runProcess(command, args, { cwd, input, timeoutMs = CODEX_TIMEOUT_MS, s
   });
 }
 
-export function codexExecArgs(schemaPath, outputPath, runRoot, { model = CODEX_MODEL, json = false, cwd = runRoot, sandbox = 'read-only', writableDirs = [], developerWritable = false, developerCodeModeHost = false, disableCodeMode = false, disableMcp = false, reasoningEffort = null, developerInstructions = null } = {}) {
+export function codexExecArgs(schemaPath, outputPath, runRoot, { model = CODEX_MODEL, json = false, cwd = runRoot, sandbox = 'read-only', writableDirs = [], developerWritable = false, developerCodeModeHost = false, disableCodeMode = false, disableMcp = false, reasoningEffort = null, developerInstructions = null, apiKeyAuth = false } = {}) {
   return [
     'exec', '-', '--ephemeral', '--sandbox', sandbox, '--skip-git-repo-check',
     '--model', model,
     '--ignore-user-config', '--ignore-rules', '-c', 'web_search="disabled"',
+    ...(apiKeyAuth ? ['-c', 'cli_auth_credentials_store="ephemeral"', '-c', 'forced_login_method="api"'] : []),
     ...(typeof developerInstructions === 'string' && developerInstructions.length
       ? ['-c', `developer_instructions=${JSON.stringify(developerInstructions)}`] : []),
     ...(reasoningEffort ? ['-c', `model_reasoning_effort="${reasoningEffort}"`] : []),

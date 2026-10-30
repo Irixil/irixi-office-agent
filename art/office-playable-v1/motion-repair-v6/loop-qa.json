@@ -1,0 +1,59 @@
+{
+  "status": "mechanical-loop-and-preview-checks-passed-runtime-and-user-visual-acceptance-pending",
+  "method": "RGBA RMS difference over each adjacent frame pair; 30-second GIF durations read back from encoded files",
+  "seated": {
+    "writer": {
+      "sourcePoseSheetCount": 1,
+      "distinctGeneratedPoses": 4,
+      "frame00To01Rms": 0.0,
+      "frame12To13Rms": 0.0,
+      "maximumInternalAdjacentRms": 21.25,
+      "visibleWidthRange": [83,84],
+      "visibleHeightRange": [91,93],
+      "roomPreview30sDurationMs": 30000
+    },
+    "researcher": {
+      "sourcePoseSheetCount": 1,
+      "distinctGeneratedPoses": 4,
+      "frame00To01Rms": 0.0,
+      "frame12To13Rms": 0.0,
+      "maximumInternalAdjacentRms": 34.95,
+      "visibleWidthRange": [98,99],
+      "visibleHeightRange": [97,102],
+      "roomPreview30sDurationMs": 30000
+    },
+    "reviewer": {
+      "sourcePoseSheetCount": 1,
+      "distinctGeneratedPoses": 4,
+      "frame00To01Rms": 0.0,
+      "frame12To13Rms": 0.0,
+      "maximumInternalAdjacentRms": 27.67,
+      "visibleWidthRange": [163,163],
+      "visibleHeightRange": [123,124],
+      "roomPreview30sDurationMs": 30000
+    },
+    "archivist": {
+      "sourcePoseSheetCount": 1,
+      "distinctGeneratedPoses": 4,
+      "frame00To01Rms": 0.0,
+      "frame12To13Rms": 0.0,
+      "maximumInternalAdjacentRms": 26.08,
+      "visibleWidthRange": [122,123],
+      "visibleHeightRange": [120,121],
+      "roomPreview30sDurationMs": 30000
+    }
+  },
+  "stewardMole": {
+    "deliveryPreview30sDurationMs": 30000,
+    "deliveryPreviewEncodedFrameCount": 138,
+    "pickupFrameCount": 8,
+    "pickupOwnershipBeginsFrame": 4,
+    "shelveFrameCount": 7,
+    "shelfOwnershipBeginsAfterFrame": 4,
+    "secondFloorFunctional": false
+  },
+  "limits": [
+    "RMS is a regression aid, not a claim that motion is aesthetically accepted.",
+    "Live renderer timing, collision, state switching and final user visual acceptance remain pending."
+  ]
+}

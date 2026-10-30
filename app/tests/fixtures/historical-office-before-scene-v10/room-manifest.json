@@ -1,0 +1,241 @@
+{
+  "packId": "irixi-office-concept-runtime-v4",
+  "status": "art-pack-integration-ready-runtime-pending",
+  "revision": "concept-runtime-v4-complete-2",
+  "conceptReference": "../concept-overall-v4-slender.png",
+  "coordinateSystem": "top-left origin; x right; y down; all x/y and collision coordinates are in 1440x810 world pixels",
+  "world": {
+    "logicalSize": [1440, 810],
+    "background": "room-base-1440x810.png",
+    "sourceMaster": "source/room-base-imagegen-1672x941.png",
+    "camera": "fixed high-overhead three-quarter orthographic-like 2D view",
+    "secondFloorFunctional": false,
+    "stairs": {
+      "functional": false,
+      "collision": {"rect": [1195, 0, 245, 330]},
+      "note": "architectural only in this batch; no second-floor navigation"
+    }
+  },
+  "layerOrder": [
+    "room-base",
+    "runtime-characters-and-effects-sorted-by-foot-y",
+    "foreground-items-sorted-by-depthY"
+  ],
+  "foregroundComposite": "foreground/foreground-composite-1440x810.png",
+  "foregroundItems": [
+    {
+      "id": "writer-desk-front",
+      "file": "foreground/writer-desk-front.png",
+      "x": 304,
+      "y": 411,
+      "pivot": [134, 119],
+      "depthY": 398,
+      "collision": {"rect": [180, 273, 250, 126]}
+    },
+    {
+      "id": "main-desk-front",
+      "file": "foreground/main-desk-front.png",
+      "x": 725,
+      "y": 369,
+      "pivot": [177, 104],
+      "depthY": 360,
+      "collision": {"rect": [560, 252, 330, 109]}
+    },
+    {
+      "id": "steward-desk-front",
+      "file": "foreground/steward-desk-front.png",
+      "x": 1114,
+      "y": 402,
+      "pivot": [109, 115],
+      "depthY": 392,
+      "collision": {"rect": [1016, 274, 198, 119]}
+    },
+    {
+      "id": "researcher-desk-front",
+      "file": "foreground/researcher-desk-front.png",
+      "x": 204,
+      "y": 704,
+      "pivot": [151, 173],
+      "depthY": 688,
+      "collision": {"rect": [66, 528, 280, 161]}
+    },
+    {
+      "id": "reviewer-desk-front",
+      "file": "foreground/reviewer-desk-front.png",
+      "x": 1238,
+      "y": 601,
+      "pivot": [148, 110],
+      "depthY": 592,
+      "collision": {"rect": [1100, 478, 276, 115]}
+    },
+    {
+      "id": "archivist-desk-front",
+      "file": "foreground/archivist-desk-front.png",
+      "x": 1240,
+      "y": 755,
+      "pivot": [168, 120],
+      "depthY": 747,
+      "collision": {"rect": [1084, 621, 312, 127]}
+    },
+    {
+      "id": "entrance-rail-left",
+      "file": "foreground/entrance-rail-left.png",
+      "x": 490,
+      "y": 810,
+      "pivot": [160, 166],
+      "depthY": 798,
+      "collision": {"rect": [382, 658, 250, 152]}
+    },
+    {
+      "id": "entrance-rail-right",
+      "file": "foreground/entrance-rail-right.png",
+      "x": 956,
+      "y": 810,
+      "pivot": [167, 166],
+      "depthY": 798,
+      "collision": {"rect": [808, 658, 250, 152]}
+    }
+  ],
+  "walkablePolygons": [
+    [[64, 230], [1190, 230], [1190, 340], [1380, 340], [1380, 690], [1100, 690], [1100, 740], [800, 740], [800, 810], [640, 810], [640, 740], [350, 740], [350, 690], [55, 690], [55, 350], [64, 350]]
+  ],
+  "blockedPolygons": [
+    {"id": "top-wall-and-shelves", "rect": [0, 0, 1440, 230]},
+    {"id": "right-staircase", "rect": [1195, 0, 245, 330]},
+    {"id": "left-rest-nook", "rect": [0, 330, 180, 170]},
+    {"id": "writer-station", "rect": [180, 273, 250, 126]},
+    {"id": "main-station", "rect": [560, 252, 330, 109]},
+    {"id": "steward-station", "rect": [1016, 274, 198, 119]},
+    {"id": "researcher-station", "rect": [66, 528, 280, 161]},
+    {"id": "reviewer-station", "rect": [1100, 478, 276, 115]},
+    {"id": "archivist-station", "rect": [1084, 621, 312, 127]},
+    {"id": "entrance-rail-left", "rect": [382, 658, 250, 152]},
+    {"id": "entrance-rail-right", "rect": [808, 658, 250, 152]}
+  ],
+  "workstations": {
+    "writer": {
+      "characterFootAnchor": [304, 390],
+      "poseClass": "seated-desk-bust",
+      "interactionPoint": [470, 400],
+      "frontLayerId": "writer-desk-front"
+    },
+    "steward": {
+      "characterFootAnchor": [960, 310],
+      "poseClass": "standing-left-of-desk",
+      "interactionPoint": [1010, 420],
+      "frontLayerId": "steward-desk-front"
+    },
+    "researcher": {
+      "characterFootAnchor": [240, 645],
+      "poseClass": "seated-desk-bust",
+      "interactionPoint": [420, 590],
+      "frontLayerId": "researcher-desk-front"
+    },
+    "reviewer": {
+      "characterFootAnchor": [1195, 545],
+      "poseClass": "seated-desk-bust",
+      "interactionPoint": [1050, 540],
+      "frontLayerId": "reviewer-desk-front"
+    },
+    "archivist": {
+      "characterFootAnchor": [1180, 739],
+      "poseClass": "seated-desk-bust",
+      "interactionPoint": [1040, 610],
+      "frontLayerId": "archivist-desk-front"
+    }
+  },
+  "spawnPoints": {
+    "irixi": [720, 586],
+    "entrance": [720, 780]
+  },
+  "calibration": {
+    "status": "provisional-image-calibrated",
+    "note": "desk anchors and interaction points were visually calibrated against the generated empty room and must be exercised in the runtime scene before being marked verified",
+    "comparisonPreview": "preview/layer-anchor-map.png",
+    "coworkerDeskDockPreview": "preview/coworker-desk-dock-overview.png",
+    "revision2ReferenceComparison": "preview/revision-2-reference-comparison.png"
+  },
+  "recommendedCharacterContract": {
+    "status": "irixi-and-five-coworker-contracts-locked",
+    "measurementBasis": "visible subject bbox after applying the uniform 1440/1672 concept-to-world scale; transparent canvas size is not treated as body size",
+    "irixi": {
+      "frameSize": [208, 256],
+      "anchor": [104, 238],
+      "visibleBodyHeightTarget": [220, 232],
+      "visibleBodyWidthTarget": [96, 116],
+      "relativeHeightTarget": "about 1.20-1.30x the median standing coworker",
+      "identity": "single slender owl protagonist from concept-overall-v4-slender.png",
+      "runtimeManifest": "characters/irixi/manifest.json",
+      "deliveredVisibleHeightRange": [223, 226],
+      "deliveredMotionProof": "characters/irixi/walk-down/preview.gif"
+    },
+    "coworkerCommon": {
+      "frameSize": [176, 208],
+      "anchor": [88, 194],
+      "wideFrameSize": [192, 208],
+      "wideAnchor": [96, 194],
+      "stateRows": ["idle", "working", "sleeping", "slack"],
+      "columnsPerState": 2,
+      "note": "mouse, mole and hamster use 176x208; chinchilla and fancy rat use 192x208 so tails and props are not clipped. Mouse, hamster, chinchilla and fancy rat use seated desk-bust poses. The steward mole preserves the approved v4 standing position to the left of its desk."
+    },
+    "visibleWidthTargets": {
+      "writerMouse": [92, 118],
+      "stewardMole": [108, 134],
+      "researcherHamster": [122, 150],
+      "reviewerChinchillaIncludingTail": [132, 164],
+      "archivistFancyRatIncludingTail": [118, 150]
+    },
+    "warning": "do not reuse the old 72x80 or 96x120 canvas contract; lock the new canvas and foot anchors before generating directional motion"
+  },
+  "characterAssets": {
+    "irixi": {
+      "status": "four-direction-walk-art-ready-runtime-pending",
+      "manifest": "characters/irixi/manifest.json",
+      "frameSize": [208, 256],
+      "anchor": [104, 238],
+      "directions": ["down", "left", "right", "up"],
+      "animationsReady": ["walk-down", "walk-left", "walk-right", "walk-up"],
+      "animationsRemaining": ["idle", "interact"]
+    },
+    "writerMouse": {
+      "status": "four-state-art-ready-runtime-pending",
+      "manifest": "characters/coworkers/writer-mouse/manifest.json",
+      "homeAnchor": [304, 390]
+    },
+    "stewardMole": {
+      "status": "four-state-art-ready-runtime-pending",
+      "manifest": "characters/coworkers/steward-mole/manifest.json",
+      "homeAnchor": [960, 310]
+    },
+    "researcherHamster": {
+      "status": "four-state-art-ready-runtime-pending",
+      "manifest": "characters/coworkers/researcher-hamster/manifest.json",
+      "homeAnchor": [240, 645]
+    },
+    "reviewerChinchilla": {
+      "status": "four-state-art-ready-runtime-pending",
+      "manifest": "characters/coworkers/reviewer-chinchilla/manifest.json",
+      "homeAnchor": [1195, 545]
+    },
+    "archivistFancyRat": {
+      "status": "four-state-art-ready-runtime-pending",
+      "manifest": "characters/coworkers/archivist-fancy-rat/manifest.json",
+      "homeAnchor": [1180, 739]
+    }
+  },
+  "coworkerIndex": "characters/coworkers/manifest.json",
+  "provenance": {
+    "concept": "../concept-overall-v4-slender.png",
+    "characterRemoval": "built-in ImageGen precise-object-edit",
+    "prompt": "source/room-base-imagegen.prompt.md",
+    "characterGeneration": "ImageGen generated the Irixi poses and all coworker state poses; no local pose interpolation or procedural character redraw",
+    "packing": "mechanical resample, alpha cleanup, equal-cell splitting, shared per-sheet scale, fixed anchors, spritesheet/GIF packing and preview composition"
+  },
+  "knownGaps": [
+    "Irixi idle and interaction motions are not included yet; four directional walk motions are packaged and art-validated.",
+    "Each coworker has idle, working, sleeping and slack states with two generated poses per state; transition blending and behavioral timing belong to the Phaser runtime.",
+    "Anchor, collision, walkable, interaction and desk-dock coordinates remain runtime-pending until exercised by the core Phaser scene.",
+    "The staircase is blocked and the second floor is not functional in this batch.",
+    "Foreground polygons are a minimal first-pass occlusion split; runtime testing may justify tighter masks without changing the approved room design."
+  ]
+}

@@ -162,8 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func ensureServerAndLoad() {
         // A live local service needs no new filesystem permission or child process.
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/api/conversation/state")!)
-        request.timeoutInterval = 3
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/api/product-health")!)
+        request.timeoutInterval = 10
         URLSession.shared.dataTask(with: request) { [weak self] bytes, response, error in
             guard let self else { return }
             if let error {
@@ -182,11 +182,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 return
             }
             var pageRequest = URLRequest(url: self.homeUrl, cachePolicy: .reloadIgnoringLocalCacheData)
-            pageRequest.timeoutInterval = 3
+            pageRequest.timeoutInterval = 10
             URLSession.shared.dataTask(with: pageRequest) { bytes, response, error in
                 let html = bytes.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 DispatchQueue.main.async {
-                    if error == nil && (response as? HTTPURLResponse)?.statusCode == 200 && html.contains("/conversation-app.js?v=\(build)") {
+                    if error != nil {
+                        self.showLoadingScreen(statusText: "后台响应较慢或连接中断。工作仍保留，请稍后重新连接。", isError: true)
+                    } else if (response as? HTTPURLResponse)?.statusCode == 200 && html.contains("/conversation-app.js?v=\(build)") {
                         self.webView.load(pageRequest)
                     } else {
                         self.showLoadingScreen(statusText: "当前服务与产品文件版本不一致，需要维护者安全重载。对话和成果仍在。", isError: true)
@@ -288,8 +290,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc func openCurrentToolPreview() {
         let js = """
         (function() {
-          const link = document.querySelector('#wb-results-slot a[href*="/index.html?"]');
-          if (link) { link.click(); } else { alert('当前对话还没有可打开的网页成果。'); }
+          const link = document.querySelector('#wb-results-slot .wb-application a[target="_blank"]') || document.querySelector('#wb-results-slot a[href*="/index.html?"]');
+          if (link) { link.click(); }
+          else {
+            const results = document.querySelector('#wb-results');
+            if (results) { results.open = true; results.scrollIntoView({block: 'nearest'}); }
+            alert('当前没有正在运行的网页成果。请在“进度与成果”查看状态和可用操作。');
+          }
         })();
         """
         guard let window = NSApp.keyWindow, let target = webView(in: window) else { return }

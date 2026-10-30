@@ -1,12 +1,12 @@
 # Getting started
 
-The October 27 source preview includes the conversation workbench and macOS Swift/WebKit shell. The maintainer's installed application has local acceptance and installation evidence. A new machine still needs the runtime prerequisites below.
+The October 31 source preview includes the conversation workbench and macOS Swift/WebKit shell. The maintainer's installed application has local acceptance and installation evidence. A new machine still needs the runtime prerequisites below.
 
 ## Prerequisites
 
 - Node.js 24+, npm, Git, and a desktop browser.
 - A prepared OmO 5.1.40 installation at `.irixi-runtime/omo/bin/omo`, with its corresponding local runtime packages. These binaries and packages are not bundled in this repository.
-- An existing authenticated Desktop Codex CLI for real model work. The integration resolves an existing local runtime; credentials are not copied into the repository.
+- A configured Codex CLI for real model work, using an existing connection or the official OpenAI API Key route. The integration resolves an existing local runtime; credentials are not copied into the repository.
 - On Apple Silicon macOS, the optional functional browser checker can be installed with `node scripts/install-browser-checker.mjs`. This downloads its pinned browser through Playwright. A missing checker does not establish that a generated webpage was functionally tested.
 
 The native app wrapper requires macOS and Swift command-line tools. Other platforms have not been established as supported native app targets.
@@ -33,6 +33,12 @@ node scripts/start-personal-agent-p0.mjs \
 Choose a new canonical absolute directory. Keep it separate from your existing application data and actual projects.
 
 Starting the interface does not start model work. A submitted discussion may call the configured model; an execution instruction can read or change files within the selected project and actual permissions.
+
+## Official OpenAI API Key connection
+
+Use the app’s connection settings to choose the OpenAI API Key route. The file entry opens the system text editor for `~/Library/Application Support/IRiXi/Credentials/openai-api-key.txt`; paste one key line and save. The credential directory is restricted to mode `0700` and the file to `0600`. This is local plaintext storage, not encryption. Never add this file to Git or attach it to an issue.
+
+The runtime must support official Key authentication through the configured CLI. This route does not borrow the previous account or silently fall back to it. Noobi tools are currently unavailable on this Key route; the separately configured historical integration has its own prerequisites. DeepSeek interface preparation is included, with live validation deferred.
 
 ## Use it
 

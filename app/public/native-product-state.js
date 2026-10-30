@@ -187,14 +187,6 @@ export function officeFunctionForCoworker(detail) {
   return officeFunctionForStation(detail?.officeRole || detail?.stationRole || detail?.role);
 }
 
-export function nativeCoworkerTask(tasks, functionId, activeTaskId = null) {
-  const rows = Array.isArray(tasks) ? tasks : [];
-  const active = rows.find((task) => task.id === activeTaskId && task.functionId === functionId);
-  if (active) return active;
-  return rows.filter((task) => task.functionId === functionId && task.inFlight !== true)
-    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || null;
-}
-
 function requiredString(value, name) {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`OpenOffice 状态缺少 ${name}。`);
   return value.trim();
@@ -575,11 +567,6 @@ export function safeLocalPath(value) {
 export function retainContinuationSourceSelection(previousBinding, currentBinding, previousArtifactId, sources) {
   return previousBinding === currentBinding && Array.isArray(sources)
     && sources.some((source) => source?.artifactId === previousArtifactId) ? previousArtifactId : '';
-}
-
-export function retainBoundCheckboxChoice(previous, binding) {
-  return previous?.binding === binding && typeof previous.checked === 'boolean'
-    ? previous : { binding, checked: false };
 }
 
 export function continuationReplyTargetsChat(currentTaskId, currentProjectId, selectionPending, expected) {

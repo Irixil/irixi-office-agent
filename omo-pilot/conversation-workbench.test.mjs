@@ -77,7 +77,7 @@ test('讨论选目录和重开都不启动工作；旧数据升级备份且保�
   await store.bindProject(c.id, { requestId: 'bind', path: dir }); assert.equal(calls, 1);
   const saved = JSON.parse(await fs.readFile(store.file)); saved.version = 1; await fs.writeFile(store.file, JSON.stringify(saved));
   const next = new ConversationStore({ runtimeDir: root, omoRunner: async () => { calls++; }, catalogueReader: async () => catalogue }); await next.init();
-  assert.equal(calls, 1); assert.equal(next.state.version, 2); assert.equal(next.state.conversations[0].id, c.id);
+  assert.equal(calls, 1); assert.equal(next.state.version, 3); assert.equal(next.state.conversations[0].id, c.id);
   assert.equal(JSON.parse(await fs.readFile(path.join(next.root, 'state.before-workbench-v2.json'))).version, 1);
 });
 test('旧自动长名称首次升级即收短，手动名、原消息与原名保留', async (t) => {

@@ -111,7 +111,7 @@ export function buildCodexDecisionPrompt(request, { hostTaskPrompt = null } = {}
   ].join('\n\n');
 }
 
-function workspaceToolPath(root, value, name, writes) {
+async function workspaceToolPath(root, value, name, writes) {
   // Native tools expand these spellings before access. Never inspect one file
   // while letting the tool read or write another. Literal @/~ names use ./.
   if (/^@|^~(?:\/|$)|[\u00a0\u2000-\u200a\u202f\u205f\u3000]/u.test(value)) {
@@ -122,10 +122,24 @@ function workspaceToolPath(root, value, name, writes) {
   }
   const parts = value.split(/[\\/]+/u).filter(Boolean);
   if (parts.includes('..')) throw new Error('OmO file tool path traversal is not allowed.');
-  const target = path.resolve(root, value);
-  const relative = path.relative(root, target);
+  let target = path.resolve(root, value);
+  let relative = path.relative(root, target);
+  if (path.isAbsolute(value) && (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) {
+    // A case-insensitive filesystem may spell the registered root differently.
+    // Verify that exact root entity; never lowercase paths or follow a link alias.
+    const segments = target.split(path.sep).filter(Boolean);
+    const depth = root.split(path.sep).filter(Boolean).length;
+    const originalRoot = path.join(path.parse(target).root, ...segments.slice(0, depth));
+    if (await fs.realpath(originalRoot).catch(() => null) === root) {
+      const anchor = path.parse(originalRoot).root;
+      await inspectWorkspacePath(anchor, originalRoot, path.relative(anchor, originalRoot));
+      target = path.join(root, ...segments.slice(depth));
+      relative = path.relative(root, target);
+    }
+  }
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error('OmO file tool path is outside its registered worktree.');
+    const error = new Error('OmO file tool path is outside its registered worktree.');
+    error.code = 'OMO_WORKSPACE_PATH_OUTSIDE_ROOT'; throw error;
   }
   if (['write', 'edit'].includes(name) && !writes.has(CONVERSATION_WRITES) && !writes.has(relative.split(path.sep).join('/'))) {
     throw new Error('OmO write is outside its registered writable paths.');
@@ -164,7 +178,7 @@ function parseLineColumnLocator(value) {
 async function normalizeReadLineColumn(root, args, writes, originalPath) {
   const locator = parseLineColumnLocator(originalPath);
   if (!locator) return null;
-  const candidate = workspaceToolPath(root, locator.filePath, 'read', writes);
+  const candidate = await workspaceToolPath(root, locator.filePath, 'read', writes);
   const inspected = await inspectWorkspacePath(root, candidate.target, candidate.relative);
   if (!inspected.exists || !inspected.stat?.isFile()) {
     throw new Error(`OmO read line-column target is not an existing file: ${candidate.relative || '.'}.`);
@@ -178,7 +192,7 @@ async function normalizeReadLineColumn(root, args, writes, originalPath) {
   if (line === undefined || locator.column > Array.from(line).length + 1) {
     throw new Error('OmO read line-column locator is outside the existing file.');
   }
-  args.path = locator.filePath;
+  args.path = candidate.target === path.resolve(root, locator.filePath) ? locator.filePath : candidate.target;
   args.offset = locator.line;
   return candidate;
 }
@@ -210,22 +224,46 @@ export function missingReadErrorsSinceProgress(messages) {
     if (message.isError === false) { count = 0; continue; }
     const text = Array.isArray(message.content) ? message.content.filter((item) => item.type === 'text')
       .map((item) => item.text).join('\n') : message.content;
-    if (message.isError === true && typeof text === 'string' && text.startsWith('[OMO_WORKSPACE_PATH_NOT_FOUND] ')) count += 1;
+    if (message.isError === true && typeof text === 'string' && /^\[OMO_WORKSPACE_PATH_(?:NOT_FOUND|BLOCKED)\] /u.test(text)) count += 1;
   }
   return count;
 }
 
-export async function guardWorkspaceToolCalls(decision, { role, rootPath, allowedWritePaths = [], deferMissingReadErrors = false, conversation = false, readRoots = [] }) {
+export async function guardWorkspaceToolCalls(decision, { role, rootPath, allowedWritePaths = [], deferMissingReadErrors = false, conversation = false, readRoots = [], writeScope = null }) {
   const root = await fs.realpath(rootPath);
-  const writes = new Set(conversation && role === 'Developer' ? [CONVERSATION_WRITES] : allowedWritePaths);
+  if (writeScope !== null && (!Array.isArray(writeScope) || writeScope.some((p) => typeof p !== 'string' || !p))) throw new Error('Invalid child write scope.');
+  const writes = new Set(writeScope !== null ? writeScope : conversation && role === 'Developer' ? [CONVERSATION_WRITES] : allowedWritePaths);
   const calls = decision.content.filter((item) => item.type === 'toolCall');
-  if (conversation && calls.some((item) => ['bash', 'write', 'edit', 'verify_behavior', 'delegate_readonly'].includes(item.name)) && calls.length > 1) {
+  const memoryOperations = new Map();
+  if (conversation) for (const call of calls.filter((item) => item.name === 'memory_manage')) {
+    const value = call.arguments.operationJson;
+    if (typeof value !== 'string' || value.length > 16000) throw new Error('Memory operation is invalid.');
+    let operation;
+    try { operation = JSON.parse(value); } catch { throw new Error('Memory operation is invalid JSON.'); }
+    if (!operation || typeof operation !== 'object' || Array.isArray(operation)) throw new Error('Memory operation is invalid.');
+    memoryOperations.set(call, operation);
+  }
+  if (conversation && calls.some((item) => ['bash', 'write', 'edit', 'verify_behavior', 'delegate_readonly', 'delegate_parallel', 'noobi_run'].includes(item.name)
+    || item.name === 'memory_manage' && memoryOperations.get(item).operation !== 'list') && calls.length > 1) {
     throw new Error('Run one tool at a time when changing files or running commands, so checks cannot race with edits.');
   }
   for (const block of decision.content) {
     if (block.type !== 'toolCall') continue;
     const { name, arguments: args } = block;
+    if (writeScope !== null && !['read', 'write', 'edit', 'grep', 'find', 'ls'].includes(name)) throw new Error('写入助手仅可读写指定文件，不能执行命令或再次派工。');
+    if (conversation && name === 'delegate_parallel' && role === 'Developer') {
+      if (!Array.isArray(args.tasks) || args.tasks.length < 2 || args.tasks.length > 4) throw new Error('并行写入需要2至4项有明确文件范围的任务。');
+      continue;
+    }
     if (conversation && name === 'bash' && role === 'Developer') continue;
+    if (conversation && name === 'memory_manage') {
+      continue;
+    }
+    if (conversation && name === 'noobi_run' && role === 'Developer') {
+      if (typeof args.prompt !== 'string' || !args.prompt.trim() || args.prompt.length > 48000 || typeof args.name !== 'string' || !args.name.trim() || args.name.length > 160
+        || Object.keys(args).some((key) => !['prompt', 'name'].includes(key))) throw new Error('Noobi needs a bounded game request and title; the host supplies workspace, model and permissions.');
+      continue;
+    }
     if (conversation && name === 'verify_behavior' && role === 'Developer') {
       if (typeof args.caseJson !== 'string' || args.caseJson.length > 30000) throw new Error('Behavior check requires a bounded JSON case.');
       continue;
@@ -244,7 +282,7 @@ export async function guardWorkspaceToolCalls(decision, { role, rootPath, allowe
       found = true;
       const values = Array.isArray(args[key]) ? args[key] : [args[key]];
       if (!values.length || values.some((value) => typeof value !== 'string' || !value.trim())) throw new Error('OmO file tool path is invalid.');
-      for (const value of values) {
+      for (const [valueIndex, value] of values.entries()) {
         let accessRoot = root;
         if (conversation && !['write', 'edit'].includes(name) && path.isAbsolute(value)) {
           for (const candidate of readRoots) {
@@ -255,7 +293,23 @@ export async function guardWorkspaceToolCalls(decision, { role, rootPath, allowe
             }
           }
         }
-        let resolved = workspaceToolPath(accessRoot, value, name, writes);
+        let resolved;
+        try { resolved = await workspaceToolPath(accessRoot, value, name, writes); }
+        catch (error) {
+          // Absolute read typos may be corrected by the agent, never by the
+          // host. Do not inspect the rejected target or grant a new read root.
+          if (conversation && ['read', 'grep', 'find', 'ls'].includes(name) && path.isAbsolute(value)
+            && error.code === 'OMO_WORKSPACE_PATH_OUTSIDE_ROOT') {
+            if (deferMissingReadErrors === true) continue;
+            const blocked = new Error(`OmO ${name} path is outside the registered read roots and was blocked: ${value.slice(0, 2000)}. No file was opened. Use an exact path already authorized in this run; this error does not grant new access.`);
+            blocked.code = 'OMO_WORKSPACE_PATH_BLOCKED'; throw blocked;
+          }
+          throw error;
+        }
+        if (resolved.target !== path.resolve(accessRoot, value)) {
+          if (Array.isArray(args[key])) args[key][valueIndex] = resolved.target;
+          else args[key] = resolved.target;
+        }
         let inspected = await inspectWorkspacePath(accessRoot, resolved.target, resolved.relative);
         if (!inspected.exists && name === 'read' && key === 'path' && !Array.isArray(args.path)) {
           const normalized = await normalizeReadLineColumn(root, args, writes, value);

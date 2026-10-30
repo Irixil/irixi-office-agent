@@ -1,0 +1,882 @@
+{
+  "id": "steward-seated-v12-candidate4-eight-frame",
+  "revision": "frontend-rugs-seating-v3-candidate4-static",
+  "status": "static trial; actual scene and transitions pending",
+  "role": "steward",
+  "species": "mole",
+  "frameSize": [
+    256,
+    256
+  ],
+  "anchor": [
+    128,
+    220
+  ],
+  "worldFoot": [
+    912,
+    234
+  ],
+  "worldFootMeaning": "ground-floor-local resting hole on visible wood above unchanged steward chair; room origin added once",
+  "hitArea": [
+    73,
+    203,
+    110,
+    17
+  ],
+  "states": {
+    "working": {
+      "spritesheet": "states/working/spritesheet.png",
+      "frontSpritesheet": "states/working/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "frameCount": 5,
+      "frameDurationsMs": [
+        1750,
+        100,
+        1250,
+        140,
+        180
+      ],
+      "cycleDurationMs": 3420,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        4
+      ],
+      "returnTo": null,
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "seated",
+        "blink",
+        "seated",
+        "finger-tap",
+        "seated"
+      ],
+      "hitArea": [
+        -23,
+        -122,
+        107,
+        111
+      ]
+    },
+    "idle": {
+      "spritesheet": "states/idle/spritesheet.png",
+      "frameIndices": [
+        0
+      ],
+      "frameCount": 1,
+      "frameDurationsMs": [
+        4000
+      ],
+      "cycleDurationMs": 4000,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/idle/fullframe/{index:02d}.png"
+    },
+    "exit-working": {
+      "spritesheet": "states/stand-up/spritesheet.png",
+      "frontSpritesheet": "states/stand-up/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "frameCount": 8,
+      "frameDurationsMs": [
+        100,
+        140,
+        110,
+        130,
+        90,
+        110,
+        90,
+        120
+      ],
+      "cycleDurationMs": 890,
+      "loop": false,
+      "staticFrameIndex": 7,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "idle",
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "working-exact",
+        "seat-supported",
+        "gap3",
+        "bridge3",
+        "gap2",
+        "lift2",
+        "gap1",
+        "stand"
+      ],
+      "diagnosticOnly": true,
+      "groundContactFrame": 3,
+      "hitArea": [
+        -66,
+        -134,
+        160,
+        159
+      ]
+    },
+    "enter-working": {
+      "spritesheet": "states/sit-down/spritesheet.png",
+      "frontSpritesheet": "states/sit-down/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "frameCount": 8,
+      "frameDurationsMs": [
+        120,
+        90,
+        110,
+        90,
+        130,
+        110,
+        140,
+        100
+      ],
+      "cycleDurationMs": 890,
+      "loop": false,
+      "staticFrameIndex": 7,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "working",
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "stand",
+        "gap1",
+        "lift2",
+        "gap2",
+        "bridge3",
+        "gap3",
+        "seat-supported",
+        "working-exact"
+      ],
+      "diagnosticOnly": true,
+      "seatContactFrame": 5,
+      "hitArea": [
+        -66,
+        -134,
+        160,
+        159
+      ]
+    },
+    "enter-sleeping": {
+      "spritesheet": "states/enter-sleeping/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameCount": 4,
+      "frameDurationsMs": [
+        400,
+        550,
+        700,
+        850
+      ],
+      "cycleDurationMs": 2500,
+      "loop": false,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "sleeping",
+      "fullframePattern": "states/enter-sleeping/fullframe/{index:02d}.png",
+      "sourceFrames": [
+        "rest-states-v6/steward-n4/enter-sleeping/spritesheet.png#frame0",
+        "rest-states-v6/steward-n4/enter-sleeping/spritesheet.png#frame1",
+        "rest-states-v6/steward-n4/enter-sleeping/spritesheet.png#frame2",
+        "rest-states-v6/steward-n4/enter-sleeping/spritesheet.png#frame3"
+      ]
+    },
+    "sleeping": {
+      "spritesheet": "states/sleeping/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameCount": 4,
+      "frameDurationsMs": [
+        900,
+        1100,
+        1000,
+        1100
+      ],
+      "cycleDurationMs": 4100,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/sleeping/fullframe/{index:02d}.png",
+      "sourceFrames": [
+        "rest-states-v6/steward-n4/sleeping/spritesheet.png#frame0",
+        "rest-states-v6/steward-n4/sleeping/spritesheet.png#frame1",
+        "rest-states-v6/steward-n4/sleeping/spritesheet.png#frame2",
+        "rest-states-v6/steward-n4/sleeping/spritesheet.png#frame3"
+      ]
+    },
+    "exit-sleeping": {
+      "spritesheet": "states/exit-sleeping/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "frameCount": 4,
+      "frameDurationsMs": [
+        180,
+        250,
+        300,
+        180
+      ],
+      "cycleDurationMs": 910,
+      "loop": false,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "idle",
+      "fullframePattern": "states/exit-sleeping/fullframe/{index:02d}.png",
+      "sourceFrames": [
+        "rest-states-v6/steward-n4/exit-sleeping/spritesheet.png#frame0",
+        "rest-states-v6/steward-n4/exit-sleeping/spritesheet.png#frame1",
+        "rest-states-v6/steward-n4/exit-sleeping/spritesheet.png#frame2",
+        "rest-states-v6/steward-n4/exit-sleeping/spritesheet.png#frame3"
+      ]
+    },
+    "burrow-ground": {
+      "spritesheet": "states/burrow-ground/spritesheet.png",
+      "frameIndices": [
+        0
+      ],
+      "frameCount": 1,
+      "frameDurationsMs": [
+        4000
+      ],
+      "cycleDurationMs": 4000,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/burrow-ground/fullframe/{index:02d}.png"
+    },
+    "burrow-front": {
+      "spritesheet": "states/burrow-front/spritesheet.png",
+      "frameIndices": [
+        0
+      ],
+      "frameCount": 1,
+      "frameDurationsMs": [
+        4000
+      ],
+      "cycleDurationMs": 4000,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/burrow-front/fullframe/{index:02d}.png"
+    },
+    "burrow-sleep": {
+      "spritesheet": "states/burrow-sleep/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "frameCount": 14,
+      "frameDurationsMs": [
+        300,
+        220,
+        260,
+        220,
+        260,
+        360,
+        260,
+        220,
+        260,
+        240,
+        240,
+        260,
+        220,
+        400
+      ],
+      "cycleDurationMs": 3720,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        13
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/burrow-sleep/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        87,
+        172,
+        88,
+        45
+      ]
+    },
+    "burrow-emerge": {
+      "spritesheet": "states/burrow-emerge/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "frameCount": 6,
+      "frameDurationsMs": [
+        180,
+        160,
+        140,
+        120,
+        140,
+        180
+      ],
+      "cycleDurationMs": 920,
+      "loop": false,
+      "staticFrameIndex": 5,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "burrow-peek",
+      "fullframePattern": "states/burrow-emerge/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        81,
+        152,
+        93,
+        66
+      ]
+    },
+    "burrow-peek": {
+      "spritesheet": "states/burrow-peek/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "frameCount": 14,
+      "frameDurationsMs": [
+        380,
+        140,
+        180,
+        160,
+        140,
+        220,
+        100,
+        80,
+        100,
+        100,
+        160,
+        180,
+        180,
+        380
+      ],
+      "cycleDurationMs": 2500,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        13
+      ],
+      "returnTo": null,
+      "fullframePattern": "states/burrow-peek/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        81,
+        152,
+        94,
+        66
+      ]
+    },
+    "burrow-retreat": {
+      "spritesheet": "states/burrow-retreat/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "frameCount": 6,
+      "frameDurationsMs": [
+        180,
+        140,
+        120,
+        140,
+        160,
+        180
+      ],
+      "cycleDurationMs": 920,
+      "loop": false,
+      "staticFrameIndex": 5,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "burrow-sleep",
+      "fullframePattern": "states/burrow-retreat/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        81,
+        152,
+        93,
+        66
+      ]
+    },
+    "burrow-exit-work": {
+      "spritesheet": "states/burrow-exit-work/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "frameCount": 11,
+      "frameDurationsMs": [
+        180,
+        100,
+        100,
+        120,
+        120,
+        150,
+        120,
+        100,
+        120,
+        100,
+        180
+      ],
+      "cycleDurationMs": 1390,
+      "loop": false,
+      "staticFrameIndex": 10,
+      "safeSwitchFrameIndices": [],
+      "returnTo": null,
+      "fullframePattern": "states/burrow-exit-work/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        81,
+        84,
+        111,
+        136
+      ]
+    },
+    "burrow-enter": {
+      "spritesheet": "states/burrow-enter/spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "frameCount": 16,
+      "frameDurationsMs": [
+        160,
+        100,
+        120,
+        100,
+        120,
+        150,
+        120,
+        120,
+        100,
+        100,
+        120,
+        100,
+        100,
+        140,
+        160,
+        240
+      ],
+      "cycleDurationMs": 2050,
+      "loop": false,
+      "staticFrameIndex": 15,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "burrow-sleep",
+      "fullframePattern": "states/burrow-enter/fullframe/{index:02d}.png",
+      "actorHitArea": [
+        81,
+        84,
+        111,
+        136
+      ]
+    },
+    "sit-down": {
+      "spritesheet": "states/sit-down/spritesheet.png",
+      "frontSpritesheet": "states/sit-down/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "frameCount": 8,
+      "frameDurationsMs": [
+        120,
+        90,
+        110,
+        90,
+        130,
+        110,
+        140,
+        100
+      ],
+      "cycleDurationMs": 890,
+      "loop": false,
+      "staticFrameIndex": 7,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "working",
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "stand",
+        "gap1",
+        "lift2",
+        "gap2",
+        "bridge3",
+        "gap3",
+        "seat-supported",
+        "working-exact"
+      ],
+      "diagnosticOnly": true,
+      "seatContactFrame": 5,
+      "hitArea": [
+        -66,
+        -134,
+        160,
+        159
+      ]
+    },
+    "stand-up": {
+      "spritesheet": "states/stand-up/spritesheet.png",
+      "frontSpritesheet": "states/stand-up/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "frameCount": 8,
+      "frameDurationsMs": [
+        100,
+        140,
+        110,
+        130,
+        90,
+        110,
+        90,
+        120
+      ],
+      "cycleDurationMs": 890,
+      "loop": false,
+      "staticFrameIndex": 7,
+      "safeSwitchFrameIndices": [],
+      "returnTo": "idle",
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "working-exact",
+        "seat-supported",
+        "gap3",
+        "bridge3",
+        "gap2",
+        "lift2",
+        "gap1",
+        "stand"
+      ],
+      "diagnosticOnly": true,
+      "groundContactFrame": 3,
+      "hitArea": [
+        -66,
+        -134,
+        160,
+        159
+      ]
+    },
+    "seated-idle": {
+      "spritesheet": "states/working/spritesheet.png",
+      "frontSpritesheet": "states/working/front-spritesheet.png",
+      "frameIndices": [
+        0
+      ],
+      "frameCount": 5,
+      "frameDurationsMs": [
+        1750
+      ],
+      "cycleDurationMs": 1750,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0
+      ],
+      "returnTo": null,
+      "placement": {
+        "scale": 1,
+        "registrationPoint": [
+          128,
+          186
+        ],
+        "worldPoint": [
+          985,
+          303
+        ],
+        "coordinateSpace": "ground-floor-local"
+      },
+      "anchor": [
+        128,
+        220
+      ],
+      "sourcePoseNames": [
+        "seated"
+      ],
+      "static": true,
+      "hitArea": [
+        -22,
+        -121,
+        106,
+        110
+      ]
+    }
+  },
+  "layerOrder": [
+    "burrow-ground",
+    "burrow-actor",
+    "burrow-front"
+  ],
+  "endpointGuarantees": [
+    "sit-down[0] uses unchanged original pose pixels with common whole-action registration +12Y at actual approach [965,362]",
+    "sit-down[-1] == working[0] == stand-up[0] exact existing source pixels",
+    "stand-up is reverse(sit-down) exact source pixels",
+    "burrow and body/hands atlases byte-identical to pre-v3 baseline"
+  ],
+  "routePolicy": {
+    "workingAndBookDelivery": "existing actions and book ownership unchanged; burrow states empty-handed only",
+    "crossWorldTransition": "scene switches to an existing empty-handed body at the same worldFoot with zero extra art offset, then moves the mole between burrow and original station; burrow-exit-work has no automatic returnTo",
+    "click": "open original conversation immediately; emerge animation continues in background"
+  },
+  "provenance": {
+    "tool": "built-in image_gen",
+    "newImageCallsThisSeat": 16,
+    "recipe": "../recipe.json",
+    "identity": "mole-identity-standard.png + exact v10 idle",
+    "postprocessing": "equal-cell splits, one scale per source batch, explicit measured registration translations, no per-frame bbox fitting or body/limb deformation; foreground arms are same-pixel extraction with same transform"
+  },
+  "knownGaps": [
+    "Eight-pose candidate needs actual playback; adding3 generated inbetweens does not assert final quality.",
+    "gap1 corrected raised sole lowered to about321.5px rather than exact linear330px; use real-time rhythm review, not linearity alone.",
+    "candidate head/hip proxies have manual uncertainty; actual foot/table/seat support required in normal scene."
+  ],
+  "previewTiming": {
+    "policy": "concatenate manifest state durations; identical adjacent endpoint frames may coalesce in GIF with summed duration",
+    "runtimeSequenceFrames": 61,
+    "gifEncodedFrames": 57,
+    "totalDurationMs": 10580,
+    "supersededPreview": "../incremental-bridge/before/normal-speed-full-sequence.gif"
+  },
+  "localActions": [],
+  "layerIntegration": {
+    "body": "new states[action].spritesheet using its state placement",
+    "hands": "new states[action].frontSpritesheet, identical placement/frame/alpha as body, at desk foreground depth+1",
+    "furniture": "room-base-rugs-seating-v3-trial2.png + same-master table foreground exact selection at local[850,150]; old desk layers removed",
+    "deskOccluderSample": "parent diagnostic steward-desk-occluder.png is exact compositing of those two inherited foreground assets, not a separate runtime patch to duplicate",
+    "chair": "same-master exact chair body at depth309 behind seated body310; same-master narrow near arm at335; standing sprite ground depth362 is in front of both"
+  },
+  "seating": {
+    "approachPoint": [
+      965,
+      362
+    ],
+    "routeFromBurrow": [
+      [
+        922,
+        234
+      ],
+      [
+        922,
+        370
+      ],
+      [
+        965,
+        370
+      ]
+    ],
+    "sitAction": "sit-down",
+    "standAction": "stand-up",
+    "seatPoint": [
+      985,
+      303
+    ],
+    "logicalFootPoint": [
+      994,
+      322
+    ],
+    "coordinateSpace": "ground-floor-local",
+    "placementMeaning": "all seated/transition pixels use unchanged source frame pixels and common registration [128,186] at seat[985,303]; exact sit[0]/stand[-1] idle body is at approach[965,362] using original [128,220] idle anchor"
+  },
+  "inheritedEndpointGuarantees": [
+    "sit-down[0] is exact v10 idle pixels translated to actual approach965350",
+    "sit-down[-1] == working[0] == stand-up[0] exact pixels",
+    "stand-up is reverse(sit-down) exact pixels",
+    "burrow and working sheets byte-identical to candidate2"
+  ],
+  "candidateProvenance": {
+    "tool": "built-in image_gen",
+    "callsThisCandidate": 6,
+    "used": "empty furniture v1 then corrected v2; three localized rug edits",
+    "rejected": "one full-room rug edit changed camera and was not adopted",
+    "characterGeneration": "none; exact inherited whole-character sheets and hands retained",
+    "postprocessing": "uniform scale of each local still source, binary source pixel adoption masks, exact furniture foreground selection; no body redrawing, deformation, per-frame fit or limb compositing"
+  },
+  "candidateKnownGaps": [
+    "runtime 32px static grid may miss small actual furniture-leg rectangles; main controller must reconcile continuous collision without arbitrary artwork padding",
+    "normal-speed sit/stand/walk support and standing feet near rear chair foot must be checked",
+    "current inherited source knownGaps and diagnosticOnly flags are historical provenance, not proof of v3 failure or passage",
+    "inherited manifest fullframePattern paths do not exist; extracted atlas frames in diagnostics are new lossless crops, not generated originals"
+  ]
+}

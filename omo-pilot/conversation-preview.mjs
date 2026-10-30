@@ -32,18 +32,22 @@ export class ConversationPreviews {
           const ref = new URL(req.headers.referer);
           if (ref.host === req.headers.host && ref.pathname.startsWith('/v/')) {
             versionId = ref.pathname.split('/')[2];
-            res.writeHead(302, { Location: `/v/${encodeURIComponent(versionId)}/${name.split('/').map(encodeURIComponent).join('/')}${url.search}` }); res.end(); return;
+            const runPrefix = ref.pathname.split('/')[3] === '__run__' ? '__run__/' : '';
+            res.writeHead(302, { Location: `/v/${encodeURIComponent(versionId)}/${runPrefix}${name.split('/').map(encodeURIComponent).join('/')}${url.search}` }); res.end(); return;
           }
         }
+        const run = name.startsWith('__run__/'); if (run) name = name.slice('__run__/'.length);
         name ||= 'index.html';
         if (protectedName(name) || name.includes('\0') || name.split('/').includes('..')) return sendError(403, '此文件不通过成果预览提供。');
         const turn = versionId ? this.store.state.conversations.flatMap((c) => c.turns).find((t) => t.id === versionId && t.projectId === project.id && t.adoptedAt) : null;
         if (versionId && !turn) return sendError(404, '未找到这个成果版本。');
-        const root = turn ? turn.workspace : project.root;
+        if (run && (!turn || turn.artifactEntrypoint !== 'dist/index.html')) return sendError(404, '此版本尚无经过检查的小游戏入口。');
+        const base = await fs.realpath(turn ? turn.workspace : project.root);
+        const root = run ? path.join(base, 'dist') : base;
         const file = path.resolve(root, name);
         if (!file.startsWith(root + path.sep) || await fs.realpath(file) !== file) return sendError(403, '文件超出成果范围。');
         const bytes = await fs.readFile(file);
-        if (turn && turn.resultIndex?.[name] !== sha(bytes)) return sendError(409, '文件与该成果版本不一致，未显示混合版本。');
+        if (turn && turn.resultIndex?.[run ? `dist/${name}` : name] !== sha(bytes)) return sendError(409, '文件与该成果版本不一致，未显示混合版本。');
         res.writeHead(200, { 'Content-Type': `${types[path.extname(name)] || 'application/octet-stream'}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
           'Content-Security-Policy': "sandbox allow-scripts allow-same-origin allow-forms; default-src 'self' data: blob: 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-src 'none'; base-uri 'self'" });
         res.end(req.method === 'HEAD' ? undefined : bytes);

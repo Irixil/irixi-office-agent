@@ -1,0 +1,286 @@
+{
+  "role": "writer",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "worldAnchor": [
+    304,
+    390
+  ],
+  "sharedScaleAcrossAllRestStates": 0.209,
+  "fixedTargetContentBottom": 103,
+  "singleTransformPerSourceSheet": {
+    "idle": {
+      "sourceCellBottomBaseline": 609,
+      "placement": [
+        32,
+        -24
+      ]
+    },
+    "sleeping": {
+      "sourceCellBottomBaseline": 607,
+      "placement": [
+        32,
+        -24
+      ]
+    },
+    "slack": {
+      "sourceCellBottomBaseline": 588,
+      "placement": [
+        32,
+        -20
+      ]
+    }
+  },
+  "states": {
+    "idle": [
+      {
+        "frame": 0,
+        "visibleBBox": [
+          48,
+          12,
+          124,
+          103
+        ],
+        "visibleSize": [
+          76,
+          91
+        ],
+        "center": [
+          86.0,
+          57.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 1,
+        "visibleBBox": [
+          48,
+          9,
+          128,
+          103
+        ],
+        "visibleSize": [
+          80,
+          94
+        ],
+        "center": [
+          88.0,
+          56.0
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 2,
+        "visibleBBox": [
+          45,
+          12,
+          121,
+          103
+        ],
+        "visibleSize": [
+          76,
+          91
+        ],
+        "center": [
+          83.0,
+          57.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 3,
+        "visibleBBox": [
+          45,
+          12,
+          120,
+          103
+        ],
+        "visibleSize": [
+          75,
+          91
+        ],
+        "center": [
+          82.5,
+          57.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      }
+    ],
+    "sleeping": [
+      {
+        "frame": 0,
+        "visibleBBox": [
+          42,
+          9,
+          130,
+          103
+        ],
+        "visibleSize": [
+          88,
+          94
+        ],
+        "center": [
+          86.0,
+          56.0
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 1,
+        "visibleBBox": [
+          48,
+          13,
+          135,
+          103
+        ],
+        "visibleSize": [
+          87,
+          90
+        ],
+        "center": [
+          91.5,
+          58.0
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 2,
+        "visibleBBox": [
+          47,
+          22,
+          139,
+          103
+        ],
+        "visibleSize": [
+          92,
+          81
+        ],
+        "center": [
+          93.0,
+          62.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 3,
+        "visibleBBox": [
+          46,
+          13,
+          133,
+          103
+        ],
+        "visibleSize": [
+          87,
+          90
+        ],
+        "center": [
+          89.5,
+          58.0
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      }
+    ],
+    "slack": [
+      {
+        "frame": 0,
+        "visibleBBox": [
+          48,
+          18,
+          123,
+          103
+        ],
+        "visibleSize": [
+          75,
+          85
+        ],
+        "center": [
+          85.5,
+          60.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 1,
+        "visibleBBox": [
+          50,
+          18,
+          126,
+          103
+        ],
+        "visibleSize": [
+          76,
+          85
+        ],
+        "center": [
+          88.0,
+          60.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 2,
+        "visibleBBox": [
+          50,
+          14,
+          125,
+          103
+        ],
+        "visibleSize": [
+          75,
+          89
+        ],
+        "center": [
+          87.5,
+          58.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      },
+      {
+        "frame": 3,
+        "visibleBBox": [
+          56,
+          18,
+          129,
+          103
+        ],
+        "visibleSize": [
+          73,
+          85
+        ],
+        "center": [
+          92.5,
+          60.5
+        ],
+        "transparentCorners": true,
+        "edgeTouch": false
+      }
+    ]
+  },
+  "checks": {
+    "allFrameSizesMatch": true,
+    "allRGBA": true,
+    "allCornersTransparent": true,
+    "noVisibleBBoxTouchesCanvasEdge": true,
+    "noPerFrameScaleOrCenterFit": true,
+    "timingsMatchFourFrames": true,
+    "modelGeneratedPosesOnly": true,
+    "scriptRole": "equal-cell split, cyan-key removal, tiny detached-effect cleanup, one role-wide scale, one transform per source sheet, anchor placement, masking, packing, timing, preview composition and measurement only"
+  }
+}

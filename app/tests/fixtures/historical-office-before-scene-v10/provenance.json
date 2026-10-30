@@ -1,0 +1,14 @@
+{
+  "source": "IRiXi/Backups/scene-v10-20261028T182529Z/source-delta/art/office-playable-v1",
+  "meaning": "Exact saved pre-scene-v10 room and upper-floor manifests. No generated rectangles removed. Only geometry metadata is needed by the historical V6 route check.",
+  "files": [
+    {
+      "file": "room-manifest.json",
+      "sha256": "cadae6cbec9f14ee3000e278a93e1f206b07b8e22523f8bc4a5fb6e2c50ff090"
+    },
+    {
+      "file": "floor-extension-manifest.json",
+      "sha256": "2f1b8b6351810336dc7c18323d7a72db8e54f4d1dfe91146cd28774c606bdaac"
+    }
+  ]
+}

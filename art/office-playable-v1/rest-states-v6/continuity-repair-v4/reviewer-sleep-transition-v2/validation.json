@@ -1,0 +1,28 @@
+{
+  "id": "reviewer-sleep-transition-v2-validation",
+  "checks": {
+    "originalIdleEndpointRetained": true,
+    "originalSleepEndpointRetained": true,
+    "overshootFrameExcludedFromRuntimeSheet": true,
+    "runtimeSheetFrames192x208": true,
+    "reverseUsesExactReverseSourceSequence": true,
+    "v6SleepingLoopUnchanged": true,
+    "noScaleOrStretchApplied": true
+  },
+  "sourceFrameIndices": [0, 1, 3],
+  "excludedSourceFrame": {
+    "index": 2,
+    "sha256": "b5da86d997f19f15a320de4f936e3d888ac8785101d6dd5fe71208f2f0b9315c"
+  },
+  "runtimeFrameSha256": [
+    "ba2cc5d94d50c0c1ee643a2b1434925b9901be24df3eb82e2f11ca2508e315b3",
+    "819c86e70808f29d97c9fea8e06ba0032a0c3dba47e61475780bcb30e4e5850b",
+    "968d3f98336c697a4c89bd9487e0000074fc63f046f4727245077f5b38f84188"
+  ],
+  "runtime": {
+    "enterOrder": [0, 1, 2],
+    "sleepLoopHandoff": "existing reviewer sleeping v6 frame 0 is the byte-identical source frame 3",
+    "wakeOrder": [2, 1, 0],
+    "wakeReturn": "idle"
+  }
+}

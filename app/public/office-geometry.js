@@ -49,7 +49,25 @@ export function pointToSegmentDistance(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + ratio * dx), py - (ay + ratio * dy));
 }
 
+export function feetSegmentOverlap(ax, ay, bx, by, obstacleX, obstacleY, radiusX = 26, radiusY = 18) {
+  return pointToSegmentDistance(obstacleX / radiusX, obstacleY / radiusY, ax / radiusX, ay / radiusY, bx / radiusX, by / radiusY) < 1;
+}
+
+export function leavesFeetOverlap(ax, ay, bx, by, obstacleX, obstacleY, radiusX = 26, radiusY = 18) {
+  return feetOverlap(ax, ay, obstacleX, obstacleY, radiusX, radiusY) && (ax - obstacleX) * (bx - ax) / radiusX ** 2 + (ay - obstacleY) * (by - ay) / radiusY ** 2 >= 0;
+}
+
 export function coworkerRuntimeState(task, role, { activeConversationRole = null, engagedRole = null, learningAvailable = false } = {}) {
+  if (Array.isArray(task?.colleagues)) {
+    if (task.disconnected) return { active: false, status: 'unknown', localEligible: false, activitySource: 'status' };
+    const works = task.colleagues.find((person) => person.id === role)?.works || [];
+    // One stopping conversation must not hide another conversation still doing work.
+    const order = ['working', 'understanding', 'creating', 'handoff', 'stopping', 'queued', 'waiting_user', 'waiting', 'awaiting_project', 'failed', 'interrupted', 'stopped'];
+    const status = order.find((state) => works.some((work) => work.status === state)) || (works.some((work) => work.status !== 'completed') ? 'unknown' : works.length ? 'completed' : 'idle');
+    const active = ['working', 'understanding', 'creating', 'handoff', 'stopping'].includes(status);
+    const localEligible = ['idle', 'completed'].includes(status) && engagedRole !== role;
+    return { active, status, localEligible, activitySource: active ? 'task' : localEligible ? 'local' : 'status' };
+  }
   if (task?.nativeProduct) {
     const functionOwner = { utility: 'writer', game: 'reviewer', agent: 'steward' }[task.functionId] || null;
     const replying = activeConversationRole === role;

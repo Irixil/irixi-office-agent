@@ -1,0 +1,593 @@
+{
+  "id": "reviewer-desk-sleep-v2-animation-draft01",
+  "revision": "desk-sleep-v2-animation-draft01",
+  "role": "reviewer",
+  "status": "material-draft; runtime-and-independent-review-pending",
+  "frameSize": [
+    256,
+    256
+  ],
+  "anchor": [
+    128,
+    220
+  ],
+  "coordinateSpace": "screen-space",
+  "stationPatch": null,
+  "placement": {
+    "scale": 1,
+    "registrationPoint": [
+      137,
+      167
+    ],
+    "worldPoint": [
+      1200,
+      450
+    ],
+    "contacts": {
+      "seat": [
+        137,
+        167
+      ],
+      "hands": [
+        [
+          124,
+          175
+        ],
+        [
+          186,
+          172
+        ]
+      ],
+      "feet": [
+        [
+          132,
+          194
+        ],
+        [
+          154,
+          190
+        ]
+      ],
+      "desk": {
+        "worldY": [
+          450,
+          485
+        ]
+      }
+    }
+  },
+  "occlusionPatch": {
+    "file": "tabletop-occlusion.png",
+    "worldTopLeft": [
+      1090,
+      435
+    ]
+  },
+  "states": {
+    "idle": {
+      "spritesheet": "states/idle/spritesheet.png",
+      "frontSpritesheet": "states/idle/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "frameCount": 5,
+      "frameDurationsMs": [
+        1900,
+        1200,
+        1600,
+        100,
+        2300
+      ],
+      "cycleDurationMs": 7100,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "reviewer-seated-overhead-call03.png",
+        "reviewer-breath-call07.png",
+        "reviewer-seated-overhead-call03.png",
+        "reviewer-blink-call06.png",
+        "reviewer-seated-overhead-call03.png"
+      ]
+    },
+    "working": {
+      "spritesheet": "states/working/spritesheet.png",
+      "frontSpritesheet": "states/working/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameCount": 3,
+      "frameDurationsMs": [
+        650,
+        450,
+        350
+      ],
+      "cycleDurationMs": 1450,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "reviewer-work-a-call08.png",
+        "reviewer-work-b-call09.png",
+        "reviewer-work-a-call08.png"
+      ]
+    },
+    "enter-working": {
+      "spritesheet": "states/enter-working/spritesheet.png",
+      "frontSpritesheet": "states/enter-working/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameCount": 3,
+      "frameDurationsMs": [
+        100,
+        160,
+        180
+      ],
+      "cycleDurationMs": 440,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "working",
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "reviewer-seated-overhead-call03.png",
+        "reviewer-work-mid-call11.png",
+        "reviewer-work-a-call08.png"
+      ]
+    },
+    "exit-working": {
+      "spritesheet": "states/exit-working/spritesheet.png",
+      "frontSpritesheet": "states/exit-working/front-spritesheet.png",
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameCount": 3,
+      "frameDurationsMs": [
+        100,
+        160,
+        180
+      ],
+      "cycleDurationMs": 440,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "reviewer-work-a-call08.png",
+        "reviewer-work-mid-call11.png",
+        "reviewer-seated-overhead-call03.png"
+      ]
+    },
+    "sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameIndices": [
+        3,
+        4,
+        3
+      ],
+      "frameCount": 3,
+      "frameDurationsMs": [
+        1700,
+        1900,
+        1700
+      ],
+      "cycleDurationMs": 5300,
+      "loop": true,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "poseIds": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "sleepIndicatorAnchor": [
+        160,
+        77
+      ]
+    },
+    "enter-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        3
+      ],
+      "frameCount": 6,
+      "frameDurationsMs": [
+        80,
+        160,
+        140,
+        140,
+        140,
+        120
+      ],
+      "cycleDurationMs": 780,
+      "loop": false,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "returnTo": "sleeping",
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "awake-v10-idle0",
+        "forearms-supported-model",
+        "head-near-arm-model",
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "poseIds": [
+        "awake-v10-idle0",
+        "forearms-supported-model",
+        "head-near-arm-model",
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "reverseOf": "sleep-to-idle",
+      "startFrameByAction": {
+        "sleep-to-idle": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    "exit-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameIndices": [
+        3,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "frameCount": 6,
+      "frameDurationsMs": [
+        40,
+        50,
+        70,
+        100,
+        140,
+        180
+      ],
+      "cycleDurationMs": 580,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        3,
+        4,
+        2,
+        1,
+        0
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -170,
+        158,
+        158
+      ],
+      "sourceFrames": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact",
+        "head-near-arm-model",
+        "forearms-supported-model",
+        "awake-v10-idle0"
+      ],
+      "poseIds": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact",
+        "head-near-arm-model",
+        "forearms-supported-model",
+        "awake-v10-idle0"
+      ],
+      "reverseOf": "idle-to-sleep",
+      "startFrameByAction": {
+        "sleeping": [
+          2,
+          1,
+          2
+        ],
+        "idle-to-sleep": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    }
+  },
+  "provenance": {
+    "tool": "built-in image_gen",
+    "source": "../source/reviewer-seated-overhead-call03.png",
+    "commonRoleSourceScale": "whole canvas 1254 to192; fixed [32,32], every accepted pose same dimensions",
+    "canvasOffset": [
+      32,
+      32
+    ],
+    "bodyAndFront": "same generated pose, same pixels, same placement; foreground is crop only",
+    "roomPatch": "exact original room pixels, polygon alpha crop only",
+    "imageCallsAtSample": 12,
+    "rejectedCalls": [
+      5
+    ],
+    "referenceOnlyCalls": [
+      1,
+      2
+    ],
+    "postprocessing": "whole-canvas shared resize, fixed translation, final-frame exact RGBA polygon crop for draw-order only; no pose synthesis",
+    "newImageCalls": 11,
+    "totalSeatCallsIncludingSharedMoleSample": 12,
+    "deskSleepV2": {
+      "generatedSelection": {
+        "pose1": "draft-generated-cell1.png",
+        "pose2": "repair-generated-cell2.png",
+        "breath": "breath-single-edit-frame256.png",
+        "polygons": {
+          "1": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              184
+            ],
+            [
+              175,
+              184
+            ],
+            [
+              151,
+              179
+            ],
+            [
+              128,
+              171
+            ],
+            [
+              118,
+              165
+            ],
+            [
+              0,
+              165
+            ]
+          ],
+          "2": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              184
+            ],
+            [
+              180,
+              184
+            ],
+            [
+              158,
+              179
+            ],
+            [
+              132,
+              175
+            ],
+            [
+              120,
+              170
+            ],
+            [
+              110,
+              160
+            ],
+            [
+              0,
+              160
+            ]
+          ],
+          "4": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              183
+            ],
+            [
+              180,
+              183
+            ],
+            [
+              166,
+              181
+            ],
+            [
+              153,
+              180
+            ],
+            [
+              140,
+              178
+            ],
+            [
+              130,
+              175
+            ],
+            [
+              120,
+              170
+            ],
+            [
+              113,
+              163
+            ],
+            [
+              105,
+              157
+            ],
+            [
+              0,
+              157
+            ]
+          ]
+        },
+        "sleepIndicatorAnchor": [
+          160,
+          77
+        ],
+        "generationCalls": 3,
+        "selectedSources": {
+          "1": "attempt01 cell0 at [0,0,724,724]",
+          "2": "attempt02 cell1 at [724,0,1448,724]",
+          "4": "attempt03 precise single original1254 edit"
+        },
+        "commonTransformTransitions": "Fixed equal724-square cell to256, no fitting or offsets; one transform shared across generation board",
+        "commonTransformBreath": "Original1254-square source to192 at(32,32), exactly frozen sleep transform",
+        "rejected": "attempt01 cells1/2 tail and feet drift; attempt02 cell2 tail drift; all originals retained",
+        "enterTimes": [
+          80,
+          160,
+          140,
+          140,
+          140,
+          120
+        ],
+        "exitTimes": [
+          40,
+          50,
+          70,
+          100,
+          140,
+          180
+        ],
+        "sleepTimes": [
+          1700,
+          1900,
+          1700
+        ]
+      },
+      "artTool": "built-in image_gen",
+      "postprocessing": "Shared equal-cell crop and common whole-cell resize, same-source alpha selection, atlas/preview packing; no per-frame fitting or pose synthesis.",
+      "exactEndpoints": {
+        "awake": "actual v10 idle0 body/front RGBA exact",
+        "sleep": "static-repair-01 approved body/front PNG exact"
+      },
+      "separateWakeTimes": true,
+      "contract": "startFrameByAction maps source playback array position to target playback array position, not atlas ID"
+    }
+  },
+  "knownGaps": [
+    "Original-speed material GIF and contact sheets authored; actual Phaser continuous playback, interruptions, independent animation review and install remain pending.",
+    "Old awake idle variation1/3 exact-pixel transition is not claimed. Original idle/work fields and files preserved."
+  ]
+}

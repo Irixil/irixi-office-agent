@@ -1,0 +1,111 @@
+{
+  "id": "reviewer-sleep-transition-v1-validation",
+  "checks": {
+    "exactIdleEndpoint": true,
+    "exactSleepEndpoint": true,
+    "allFrames192x208": true,
+    "allRGBA": true,
+    "transparentCorners": true,
+    "noVisibleBBoxTouchesCanvasEdge": true,
+    "generatedFramesUseOneSharedScale": true,
+    "reverseIsExactFrameReversal": true
+  },
+  "transform": {
+    "sharedScale": 0.19,
+    "placement": [
+      12,
+      -6
+    ],
+    "sourceCellSize": [
+      887,
+      887
+    ],
+    "targetFrameSize": [
+      192,
+      208
+    ],
+    "registration": "same cell-center X and manuscript bottom baseline; no per-frame scale fitting"
+  },
+  "metrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        20,
+        28,
+        175,
+        139
+      ],
+      "visibleSize": [
+        155,
+        111
+      ],
+      "center": [
+        97.5,
+        83.5
+      ],
+      "transparentCorners": true,
+      "edgeTouch": false,
+      "sha256": "ba2cc5d94d50c0c1ee643a2b1434925b9901be24df3eb82e2f11ca2508e315b3"
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        20,
+        28,
+        175,
+        140
+      ],
+      "visibleSize": [
+        155,
+        112
+      ],
+      "center": [
+        97.5,
+        84.0
+      ],
+      "transparentCorners": true,
+      "edgeTouch": false,
+      "sha256": "819c86e70808f29d97c9fea8e06ba0032a0c3dba47e61475780bcb30e4e5850b"
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        19,
+        33,
+        174,
+        140
+      ],
+      "visibleSize": [
+        155,
+        107
+      ],
+      "center": [
+        96.5,
+        86.5
+      ],
+      "transparentCorners": true,
+      "edgeTouch": false,
+      "sha256": "b5da86d997f19f15a320de4f936e3d888ac8785101d6dd5fe71208f2f0b9315c"
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        22,
+        24,
+        177,
+        140
+      ],
+      "visibleSize": [
+        155,
+        116
+      ],
+      "center": [
+        99.5,
+        82.0
+      ],
+      "transparentCorners": true,
+      "edgeTouch": false,
+      "sha256": "968d3f98336c697a4c89bd9487e0000074fc63f046f4727245077f5b38f84188"
+    }
+  ]
+}

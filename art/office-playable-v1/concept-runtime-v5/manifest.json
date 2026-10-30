@@ -1,48 +1,413 @@
 {
   "packId": "irixi-office-concept-runtime-v5-upper-gallery",
-  "revision": "upper-gallery-continuous-world-v2",
+  "revision": "frontend-scene-v2-geometry-03-first",
   "status": "generated-local-map-extension-runtime-pending",
   "coordinateSystem": "top-left origin; x right; y down; all dimensions and positions are world pixels",
   "reference": "../concept-runtime-v4/room-base-1440x810.png",
   "world": {
-    "logicalSize": [1568, 1620],
-    "floorSize": [1440, 810],
-    "upperFloorOrigin": [128, 0],
-    "groundFloorOrigin": [0, 810],
+    "logicalSize": [
+      1440,
+      1360
+    ],
+    "floorSize": [
+      1440,
+      810
+    ],
+    "upperFloorOrigin": [
+      0,
+      0
+    ],
+    "groundFloorOrigin": [
+      0,
+      550
+    ],
     "background": "upper-gallery-1440x810.png",
     "groundFloorManifest": "../concept-runtime-v4/manifest.json",
     "stairConnection": {
-      "id": "right-stair-open-to-upper-gallery",
-      "upperLanding": [[1024, 450], [1088, 450], [1088, 810], [1024, 810]],
-      "groundFlightLocal": [[1116, 0], [1180, 0], [1300, 220], [1248, 268]],
-      "groundLandingLocal": [[1178, 228], [1348, 228], [1355, 360], [1180, 360]],
-      "walkableCenterline": [[1136, 1056], [1168, 1056], [1200, 1056], [1232, 1056], [1232, 1024], [1232, 992], [1232, 960], [1200, 928], [1200, 896], [1168, 864], [1168, 832], [1168, 800], [1168, 768], [1168, 736], [1168, 704], [1168, 672], [1168, 640], [1168, 608], [1168, 576], [1168, 544], [1168, 512], [1136, 480], [1104, 448], [1072, 448], [1040, 448], [1008, 448], [976, 448], [944, 448], [912, 416], [880, 416], [848, 416]],
-      "note": "Ground-floor flight and landing follow the visible red stair carpet; upper gallery is translated 128 px right so its bottom exit meets the stair top."
+      "id": "right-straight-stair-v12",
+      "upperLanding": [
+        [
+          1136,
+          470
+        ],
+        [
+          1304,
+          470
+        ],
+        [
+          1310,
+          538
+        ],
+        [
+          1154,
+          541
+        ]
+      ],
+      "groundFlightLocal": [
+        [
+          1150,
+          -34
+        ],
+        [
+          1275,
+          -34
+        ],
+        [
+          1334,
+          229
+        ],
+        [
+          1215,
+          250
+        ]
+      ],
+      "groundLandingLocal": [
+        [
+          1198,
+          228
+        ],
+        [
+          1344,
+          220
+        ],
+        [
+          1355,
+          360
+        ],
+        [
+          1180,
+          360
+        ],
+        [
+          1180,
+          290
+        ]
+      ],
+      "walkableCenterline": [
+        [
+          1264,
+          896
+        ],
+        [
+          1264,
+          864
+        ],
+        [
+          1264,
+          832
+        ],
+        [
+          1264,
+          800
+        ],
+        [
+          1264,
+          768
+        ],
+        [
+          1264,
+          736
+        ],
+        [
+          1264,
+          704
+        ],
+        [
+          1264,
+          672
+        ],
+        [
+          1232,
+          640
+        ],
+        [
+          1232,
+          608
+        ],
+        [
+          1232,
+          576
+        ],
+        [
+          1232,
+          544
+        ],
+        [
+          1200,
+          512
+        ],
+        [
+          1200,
+          480
+        ],
+        [
+          1168,
+          480
+        ],
+        [
+          1136,
+          480
+        ],
+        [
+          1104,
+          480
+        ],
+        [
+          1072,
+          480
+        ],
+        [
+          1040,
+          480
+        ],
+        [
+          1008,
+          480
+        ],
+        [
+          976,
+          480
+        ],
+        [
+          944,
+          480
+        ],
+        [
+          912,
+          480
+        ],
+        [
+          880,
+          480
+        ],
+        [
+          848,
+          480
+        ],
+        [
+          816,
+          480
+        ],
+        [
+          784,
+          480
+        ],
+        [
+          752,
+          480
+        ],
+        [
+          720,
+          480
+        ]
+      ],
+      "note": "Measured from frozen room-master-candidate-03; actual single stair surface and upper/lower platforms. Global centerline is a diagnostic route only; runtime uses polygons."
     }
   },
   "upperFloor": {
     "walkablePolygons": [
-      [[40, 210], [1380, 210], [1408, 300], [1408, 540], [1140, 540], [1140, 575], [1070, 575], [1070, 540], [40, 540]],
-      [[1024, 450], [1088, 450], [1088, 810], [1024, 810]]
+      [
+        [
+          40,
+          210
+        ],
+        [
+          1380,
+          210
+        ],
+        [
+          1408,
+          300
+        ],
+        [
+          1408,
+          510
+        ],
+        [
+          1310,
+          520
+        ],
+        [
+          40,
+          520
+        ]
+      ],
+      [
+        [
+          1136,
+          470
+        ],
+        [
+          1304,
+          470
+        ],
+        [
+          1310,
+          538
+        ],
+        [
+          1154,
+          541
+        ]
+      ]
     ],
     "blockedPolygons": [
-      { "id": "upper-perimeter-bookshelves", "rect": [0, 0, 1440, 210] },
-      { "id": "upper-left-reading-nook", "rect": [110, 105, 270, 160] },
-      { "id": "upper-left-atlas-table", "rect": [50, 270, 270, 185] },
-      { "id": "upper-central-reading-table", "rect": [830, 205, 320, 230] },
-      { "id": "upper-right-window-seat", "rect": [1190, 60, 250, 245] },
-      { "id": "upper-gallery-balustrade-left", "rect": [0, 520, 1024, 150] },
-      { "id": "upper-gallery-balustrade-right", "rect": [1088, 520, 352, 150] },
-      { "id": "upper-stair-railing-inner", "rect": [1080, 610, 100, 200] }
+      {
+        "id": "upper-perimeter-bookshelves",
+        "rect": [
+          0,
+          0,
+          1440,
+          210
+        ]
+      },
+      {
+        "id": "upper-left-reading-nook",
+        "rect": [
+          110,
+          105,
+          270,
+          160
+        ]
+      },
+      {
+        "id": "upper-left-atlas-table",
+        "rect": [
+          50,
+          270,
+          270,
+          185
+        ]
+      },
+      {
+        "id": "upper-central-reading-table",
+        "rect": [
+          830,
+          205,
+          320,
+          230
+        ]
+      },
+      {
+        "id": "upper-right-window-seat",
+        "rect": [
+          1190,
+          60,
+          250,
+          245
+        ]
+      },
+      {
+        "id": "upper-gallery-balustrade-left",
+        "rect": [
+          0,
+          520,
+          1141,
+          84
+        ]
+      },
+      {
+        "id": "upper-gallery-balustrade-right",
+        "rect": [
+          1310,
+          510,
+          130,
+          95
+        ]
+      },
+      {
+        "id": "upper-stair-near-top-post",
+        "rect": [
+          1113,
+          530,
+          36,
+          24
+        ]
+      },
+      {
+        "id": "upper-stair-near-bottom-post",
+        "rect": [
+          1190,
+          766,
+          30,
+          28
+        ]
+      },
+      {
+        "id": "upper-stair-far-bottom-post",
+        "rect": [
+          1332,
+          766,
+          34,
+          28
+        ]
+      }
+    ],
+    "foregroundItems": [
+      {
+        "id": "upper-reading-table-projection-v10",
+        "file": "foreground/upper-reading-table-projection-v10.png",
+        "x": 865,
+        "y": 213,
+        "pivot": [
+          0,
+          0
+        ],
+        "depthY": 435
+      },
+      {
+        "id": "upper-atlas-table-projection-v10",
+        "file": "foreground/upper-atlas-table-projection-v10.png",
+        "x": 51,
+        "y": 264,
+        "pivot": [
+          0,
+          0
+        ],
+        "depthY": 455
+      },
+      {
+        "id": "upper-balustrade-front-v12",
+        "file": "foreground/upper-balustrade-front-v12.png",
+        "x": 30,
+        "y": 477,
+        "pivot": [
+          0,
+          0
+        ],
+        "depthY": 604
+      },
+      {
+        "id": "straight-stair-near-rail-v12",
+        "file": "foreground/straight-stair-near-rail-v12.png",
+        "x": 1111,
+        "y": 451,
+        "pivot": [
+          0,
+          0
+        ],
+        "depthY": 799
+      },
+      {
+        "id": "straight-stair-far-rail-v12",
+        "file": "foreground/straight-stair-far-rail-v12.png",
+        "x": 1283,
+        "y": 478,
+        "pivot": [
+          0,
+          0
+        ],
+        "depthY": 515
+      }
     ],
     "visual": {
       "imagePrompt": "provenance/upper-gallery-v2-edit.md",
       "sourceImage": "upper-gallery-v2-generated-1672x941.png",
       "sourceImageSha256": "0ccf12132d75165317dd660799c629a1e5c2409aaab34909eecbc4b87c5ce196",
       "sourceImageBytes": 2293412,
-      "runtimeImage": "upper-gallery-v2-1440x810.png",
-      "runtimeImageSha256": "8a1ea2f29df8df49bd22134f412b320b84c5ca787b2d2ed347803bf4ad8d5969",
-      "runtimeImageBytes": 1972431
+      "runtimeImage": "upper-gallery-joined-v12.png",
+      "runtimeImageSha256": "461a1ba59bddf09be5b42e96657d684fc84e114b332a50917dd589182f8b0048",
+      "runtimeImageBytes": 2105031
     }
   }
 }

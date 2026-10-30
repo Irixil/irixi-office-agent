@@ -246,6 +246,15 @@ export function createNativeIdleWatchdog(timeoutMs, onTimeout, { setTimer = setT
   return { reset, close };
 }
 
+export function nativeProviderSettings(timeoutMs, idleTimeoutMs) {
+  const limit = Number.isFinite(idleTimeoutMs) && idleTimeoutMs > 0 ? idleTimeoutMs : timeoutMs;
+  if (!Number.isFinite(limit) || limit <= 0) throw new Error('Native OmO provider requires a finite host timeout.');
+  // OmO transports a single host-owned decision here. Its independent default
+  // five-minute stream deadline/retry must not race the host decision budget.
+  return { retry: { enabled: false, maxRetries: 0,
+    provider: { maxRetries: 0, timeoutMs: limit, streamStartTimeoutMs: limit } } };
+}
+
 export function createNativeSessionWatchdog(timeoutMs, idleTimeoutMs, onTimeout, schedulers = {}) {
   const usesIdleTimeout = Number.isFinite(idleTimeoutMs) && idleTimeoutMs > 0;
   const watchdog = createNativeIdleWatchdog(usesIdleTimeout ? idleTimeoutMs : timeoutMs, onTimeout, schedulers);
@@ -316,8 +325,7 @@ export function shouldStopForNoProgressToolDecision(operations, text) {
     return proposed.length <= cycle.length && proposed.every((block, index) => {
       if (typeof block?.name !== 'string' || !block.arguments || typeof block.arguments !== 'object'
         || Array.isArray(block.arguments)) return false;
-      let prior;
-      try { prior = JSON.parse(cycle[index]); } catch { return false; }
+      const prior = JSON.parse(cycle[index]);
       return prior?.name === block.name && JSON.stringify(prior.arguments) === JSON.stringify(stableValue(block.arguments));
     });
   }
@@ -395,9 +403,10 @@ const NATIVE_ROLE_TOOLS = Object.freeze({
   Chat: { names: ['read', 'grep', 'find', 'ls'], permission: 'read-only' },
 });
 
-export function nativeRoleTools(role, conversation = false) {
+export function nativeRoleTools(role, conversation = false, writeScope = null) {
   const value = NATIVE_ROLE_TOOLS[role] || { names: [], permission: 'read-only' };
-  return conversation && role === 'Developer' ? { ...value, names: [...value.names, 'bash', 'delegate_readonly', 'verify_behavior'] } : value;
+  if (!conversation) return value;
+  return { ...value, names: [...value.names, ...(writeScope === null ? ['memory_manage'] : []), ...(role === 'Developer' && writeScope === null ? ['bash', 'delegate_readonly', 'delegate_parallel', 'verify_behavior', 'noobi_run'] : [])] };
 }
 
 export function nativeTurnFailure({ settled, stopReason, error, text, state }) {
@@ -454,8 +463,9 @@ export async function runOmoNativeRpcRole({
   allowedWritePaths = [],
   conversation = false,
   decisionOnly = false,
-  modelSelection = null, onDelegate = null, onBehaviorCheck = null,
+  modelSelection = null, onDelegate = null, onParallel = null, onBehaviorCheck = null, onNoobi = null, onMemory = null, writeScope = null,
   readRoots = [],
+  networkHosts = [], commandEnvironment = {},
   commandRegistryPath = null,
   onNativeStarted = null,
   homeDir = path.join(ROOT, '.irixi-runtime', 'omo', 'home'),
@@ -468,12 +478,13 @@ export async function runOmoNativeRpcRole({
 }) {
   if (!Object.hasOwn(NATIVE_ROLE_TOOLS, role) || typeof prompt !== 'string' || !prompt.trim()
     || typeof runModelDecision !== 'function') throw new Error('Native OmO role request is incomplete.');
+  if (modelSelection?.provider === 'deepseek' || /^deepseek(?:[-_.]|$)/iu.test(modelSelection?.model || '')) throw new Error('DeepSeek 本轮仅限连接验证，不能用于项目、助手或恢复。');
   const modelId = modelSelection?.model || CODEX_BRIDGE_MODEL_ID;
   if (!/^[a-zA-Z0-9._-]+$/u.test(modelId)) throw new Error('Invalid host model.');
   const installMetadata = await readInstallMetadata(homeDir);
   const installedVersion = installMetadata.version;
   const resolvedPiAiModulePath = await resolvePiAiModulePath(installMetadata, piAiModulePath);
-  const tools = conversation && role === 'Chat' && decisionOnly ? { names: [], permission: 'read-only' } : nativeRoleTools(role, conversation);
+  const tools = conversation && role === 'Chat' && decisionOnly ? { names: [], permission: 'read-only' } : nativeRoleTools(role, conversation, writeScope);
   if (['Developer', 'Reviewer'].includes(role)) {
     if (!cwd || !path.isAbsolute(cwd)) throw new Error('OmO worker role requires its registered absolute worktree.');
     cwd = conversation ? await fsp.realpath(cwd) : await assertSafeWorkspaceTree(cwd);
@@ -484,8 +495,11 @@ export async function runOmoNativeRpcRole({
   // earlier rules. Its permission parser accepts a comma-separated list.
   const permissionRules = [
     ...(conversation ? ['external_directory=allow'] : []),
+    ...(conversation && !decisionOnly && onMemory && writeScope === null ? ['memory_manage=allow'] : []),
+    ...(conversation && role === 'Developer' && onParallel && writeScope === null ? ['delegate_parallel=allow'] : []),
     ...(conversation && role === 'Developer' && onDelegate ? ['delegate_readonly=allow'] : []),
     ...(conversation && role === 'Developer' && onBehaviorCheck ? ['verify_behavior=allow'] : []),
+    ...(conversation && role === 'Developer' && onNoobi ? ['noobi_run=allow'] : []),
   ];
   const args = [
     '--mode', 'rpc', '--session-runtime', 'in-process', '--no-session', '--no-extensions', '--extension', OMO_PROVIDER_EXTENSION,
@@ -512,6 +526,7 @@ export async function runOmoNativeRpcRole({
     await fsp.chmod(isolatedHome, 0o700);
     await fsp.mkdir(isolatedAgentDir, { recursive: true, mode: 0o700 });
     await fsp.chmod(isolatedAgentDir, 0o700);
+    await fsp.writeFile(path.join(isolatedAgentDir, 'settings.json'), JSON.stringify(nativeProviderSettings(timeoutMs, idleTimeoutMs)), { mode: 0o600, flag: 'wx' });
     const bridge = await createPrivateBridgeServer(conversation ? os.tmpdir() : null);
     bridgeCleanup = bridge.cleanup;
     bridgeSocketPath = bridge.path;
@@ -526,14 +541,19 @@ export async function runOmoNativeRpcRole({
     env: {
       HOME: isolatedHome,
       PI_CODING_AGENT_DIR: isolatedAgentDir,
+      OMO_CODING_AGENT_DIR: isolatedAgentDir,
+      SENPI_CODING_AGENT_DIR: isolatedAgentDir,
       IRIXI_OMO_PI_AI_MODULE_URL: pathToFileURL(resolvedPiAiModulePath).href,
       IRIXI_OMO_BRIDGE_SOCKET: bridgeSocketPath,
       IRIXI_OMO_ROLE: role,
       IRIXI_OMO_MODEL_ID: modelId,
       IRIXI_OMO_WORKSPACE_ROOT: cwd || ROOT,
       IRIXI_OMO_ALLOWED_WRITE_PATHS: JSON.stringify(allowedWritePaths),
+      IRIXI_OMO_WRITE_SCOPE: JSON.stringify(writeScope),
       IRIXI_OMO_CONVERSATION: conversation ? '1' : '0',
       IRIXI_OMO_READ_ROOTS: JSON.stringify(readRoots),
+      IRIXI_OMO_NETWORK_HOSTS: JSON.stringify(networkHosts),
+      IRIXI_OMO_COMMAND_ENV: JSON.stringify(commandEnvironment),
       IRIXI_OMO_COMMAND_REGISTRY: commandRegistry,
       SENPI_NO_FALLBACK: '1',
       PATH: `${path.dirname(executable)}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
@@ -599,7 +619,10 @@ export async function runOmoNativeRpcRole({
   };
   const rpcWaiters = new Map();
   const modelCalls = new Set();
+  const providerJobs = new Set();
+  let providerTerminationFailure = null;
   let providerDecisionPending = false;
+  let providerRequestId = null;
   let watchdog = null;
   const timeout = new Promise((_, reject) => {
     const expire = () => {
@@ -635,6 +658,7 @@ export async function runOmoNativeRpcRole({
     }
     watchdog?.reset();
     providerDecisionPending = true;
+    providerRequestId = requestId;
     providerCalls += 1;
     const job = Promise.resolve().then(() => runModelDecision(payload, providerCalls, providerAbort.signal)).then(async (text) => {
       if (processError || providerAbort.signal.aborted || child.exitCode !== null || child.killed) return;
@@ -658,8 +682,8 @@ export async function runOmoNativeRpcRole({
         error: safeNativeError(processError?.message || error?.message) || 'The host rejected or failed this model request.',
         code: processError?.code || error?.code || 'HOST_MODEL_REQUEST_FAILED' })}\n`;
       if (child.exitCode === null && !child.killed && socket.writable) socket.write(response);
-    }).finally(() => { providerDecisionPending = false; modelCalls.delete(job); });
-    modelCalls.add(job);
+    }).finally(() => { providerDecisionPending = false; providerRequestId = null; modelCalls.delete(job); providerJobs.delete(job); });
+    modelCalls.add(job); providerJobs.add(job);
   };
 
   child.stdout.setEncoding('utf8');
@@ -740,14 +764,27 @@ export async function runOmoNativeRpcRole({
         }
         let message;
         try { message = JSON.parse(line); } catch { failProcess(new Error('Native OmO provider emitted invalid bridge JSON.')); continue; }
-        if (['delegate_readonly', 'verify_behavior'].includes(message?.kind)) {
-          const hostTool = message.kind === 'delegate_readonly' ? onDelegate : onBehaviorCheck;
-          if (!conversation || role !== 'Developer' || typeof hostTool !== 'function' || !promptAdmitted || providerAbort.signal.aborted) {
+        if (message?.kind === 'model_cancel') {
+          // Only the native request that owns the current decision can cancel it.
+          // Do not release the overlap gate and start a replacement while it exits.
+          if (providerDecisionPending && message.id === providerRequestId) {
+            const reason = safeNativeError(message.reason) || 'Native model request was cancelled.';
+            const timedOut = /timed?\s*out|timeout/iu.test(reason);
+            failProcess(Object.assign(new Error(`${timedOut ? '模型本次未及时返回，工作已停下，消息和成果保留；可继续。' : '本次模型请求已取消，工作已停下，消息和成果保留。'} 原生请求诊断：${reason}`), {
+              code: timedOut ? 'OMO_PROVIDER_REQUEST_TIMEOUT' : 'OMO_PROVIDER_REQUEST_CANCELLED',
+            }));
+          }
+          continue;
+        }
+        if (['delegate_readonly', 'delegate_parallel', 'verify_behavior', 'noobi_run', 'memory_manage'].includes(message?.kind)) {
+          const hostTool = message.kind === 'memory_manage' ? onMemory : message.kind === 'delegate_readonly' ? onDelegate : message.kind === 'delegate_parallel' ? onParallel : message.kind === 'verify_behavior' ? onBehaviorCheck : onNoobi;
+          if (!conversation || writeScope !== null || message.kind !== 'memory_manage' && role !== 'Developer' || typeof hostTool !== 'function' || !promptAdmitted || providerAbort.signal.aborted) {
             socket.write(`${JSON.stringify({ id: message.id, ok: false, error: 'Subtask dispatch is unavailable in this scope.' })}\n`); continue;
           }
-          const job = Promise.resolve().then(() => hostTool(message.payload, providerAbort.signal)).then((result) => {
+          const job = Promise.resolve().then(() => hostTool(message.payload, providerAbort.signal, { onProgress: () => watchdog?.reset() })).then((result) => {
             if (!providerAbort.signal.aborted && socket.writable) socket.write(`${JSON.stringify({ id: message.id, ok: true, text: JSON.stringify(result) })}\n`);
           }).catch((error) => {
+            if (error?.code === 'OMO_PROVIDER_EXIT_UNCONFIRMED') { providerTerminationFailure ||= error; failProcess(error); }
             if (!providerAbort.signal.aborted && socket.writable) socket.write(`${JSON.stringify({ id: message.id, ok: false, error: safeNativeError(error.message) })}\n`);
           }).finally(() => modelCalls.delete(job));
           modelCalls.add(job);
@@ -823,7 +860,23 @@ export async function runOmoNativeRpcRole({
     return await Promise.race([run(), timeout]);
   } finally {
     providerAbort.abort();
-    await Promise.allSettled([...modelCalls]);
+    // Only a provider decision is detached after its cancellation grace. Host
+    // tools can still own writes/Noobi and must finish their safety cleanup.
+    const pendingProviders = [...providerJobs];
+    if (pendingProviders.length) {
+      let timer;
+      const acknowledged = await Promise.race([
+        Promise.allSettled(pendingProviders).then(() => true),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(false), 3_000); }),
+      ]);
+      clearTimeout(timer);
+      if (!acknowledged) providerTerminationFailure ||= Object.assign(new Error('停止处理中：模型调用的收尾尚未确认。本轮未采用结果，消息和成果保留。'), {
+        code: 'OMO_PROVIDER_EXIT_UNCONFIRMED',
+        providerTermination: { status: 'unconfirmed', decisionCallbackSettled: false,
+          causeCode: processError?.code || null, cause: processError?.message || null },
+      });
+    }
+    await Promise.allSettled([...modelCalls].filter((job) => !providerJobs.has(job)));
     const toolReceiptSummary = receiptCollector.finish({ cancelled: signal?.aborted === true || processError?.code === 'ABORTED' });
     await toolReceiptWriteQueue;
     if (sessionState?.sessionId && typeof onToolReceiptSummary === 'function') {
@@ -863,6 +916,12 @@ export async function runOmoNativeRpcRole({
     }
     await bridgeCleanup?.();
     await fsp.rm(isolatedHome, { recursive: true, force: true });
+    if (providerTerminationFailure) {
+      providerTerminationFailure.providerTermination ||= { status: 'unconfirmed' };
+      providerTerminationFailure.providerTermination.nativeProcessExited = true;
+      if (toolReceiptWriteError || toolReceiptSummaryWriteError) providerTerminationFailure.providerTermination.receiptPersistenceError = String((toolReceiptWriteError || toolReceiptSummaryWriteError).message);
+      throw providerTerminationFailure;
+    }
     const summaryPersistenceFailure = nativeToolReceiptSummaryPersistenceFailure(toolReceiptSummaryWriteError, processError);
     if (summaryPersistenceFailure) throw summaryPersistenceFailure;
   }

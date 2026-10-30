@@ -15,11 +15,11 @@ macOS shell or browser
 
 ## Execution and continuity
 
-OmO is the sole harness. The current replaceable connection uses the existing Desktop Codex CLI. Native RPC and the provider bridge preserve tool contracts, model selection, source identities, actual tool receipts, cancellation, and child-task lifecycle.
+OmO is the sole harness. The replaceable connection uses the configured Codex CLI with either an existing account connection or the official OpenAI API Key file route. Native RPC and the provider bridge preserve tool contracts, model selection, source identities, actual tool receipts, cancellation, and child-task lifecycle.
 
 Bundled DZ rules are mapped to the product's own storage and capabilities. They do not direct the product to modify this development repository's `.dz/` ledger or create a second task store.
 
-Discussion and execution are distinct. A project can have several conversations sharing actual files. P0 modification work for the same project is serialized, while discussion and reads can run concurrently. Continuation checks the saved stop point and current files.
+Discussion and execution are distinct. A project can have several conversations sharing actual files. Adoption into the same project directory is coordinated. Parallel writers use independent copies and scoped tools; combined results are checked before adoption. Discussion and reads can run concurrently. Continuation checks the saved stop point and current files.
 
 ## Messages and branches
 
@@ -34,3 +34,9 @@ Command and browser checks bind a requirement, operation, and result to the deli
 The office scene remains in `app/public/office-game.js`, with Phaser/EasyStar.js and attributed agent-office adaptations. Older OpenOffice source under `native/` and earlier project workflows remain for history and compatibility. They are not the current conversation workbench harness.
 
 [Current progress](../../STAGE_STATUS.md) · [Setup](../getting-started.md) · [Attribution](../../THIRD_PARTY_NOTICES.md)
+
+## Memory and specialist adapters
+
+`conversation-memory.mjs` distinguishes preferences, project decisions and temporary requirements, retaining source information and edit/disable/delete controls. `conversation-parallel.mjs` and `conversation-development.mjs` support scoped helper work and development checks. `specialist-skills.mjs` and the Noobi adapter resolve separately prepared local integrations; they do not ship another project’s private runtime.
+
+`app/api-key-store.mjs` manages permission-restricted local plaintext Key files. The official Key route has explicit tool capabilities and does not silently reuse an account connection. DeepSeek interface preparation is separate from live-provider validation.

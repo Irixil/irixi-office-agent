@@ -1,0 +1,656 @@
+{
+  "id": "archivist-desk-sleep-v2-animation-draft01",
+  "revision": "desk-sleep-v2-animation-draft01",
+  "role": "archivist",
+  "status": "material-draft; runtime-and-independent-review-pending",
+  "frameSize": [
+    256,
+    256
+  ],
+  "anchor": [
+    128,
+    220
+  ],
+  "coordinateSpace": "screen-space",
+  "stationPatch": null,
+  "placement": {
+    "scale": 1,
+    "registrationPoint": [
+      135,
+      154
+    ],
+    "worldPoint": [
+      1205,
+      621
+    ],
+    "contacts": {
+      "seat": [
+        135,
+        154
+      ]
+    }
+  },
+  "occlusionPatch": {
+    "file": "tabletop-occlusion.png",
+    "worldTopLeft": [
+      1080,
+      605
+    ]
+  },
+  "states": {
+    "idle": {
+      "spritesheet": "states/idle/spritesheet.png",
+      "frontSpritesheet": "states/idle/front-spritesheet.png",
+      "frameCount": 5,
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "frameDurationsMs": [
+        2200,
+        1400,
+        1700,
+        120,
+        2400
+      ],
+      "cycleDurationMs": 7820,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "archivist-seated-reach-call16.png",
+        "archivist-breath-call22.png",
+        "archivist-seated-reach-call16.png",
+        "archivist-blink-call20.png",
+        "archivist-seated-reach-call16.png"
+      ]
+    },
+    "working": {
+      "spritesheet": "states/working/spritesheet.png",
+      "frontSpritesheet": "states/working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        650,
+        450,
+        350
+      ],
+      "cycleDurationMs": 1450,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "archivist-work-a-call24.png",
+        "archivist-work-b-call26.png",
+        "archivist-work-a-call24.png"
+      ]
+    },
+    "enter-working": {
+      "spritesheet": "states/enter-working/spritesheet.png",
+      "frontSpritesheet": "states/enter-working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        100,
+        180,
+        180
+      ],
+      "cycleDurationMs": 460,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "working",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "archivist-seated-reach-call16.png",
+        "archivist-work-mid-call32.png",
+        "archivist-work-a-call24.png"
+      ]
+    },
+    "exit-working": {
+      "spritesheet": "states/exit-working/spritesheet.png",
+      "frontSpritesheet": "states/exit-working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        100,
+        180,
+        180
+      ],
+      "cycleDurationMs": 460,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "archivist-work-a-call24.png",
+        "archivist-work-mid-call32.png",
+        "archivist-seated-reach-call16.png"
+      ]
+    },
+    "sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 3,
+      "frameIndices": [
+        3,
+        4,
+        3
+      ],
+      "frameDurationsMs": [
+        1700,
+        1900,
+        1700
+      ],
+      "cycleDurationMs": 5300,
+      "loop": true,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "poseIds": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "sleepIndicatorAnchor": [
+        184,
+        81
+      ]
+    },
+    "enter-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 6,
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        3
+      ],
+      "frameDurationsMs": [
+        80,
+        170,
+        150,
+        140,
+        140,
+        120
+      ],
+      "cycleDurationMs": 800,
+      "loop": false,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "returnTo": "sleeping",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "awake-v10-idle0",
+        "forearms-supported-model",
+        "head-near-arm-model",
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "poseIds": [
+        "awake-v10-idle0",
+        "forearms-supported-model",
+        "head-near-arm-model",
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact"
+      ],
+      "reverseOf": "sleep-to-idle",
+      "startFrameByAction": {
+        "sleep-to-idle": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    "exit-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 6,
+      "frameIndices": [
+        3,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "frameDurationsMs": [
+        40,
+        50,
+        70,
+        110,
+        150,
+        190
+      ],
+      "cycleDurationMs": 610,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        3,
+        4,
+        2,
+        1,
+        0
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact",
+        "head-near-arm-model",
+        "forearms-supported-model",
+        "awake-v10-idle0"
+      ],
+      "poseIds": [
+        "approved-static-contact",
+        "sleep-breath-model",
+        "approved-static-contact",
+        "head-near-arm-model",
+        "forearms-supported-model",
+        "awake-v10-idle0"
+      ],
+      "reverseOf": "idle-to-sleep",
+      "startFrameByAction": {
+        "sleeping": [
+          2,
+          1,
+          2
+        ],
+        "idle-to-sleep": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    }
+  },
+  "provenance": {
+    "tool": "built-in image_gen",
+    "source": "archivist-seated-reach-call16.png",
+    "wholeCanvasResize": 160,
+    "canvasOffset": [
+      48,
+      48
+    ],
+    "sourceSize": [
+      1254,
+      1254
+    ],
+    "postprocessing": "same pose pixels cropped into draw layers; fixed role-wide scale and registration; no pose synthesis",
+    "adoptedSources": {
+      "base": "archivist-seated-reach-call16.png",
+      "blink": "archivist-blink-call20.png",
+      "breath": "archivist-breath-call22.png",
+      "a": "archivist-work-a-call24.png",
+      "b": "archivist-work-b-call26.png",
+      "mid": "archivist-work-mid-call32.png",
+      "sleep": "archivist-sleep-call28.png",
+      "sleepbreath": "archivist-sleep-breath-call30.png"
+    },
+    "newImageCalls": 9,
+    "rejectedCalls": [],
+    "sourceCanvasSize": [
+      1254,
+      1254
+    ],
+    "finalRoleCanvas": [
+      256,
+      256
+    ],
+    "animation": "genuine whole-character edits; exact endpoint reuse and chronological reverse; no local pose synthesis",
+    "deskSleepV2": {
+      "generatedSelection": {
+        "pose1": "source-edit-cell1.png",
+        "pose2": "source-edit-cell2.png",
+        "breath": "breath-single-edit-frame256.png",
+        "polygons": {
+          "1": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              179
+            ],
+            [
+              202,
+              179
+            ],
+            [
+              202,
+              174
+            ],
+            [
+              192,
+              172
+            ],
+            [
+              183,
+              172
+            ],
+            [
+              175,
+              171
+            ],
+            [
+              167,
+              170
+            ],
+            [
+              158,
+              169
+            ],
+            [
+              150,
+              169
+            ],
+            [
+              143,
+              167
+            ],
+            [
+              138,
+              165
+            ],
+            [
+              132,
+              159
+            ],
+            [
+              128,
+              151
+            ],
+            [
+              0,
+              151
+            ]
+          ],
+          "2": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              179
+            ],
+            [
+              202,
+              179
+            ],
+            [
+              202,
+              174
+            ],
+            [
+              192,
+              172
+            ],
+            [
+              183,
+              172
+            ],
+            [
+              175,
+              171
+            ],
+            [
+              167,
+              170
+            ],
+            [
+              158,
+              169
+            ],
+            [
+              150,
+              169
+            ],
+            [
+              143,
+              167
+            ],
+            [
+              138,
+              165
+            ],
+            [
+              132,
+              159
+            ],
+            [
+              128,
+              151
+            ],
+            [
+              0,
+              151
+            ]
+          ],
+          "4": [
+            [
+              0,
+              0
+            ],
+            [
+              255,
+              0
+            ],
+            [
+              255,
+              179
+            ],
+            [
+              202,
+              179
+            ],
+            [
+              202,
+              174
+            ],
+            [
+              192,
+              172
+            ],
+            [
+              183,
+              172
+            ],
+            [
+              175,
+              171
+            ],
+            [
+              167,
+              170
+            ],
+            [
+              158,
+              169
+            ],
+            [
+              150,
+              169
+            ],
+            [
+              143,
+              167
+            ],
+            [
+              138,
+              165
+            ],
+            [
+              132,
+              159
+            ],
+            [
+              128,
+              151
+            ],
+            [
+              0,
+              151
+            ]
+          ]
+        },
+        "sleepIndicatorAnchor": [
+          184,
+          81
+        ],
+        "generationCalls": 4,
+        "selectedSources": {
+          "1": "attempt03 source-grid cell0",
+          "2": "attempt03 source-grid cell1",
+          "4": "attempt04 precise single original1254 edit"
+        },
+        "commonTransformTransitions": "Both fixed887-square source-grid cells uniformly to160 at(74,46), sharing approved source normalized scale and registration; no fitting or per-frame translation",
+        "commonTransformBreath": "Original1254-square source to160 at(74,46), exact frozen sleep transform",
+        "rejected": "attempt01 near auto-centered screen-left; attempt02 arm crossing order changed; both batches unused, originals retained",
+        "enterTimes": [
+          80,
+          170,
+          150,
+          140,
+          140,
+          120
+        ],
+        "exitTimes": [
+          40,
+          50,
+          70,
+          110,
+          150,
+          190
+        ],
+        "sleepTimes": [
+          1700,
+          1900,
+          1700
+        ]
+      },
+      "artTool": "built-in image_gen",
+      "postprocessing": "Shared equal-cell crop and common whole-cell resize, same-source alpha selection, atlas/preview packing; no per-frame fitting or pose synthesis.",
+      "exactEndpoints": {
+        "awake": "actual v10 idle0 body/front RGBA exact",
+        "sleep": "static-repair-01 approved body/front PNG exact"
+      },
+      "separateWakeTimes": true,
+      "contract": "startFrameByAction maps source playback array position to target playback array position, not atlas ID"
+    }
+  },
+  "knownGaps": [
+    "Original-speed material GIF and contact sheets authored; actual Phaser continuous playback, interruptions, independent animation review and install remain pending.",
+    "Old awake idle variation1/3 exact-pixel transition is not claimed. Original idle/work fields and files preserved."
+  ]
+}

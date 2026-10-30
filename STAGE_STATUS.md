@@ -1,31 +1,21 @@
-# Workbench progress · 2026-10-27
+# Source preview · 2026-10-31
 
-The current product is a conversation-first desktop personal agent. OmO is the sole harness for current conversations and tool execution. DZ supplies internal goal, planning, change, checking, and continuity rules.
+This source snapshot follows the October 30 local deliveries. It includes the current conversation workbench, backend connection and development support, and the adopted office-scene updates. The publication itself makes no model calls and does not replace the installed app.
 
-## Delivered locally
+## Available locally
 
-The maintainer's October 27 macOS workbench completed engineering, system acceptance, independent checks, and formal installation checks. The current recorded build is `95b4c2fa`, with 22 source-file identities checked against the installation record. Acceptance covered 23 required outcomes. The product owner’s hands-on adoption decision remains separate from engineering acceptance.
+- Folder-based projects, multiple conversations, references, message revisions, branches and saved outcomes.
+- Per-turn model selection, real tools, scoped parallel helpers and specialist handoff through OmO.
+- Editable personal preferences and project memory, with disable/restore/delete controls.
+- Official OpenAI API Key authentication through a permission-restricted local plaintext file and the configured CLI.
+- Focus-record editor delivered through the normal product route, exercised in the native app and after reopening.
+- Updated seating, paths, local idle activities and desk-sleep transitions. The owner reviewed the normal-speed desk-sleep recordings.
+- Persistent macOS shell, connection settings, map and expandable conversation UI.
 
-The workbench includes:
+Product work, external foundation fixes, local checks, owner visual review and source-publication checks describe separate layers. These selected workflows do not establish that every project or environment will work.
 
-- Project folders containing multiple conversations, short titles, and persistent organization menus.
-- A native folder chooser and saved start requests that continue once a project location is selected.
-- Copy, quote, edit, revision branches, chat branches, Git worktree branches, and local deep links.
-- Cross-conversation references with their original source and version.
-- Per-turn model and reasoning selection through the currently connected Desktop Codex CLI.
-- Expandable real activity, host-checked tools, and actual read-only child agents.
-- Clear progress and usable outcomes, stop/recovery handling, multiple windows, text-size controls, and existing-data preservation.
+## Distribution and connections
 
-## Validation behind this update
+This is a developer source preview. A prepared OmO runtime and configured CLI are needed; runtimes, private records, credentials and signed installers are not distributed. The OpenAI Key connection currently does not invoke Noobi tools. DeepSeek groundwork is present; live-provider validation remains deferred under the maintainer’s chosen scope. Public web hosting is outside this release.
 
-The local acceptance exercised eight available models with OmO tools and returned results. Two representative models completed project creation or modification, checking, and actual use of the outputs. Examples included an expense-calculation command tool and changes to an existing focus-recording web app.
-
-The latest branch-material change was checked with 77 local regressions, seven independent fault checks, and relevant native UI paths. Installation and existing-data checks are recorded separately from isolated model and function checks.
-
-This publication checks current source identities, selected controlled tests, source syntax, public-file boundaries, and repository presentation. It does not run a new real-model acceptance batch or replace the installed application. See the [published source identities](docs/status/source-manifest-20261027.json).
-
-## Distribution and next scope
-
-This is a source update. It includes the workbench, launcher and macOS wrapper source, plus the existing attributed historical implementations. OmO, model runtimes, credentials, user data, and the installed app binary are not bundled. Follow [getting started](docs/getting-started.md) to prepare a development environment; a signed clean-machine installer is not provided by this update.
-
-Public web sharing is deferred. Additional model providers, expanded automatic personal memory, complex parallel merging, and richer conflict-management flows remain later work. Current model/CLI configuration is replaceable rather than a permanent product restriction.
+[Setup](docs/getting-started.md) · [Examples](docs/showcase.md) · [Release](https://github.com/Irixil/irixi-office-agent/releases/tag/preview-2026-10-31)

@@ -13,7 +13,7 @@ const url = `http://127.0.0.1:${port}/?backend=openoffice&view=office`;
 if (!fs.existsSync(path.join(runtime, 'conversation/state.json'))) throw new Error('长期试用数据尚未安装。没有创建空目录或替换记录。');
 async function running() {
   let response;
-  try { response = await fetch(`http://127.0.0.1:${port}/api/conversation/state`, { signal: AbortSignal.timeout(1500) }); }
+  try { response = await fetch(`http://127.0.0.1:${port}/api/product-health`, { signal: AbortSignal.timeout(10000) }); }
   catch (error) {
     if (error.cause?.code === 'ECONNREFUSED') return false;
     throw new Error('试用入口暂时没有回应。为保护正在运行的任务，没有启动第二个实例。请稍后再打开。', { cause: error });
@@ -22,7 +22,7 @@ async function running() {
   if (!response.ok) throw new Error(`${port} 已被其他服务占用。没有停止或替换该服务。`);
   const state = await response.json();
   if (state.storagePath !== path.join(runtime, 'conversation')) throw new Error(`${port} 当前是另一个测试实例。没有覆盖它的数据或停止它。`);
-  const html = await (await fetch(url, { signal: AbortSignal.timeout(1500) })).text();
+  const html = await (await fetch(url, { signal: AbortSignal.timeout(10000) })).text();
   if (!html.includes(`/conversation-app.js?v=${state.build}`)) throw new Error('产品源码已更新。请由维护者安全重载；对话和成果仍在。');
   return true;
 }

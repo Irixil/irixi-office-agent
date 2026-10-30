@@ -26,7 +26,7 @@ async function checkText(options, target, includes) {
 test('写后复核需要真实成功回执，列目录、读历史和失败检查不能替代', () => {
   let n = 0; const receipts = [];
   const add = (toolName, name, isError = false) => { const toolCallId = String(++n); receipts.push({ eventType: 'start', toolCallId, toolName, args: { text: JSON.stringify({ path: name }) } }, { eventType: 'end', toolCallId, toolName, isError }); };
-  const final = JSON.stringify({ content: [{ type: 'text', text: 'done' }] });
+  const final = { content: [{ type: 'text', text: 'done' }] };
   add('write', '[workspace]/app.js'); assert.equal(needsWriteReview(final, receipts), true);
   add('ls', '.'); add('read', 'history.txt'); add('bash', '', true); assert.equal(needsWriteReview(final, receipts), true);
   add('read', 'app.js'); assert.equal(needsWriteReview(final, receipts), true);

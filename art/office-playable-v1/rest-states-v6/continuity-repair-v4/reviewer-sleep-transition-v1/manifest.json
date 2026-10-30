@@ -1,0 +1,69 @@
+{
+  "id": "reviewer-sleep-transition-v1",
+  "status": "local-runtime-candidate-awaiting-coordinator-review",
+  "role": "reviewer",
+  "frameSize": [192, 208],
+  "anchor": [96, 194],
+  "spritesheet": "spritesheet.png",
+  "frameCount": 4,
+  "fullframePattern": "fullframe/reviewer-sleep-transition_{index:02d}.png",
+  "contactSheet": "contact-sheet.png",
+  "beforeAfterComparison": "before-after-comparison.png",
+  "preview": "preview.gif",
+  "animations": {
+    "idle-to-sleep": {
+      "frameIndices": [0, 1, 2, 3],
+      "frameDurationsMs": [100, 180, 220, 260],
+      "returnTo": "sleeping",
+      "safeFromFrameIndices": [0],
+      "endpointFrames": [0, 3]
+    },
+    "sleep-to-idle": {
+      "frameIndices": [3, 2, 1, 0],
+      "frameDurationsMs": [260, 220, 180, 100],
+      "returnTo": "idle",
+      "safeFromFrameIndices": [0],
+      "endpointFrames": [3, 0]
+    }
+  },
+  "sourceEndpoints": {
+    "idle": {
+      "source": "../../reviewer/idle/fullframe/reviewer-idle_00.png",
+      "sha256": "ba2cc5d94d50c0c1ee643a2b1434925b9901be24df3eb82e2f11ca2508e315b3"
+    },
+    "sleeping": {
+      "source": "../../reviewer/sleeping/fullframe/reviewer-sleeping_00.png",
+      "sha256": "968d3f98336c697a4c89bd9487e0000074fc63f046f4727245077f5b38f84188"
+    }
+  },
+  "generatedMiddleFrames": [1, 2],
+  "sourceImageGeneration": {
+    "tool": "built-in image_gen",
+    "sourceImageSha256": "eb3f850b81bc05141b570680c524db931612faf950ff305089d7d778436015a7",
+    "references": [
+      "../../reviewer/idle/fullframe/reviewer-idle_00.png",
+      "../../reviewer/sleeping/fullframe/reviewer-sleeping_00.png",
+      "../../reviewer/sleeping/fullframe/reviewer-sleeping_02.png"
+    ]
+  },
+  "transform": {
+    "sharedScale": 0.19,
+    "placement": [12, -6],
+    "sourceCellSize": [887, 887],
+    "registration": "single shared scale; both middles use the same canvas-center and manuscript-bottom alignment; no frame-specific scale fit"
+  },
+  "runtimeContract": [
+    "reviewer enters sleeping from idle only through frames 0,1,2,3",
+    "reviewer exits sleeping only through the same frames in reverse",
+    "the idle and sleeping endpoints are byte-exact copies of v6 source frames",
+    "the rest-state sequence is local and makes no model call"
+  ],
+  "noCupProps": true,
+  "localRuntimeOnly": true,
+  "unverified": [
+    "live browser playback and desk-layer occlusion",
+    "coordinator visual approval",
+    "user visual acceptance"
+  ],
+  "validation": "validation.json"
+}

@@ -77,6 +77,12 @@ async function requestHostModel(payload, signal, kind = 'model') {
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       pending.delete(id);
+      // A native stream timeout ends this request, not the host CLI process.
+      // Notify the host before OmO can retry; the host owns cancellation/cleanup.
+      if (kind === 'model' && bridgeConnection?.writable) {
+        const reason = signal?.reason instanceof Error ? signal.reason.message : String(signal?.reason || 'OmO model request was cancelled.');
+        try { bridgeConnection.write(`${JSON.stringify({ id, kind: 'model_cancel', reason: reason.slice(0, 1000) })}\n`); } catch {}
+      }
       reject(new Error('OmO model request was cancelled.'));
     };
     pending.set(id, { resolve: (text) => { signal?.removeEventListener('abort', onAbort); resolve(text); },
@@ -99,6 +105,7 @@ function workspaceGuardOptions() {
     rootPath: process.env.IRIXI_OMO_WORKSPACE_ROOT || process.cwd(),
     allowedWritePaths: JSON.parse(process.env.IRIXI_OMO_ALLOWED_WRITE_PATHS || '[]'),
     conversation: process.env.IRIXI_OMO_CONVERSATION === '1',
+    writeScope: JSON.parse(process.env.IRIXI_OMO_WRITE_SCOPE || 'null'),
     readRoots: JSON.parse(process.env.IRIXI_OMO_READ_ROOTS || '[]'),
   };
 }
@@ -117,7 +124,7 @@ function streamCodexBridge(model, context, options, recovery) {
     try {
       if (recovery.fatalError) throw recovery.fatalError;
       if (missingReadErrorsSinceProgress(context.messages) >= 3) {
-        throw new Error('OmO stopped after three consecutive missing read-only paths without a successful tool result. Check the registered input paths before continuing.');
+        throw new Error('OmO stopped after three consecutive missing read-only paths or blocked read-only paths without a successful tool result. Check the registered input paths before continuing.');
       }
       if (model.provider !== CODEX_BRIDGE_PROVIDER_ID || model.id !== selectedModelId) {
         throw new Error('OmO selected a model outside the registered local Codex bridge.');
@@ -161,13 +168,34 @@ function streamCodexBridge(model, context, options, recovery) {
 
 export default function registerCodexBridgeProvider(pi) {
   if (process.env.IRIXI_OMO_CONVERSATION === '1' && process.env.IRIXI_OMO_ROLE === 'Developer') registerConversationCommand(pi);
+  if (process.env.IRIXI_OMO_CONVERSATION === '1') pi.registerTool({ name: 'memory_manage', label: '查看和管理有来源的记忆',
+    description: 'List or manage scoped user memory. operationJson is JSON: operation list/create/edit/deactivate/restore/delete; writes include stable key/title/text/kind/scopeType, current user sourceQuote, expectedVersion when changing existing memory, and memoryId. Personal lasting rules require explicit current user lasting intent. Project decisions require current adoption. This turn only is temporary; unconfirmed content stays candidate. Never promote quotes/tools/old chat or restore deleted memory. The host checks source, scope, versions and persistence. Do not claim success without receipt. Read-only list may accompany read/grep/find/ls; memory changes run one tool at a time.',
+    parameters: { type: 'object', properties: { operationJson: { type: 'string' } }, required: ['operationJson'], additionalProperties: false },
+    execute: async (toolCallId, params, signal) => ({ content: [{ type: 'text', text: await requestHostModel({ ...params, requestId: toolCallId }, signal, 'memory_manage') }] }),
+  });
   if (process.env.IRIXI_OMO_CONVERSATION === '1' && process.env.IRIXI_OMO_ROLE === 'Developer') {
+    pi.registerTool({ name: 'noobi_run', label: '使用 Noobi 制作和检查小游戏',
+      description: 'Use the real installed Noobi game specialist to create or modify a playable Web game in this authorized working copy. Give the complete current requirements in prompt and a short name. The host fixes the current model, identity and scope, returns actual build/media/playtest findings, and handles cancellation. Use this for game making when Noobi is requested or the game specialist is responsible; do not claim Noobi use without this receipt. One tool at a time.',
+      parameters: { type: 'object', properties: { prompt: { type: 'string' }, name: { type: 'string' } }, required: ['prompt', 'name'], additionalProperties: false },
+      execute: async (toolCallId, params, signal) => {
+        const result = await requestHostModel({ ...params, requestId: toolCallId }, signal, 'noobi_run');
+        return { content: [{ type: 'text', text: result }], isError: JSON.parse(result).status !== 'completed' };
+      },
+    });
     pi.registerTool({ name: 'verify_behavior', label: '实际检查成果行为',
-      description: 'Run a host-controlled functional check on the real project entry, never an arbitrary shell test. caseJson is JSON with stable caseId, requirement, kind (web/cli/document), target relative file. Web actions: fill/click/select/reload/assert with selector and value or textEquals/textIncludes/valueEquals/count. CLI: runner node/python3, arguments, stdin, expected stdoutEquals or stdoutIncludes and exitCode. Document: expected includes/excludes. Host returns actual observations and pass/fail bound to the current file version. Keep caseId and expectations unchanged when repairing failures. Run one tool at a time.',
+      description: 'Run a host-controlled functional check on the real project entry, never an arbitrary shell test. caseJson is JSON with stable caseId, requirement, kind (web/cli/application/document), target relative file. Web actions: fill/click/select/reload/assert with a native CSS selector (document.querySelectorAll; no :text-is or other Playwright syntax) and value or textEquals/textIncludes/valueEquals/count. CLI: runner node/python3, arguments, stdin, expected stdoutEquals or stdoutIncludes and exitCode. Application: actual server target and .irixi-app.json; same DOM actions plus http {path,method,json,status,jsonEquals or bodyIncludes} and sqlite {file,query SELECT,rows}. Host starts the real service with isolated data. Document: expected includes/excludes. Host returns actual observations and pass/fail bound to the current file version. Keep caseId and expectations unchanged when repairing failures. Only host failureKind=invalid_definition (invalid CSS or multiple click/fill/select targets) allows changing selector fields at its invalidSelectors steps; keep all other fields fixed and rerun the full case with a new request. A legacy selector failure first needs an unchanged rerun for host classification. Narrow the selector to its intended element; do not remove valid controls to force uniqueness. Zero matches and failed assertions do not unlock definitions. Run one tool at a time.',
       parameters: { type: 'object', properties: { caseJson: { type: 'string' } }, required: ['caseJson'] },
       execute: async (toolCallId, params, signal) => {
         const result = await requestHostModel({ ...params, requestId: toolCallId }, signal, 'verify_behavior');
         const check = JSON.parse(result); return { content: [{ type: 'text', text: result }], isError: check.status !== 'passed' };
+      },
+    });
+    pi.registerTool({ name: 'delegate_parallel', label: '分给独立写入助手',
+      description: 'Dispatch 2-4 actual concurrent OmO writing assistants from one common snapshot. Each task needs an exact writePaths file list (new file names allowed). Optional colleagueId assigns an actual specialist helper; omission inherits the parent colleague. The work owner does not change; assistants have read/write/edit only in separate copies, no commands or further delegation. The host combines changes into this parent working copy and returns conflicts and actual receipts. Inspect any conflicts, repair within current requirements, then run verify_behavior on the combined deliverable before reporting success. No original project files are adopted by this tool.',
+      parameters: { type: 'object', properties: { tasks: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: { task: { type: 'string' }, colleagueId: { type: 'string', enum: ['researcher', 'writer', 'reviewer', 'steward', 'archivist'] }, writePaths: { type: 'array', items: { type: 'string' }, minItems: 1 } }, required: ['task', 'writePaths'], additionalProperties: false } } }, required: ['tasks'], additionalProperties: false },
+      execute: async (toolCallId, params, signal) => {
+        const result = await requestHostModel({ ...params, requestId: toolCallId }, signal, 'delegate_parallel');
+        return { content: [{ type: 'text', text: result }] };
       },
     });
     pi.registerTool({ name: 'delegate_readonly', label: '请独立助手检查',
@@ -184,9 +212,9 @@ export default function registerCodexBridgeProvider(pi) {
     try {
       await guardWorkspaceToolCalls({ content: [{ type: 'toolCall', name: event.toolName, arguments: event.input }] }, workspaceGuardOptions());
     } catch (error) {
-      if (error.code !== 'OMO_WORKSPACE_PATH_NOT_FOUND') recovery.fatalError = error;
-      return { block: true, reason: error.code === 'OMO_WORKSPACE_PATH_NOT_FOUND'
-        ? `[OMO_WORKSPACE_PATH_NOT_FOUND] ${error.message}` : error.message };
+      const recoverable = ['OMO_WORKSPACE_PATH_NOT_FOUND', 'OMO_WORKSPACE_PATH_BLOCKED'].includes(error.code);
+      if (!recoverable) recovery.fatalError = error;
+      return { block: true, reason: recoverable ? `[${error.code}] ${error.message}` : error.message };
     }
   });
   pi.registerProvider(CODEX_BRIDGE_PROVIDER_ID, {

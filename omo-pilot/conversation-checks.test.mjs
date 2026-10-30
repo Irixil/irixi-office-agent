@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { checkBehavior } from './conversation-checks.mjs';
+import { checkBehavior as runBehaviorCheck, validateBehaviorCase } from './conversation-checks.mjs';
+async function checkBehavior(value, options) { return runBehaviorCheck(validateBehaviorCase(value), options); }
 import { needsWriteReview, confusesDecisionHostWithTools } from './conversation-store.mjs';
-const final = JSON.stringify({ content: [{ type: 'text', text: '完成' }] });
+const final = { content: [{ type: 'text', text: '完成' }] };
 test('不能把内部决策环境误报为产品工具拒绝，但允许解释两者区别', () => {
-  const answer = (text) => JSON.stringify({ content: [{ type: 'text', text }] });
+  const answer = (text) => ({ content: [{ type: 'text', text }] });
   assert.equal(confusesDecisionHostWithTools(answer('code-mode host is disabled，写入 main.py 被阻止，未能验证。')), true);
   assert.equal(confusesDecisionHostWithTools(answer('CLI 只读不能写入，所以请你保存代码。')), true);
   assert.equal(confusesDecisionHostWithTools(answer('内部 code-mode host is disabled 不代表 OmO 不可用。')), false);
-  assert.equal(confusesDecisionHostWithTools(JSON.stringify({ content: [{ type: 'toolCall', name: 'write', arguments: { path: 'main.py', content: 'print(1)' } }] })), false);
+  assert.equal(confusesDecisionHostWithTools({ content: [{ type: 'toolCall', name: 'write', arguments: { path: 'main.py', content: 'print(1)' } }] }), false);
 });
 test('读回、无关命令、失败后无关成功和 bash 写入都不能冒充功能通过', () => {
   const write = { toolName: 'write', eventType: 'end', isError: false };

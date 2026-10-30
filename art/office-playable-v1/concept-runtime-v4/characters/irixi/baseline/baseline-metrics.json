@@ -1,0 +1,75 @@
+{
+  "cleanup": {
+    "componentCount": 1,
+    "mainPixels": 223800,
+    "removedVisiblePixels": 0,
+    "cleanedBBox": [
+      407,
+      195,
+      821,
+      1021
+    ]
+  },
+  "master": {
+    "sourceAlphaBBox": [
+      407,
+      195,
+      821,
+      1021
+    ],
+    "sourceVisibleSize": [
+      414,
+      826
+    ],
+    "sharedScale": 0.4358353510895884,
+    "canvas": [
+      512,
+      512
+    ],
+    "anchor": [
+      256,
+      440
+    ],
+    "outputAlphaBBox": [
+      166,
+      80,
+      346,
+      440
+    ],
+    "outputVisibleSize": [
+      180,
+      360
+    ]
+  },
+  "runtime": {
+    "sourceAlphaBBox": [
+      407,
+      195,
+      821,
+      1021
+    ],
+    "sourceVisibleSize": [
+      414,
+      826
+    ],
+    "sharedScale": 0.2736077481840194,
+    "canvas": [
+      208,
+      256
+    ],
+    "anchor": [
+      104,
+      238
+    ],
+    "outputAlphaBBox": [
+      48,
+      12,
+      161,
+      238
+    ],
+    "outputVisibleSize": [
+      113,
+      226
+    ]
+  }
+}

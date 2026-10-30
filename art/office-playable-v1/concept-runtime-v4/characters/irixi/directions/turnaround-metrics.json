@@ -1,0 +1,221 @@
+{
+  "sheet": "local-generation-source-not-distributed",
+  "cellSize": [
+    627,
+    627
+  ],
+  "cleanup": {
+    "down-reference": {
+      "componentCount": 9,
+      "mainPixels": 120206,
+      "removedVisiblePixels": 7532,
+      "cleanedBBox": [
+        192,
+        22,
+        497,
+        615
+      ]
+    },
+    "left": {
+      "componentCount": 10,
+      "mainPixels": 93772,
+      "removedVisiblePixels": 7699,
+      "cleanedBBox": [
+        175,
+        21,
+        393,
+        612
+      ]
+    },
+    "right": {
+      "componentCount": 12,
+      "mainPixels": 92361,
+      "removedVisiblePixels": 6040,
+      "cleanedBBox": [
+        235,
+        15,
+        447,
+        602
+      ]
+    },
+    "up": {
+      "componentCount": 9,
+      "mainPixels": 115281,
+      "removedVisiblePixels": 8049,
+      "cleanedBBox": [
+        140,
+        14,
+        438,
+        599
+      ]
+    }
+  },
+  "standardScaleFromGeneratedDownReference": 0.6070826306913997,
+  "standard": {
+    "left": {
+      "sourceBBox": [
+        175,
+        21,
+        393,
+        612
+      ],
+      "sharedScale": 0.6070826306913997,
+      "canvas": [
+        512,
+        512
+      ],
+      "anchor": [
+        256,
+        440
+      ],
+      "outputBBox": [
+        190,
+        81,
+        322,
+        440
+      ],
+      "visibleSize": [
+        132,
+        359
+      ]
+    },
+    "right": {
+      "sourceBBox": [
+        235,
+        15,
+        447,
+        602
+      ],
+      "sharedScale": 0.6070826306913997,
+      "canvas": [
+        512,
+        512
+      ],
+      "anchor": [
+        256,
+        440
+      ],
+      "outputBBox": [
+        192,
+        84,
+        321,
+        440
+      ],
+      "visibleSize": [
+        129,
+        356
+      ]
+    },
+    "up": {
+      "sourceBBox": [
+        140,
+        14,
+        438,
+        599
+      ],
+      "sharedScale": 0.6070826306913997,
+      "canvas": [
+        512,
+        512
+      ],
+      "anchor": [
+        256,
+        440
+      ],
+      "outputBBox": [
+        166,
+        85,
+        347,
+        440
+      ],
+      "visibleSize": [
+        181,
+        355
+      ]
+    }
+  },
+  "runtime": {
+    "left": {
+      "sourceBBox": [
+        190,
+        81,
+        322,
+        440
+      ],
+      "sharedScale": 0.6277777777777778,
+      "canvas": [
+        208,
+        256
+      ],
+      "anchor": [
+        104,
+        238
+      ],
+      "outputBBox": [
+        63,
+        13,
+        146,
+        238
+      ],
+      "visibleSize": [
+        83,
+        225
+      ]
+    },
+    "right": {
+      "sourceBBox": [
+        192,
+        84,
+        321,
+        440
+      ],
+      "sharedScale": 0.6277777777777778,
+      "canvas": [
+        208,
+        256
+      ],
+      "anchor": [
+        104,
+        238
+      ],
+      "outputBBox": [
+        64,
+        15,
+        145,
+        238
+      ],
+      "visibleSize": [
+        81,
+        223
+      ]
+    },
+    "up": {
+      "sourceBBox": [
+        166,
+        85,
+        347,
+        440
+      ],
+      "sharedScale": 0.6277777777777778,
+      "canvas": [
+        208,
+        256
+      ],
+      "anchor": [
+        104,
+        238
+      ],
+      "outputBBox": [
+        47,
+        15,
+        161,
+        238
+      ],
+      "visibleSize": [
+        114,
+        223
+      ]
+    }
+  },
+  "finalDownUsesApprovedBaselineInsteadOfGeneratedReferenceCell": true
+}

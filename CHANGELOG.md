@@ -1,5 +1,16 @@
 # Changelog
 
+## preview-2026-10-31 — Personal agent, memory and living office
+
+- Synchronize the October 30 local backend and office deliveries.
+- Add editable memory, specialist handoff and scoped parallel development helpers.
+- Add the official OpenAI API Key file route, connection handling and tool/check/recovery updates.
+- Include the normal-product focus-record editing example in public documentation.
+- Refine colleague seating, movement, desk sleeping and wake transitions, including reduced-motion behavior.
+- Refresh English/Chinese README, current app screenshot, setup, architecture and source-preview scope.
+
+This release contains source and documentation. Prepared local runtimes are required; no signed installer or private runtime records are included. DeepSeek live validation remains deferred.
+
 ## 2026-10-27 — Conversation workbench
 
 - Publish the current conversation-first workbench, persistent launch scripts, and macOS Swift/WebKit shell source.

@@ -1,0 +1,67 @@
+{
+  "status": "passed-art-structure-and-motion-preview",
+  "checkedRevision": "irixi-v4-2",
+  "directionFrames": {
+    "count": 4,
+    "mode": "RGBA",
+    "size": [208, 256],
+    "anchor": [104, 238],
+    "visibleHeightRange": [223, 226],
+    "transparentCorners": true,
+    "highConfidenceMagentaResiduePixels": 0,
+    "visualReview": "passed"
+  },
+  "walkDown": {
+    "deterministicValidator": "OK",
+    "frameCount": 14,
+    "keyframeCount": 4,
+    "keyframeIndices": [2, 5, 8, 11],
+    "endpointFramesByteIdentical": true,
+    "keyframesByteIdenticalToFullframes": true,
+    "frameMode": "RGBA",
+    "frameSize": [208, 256],
+    "visibleHeightRange": [220, 237],
+    "previewFrameCount": 14,
+    "previewFrameDurationMs": 80,
+    "previewBackground": "#FFFFFF",
+    "highConfidenceMagentaResiduePixels": 0,
+    "visualReview": "passed after rejecting an earlier neutral baseline that caused a visible loop proportion pop"
+  },
+  "walkLeft": {
+    "frameCount": 4,
+    "phaseOrder": ["contact-a", "down", "passing-up", "contact-b"],
+    "frameMode": "RGBA",
+    "frameSize": [208, 256],
+    "previewFrameDurationMs": 120,
+    "visualReview": "passed; readable lateral stride and cane remains on anatomical-left side"
+  },
+  "walkRight": {
+    "frameCount": 4,
+    "phaseOrder": ["contact-a", "down", "passing-up", "contact-b"],
+    "frameMode": "RGBA",
+    "frameSize": [208, 256],
+    "previewFrameDurationMs": 120,
+    "visualReview": "passed; separately generated, not a mirrored left-facing sheet"
+  },
+  "walkUp": {
+    "frameCount": 4,
+    "phaseOrder": ["contact-a", "down", "passing-up", "contact-b"],
+    "frameMode": "RGBA",
+    "frameSize": [208, 256],
+    "previewFrameDurationMs": 120,
+    "visualReview": "passed; rear-facing alternating stride remains readable"
+  },
+  "topologyReview": {
+    "monocleRemainsOnAnatomicalRightEye": true,
+    "caneRemainsInAnatomicalLeftHand": true,
+    "oppositeHandRemainsEmpty": true,
+    "directionsWereNotMirrored": true,
+    "allFourWalkDirectionsPackaged": true
+  },
+  "notRuntimeProof": [
+    "Phaser playback and animation-state switching",
+    "movement speed and foot sliding against the room",
+    "camera-scale sharpness",
+    "Y-sorted occlusion against foreground furniture"
+  ]
+}

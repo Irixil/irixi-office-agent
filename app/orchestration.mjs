@@ -894,8 +894,4 @@ export function assertSessionFresh(task, session, { runId = null, attemptId = nu
   }
 }
 
-export function planFingerprint(task) {
-  return crypto.createHash('sha256').update(JSON.stringify({ goal: activeGoal(task), plan: task.plan, work: task.workItems.map((item) => ({ key: item.stepKey, status: item.status, result: item.result })) })).digest('hex');
-}
-
 export const __test = { SAFE_TOOL_NAMES, VALID_KINDS, assertAcyclic, workItemUsesGeneratedEvidence };

@@ -1,0 +1,100 @@
+{
+  "id": "archivist-rest-identity-v2",
+  "status": "art-evidence-ready-runtime-and-user-visual-acceptance-pending",
+  "overrides": "../../archivist/manifest.json",
+  "frameSize": [
+    192,
+    208
+  ],
+  "anchor": [
+    96,
+    194
+  ],
+  "worldAnchor": [
+    1200,
+    730
+  ],
+  "identityLock": "v6 work state dark neutral gray-brown fur and neutral warm light; no red/orange cast",
+  "states": {
+    "idle": {
+      "runtimeKey": "idle",
+      "frameCount": 4,
+      "frameDurationsMs": [
+        760,
+        420,
+        240,
+        600
+      ],
+      "spritesheet": "idle/spritesheet.png",
+      "fullframePattern": "idle/fullframe/archivist-idle-identity-v2_{index:02d}.png",
+      "preview": "idle/preview.gif",
+      "roomPreview": "idle/room-preview.gif",
+      "transform": {
+        "sharedScale": 0.29,
+        "sourceCellBottomBaseline": 590,
+        "placement": [
+          17,
+          -35
+        ],
+        "targetContentBottom": 136
+      }
+    },
+    "sleeping": {
+      "runtimeKey": "sleeping",
+      "frameCount": 4,
+      "frameDurationsMs": [
+        700,
+        700,
+        1300,
+        700
+      ],
+      "spritesheet": "sleeping/spritesheet.png",
+      "fullframePattern": "sleeping/fullframe/archivist-sleeping-identity-v2_{index:02d}.png",
+      "preview": "sleeping/preview.gif",
+      "roomPreview": "sleeping/room-preview.gif",
+      "transform": {
+        "sharedScale": 0.29,
+        "sourceCellBottomBaseline": 562,
+        "placement": [
+          17,
+          -27
+        ],
+        "targetContentBottom": 136
+      }
+    },
+    "slack": {
+      "runtimeKey": "slack",
+      "frameCount": 4,
+      "frameDurationsMs": [
+        320,
+        360,
+        560,
+        420
+      ],
+      "spritesheet": "slack/spritesheet.png",
+      "fullframePattern": "slack/fullframe/archivist-slack-identity-v2_{index:02d}.png",
+      "preview": "slack/preview.gif",
+      "roomPreview": "slack/room-preview.gif",
+      "transform": {
+        "sharedScale": 0.29,
+        "sourceCellBottomBaseline": 593,
+        "placement": [
+          17,
+          -36
+        ],
+        "targetContentBottom": 136
+      }
+    }
+  },
+  "noDetachedEffects": true,
+  "noCupProps": true,
+  "sourceHashes": {
+    "idle": "3095bf0fb6c4128567d80d6d924043522db0515c02e24af74113f2b07103f444",
+    "sleeping": "0e905c130a04bd702b28ec621b6248f72fac4c821044fb63f570e59a37f6a4c3",
+    "slack": "f169bd97594f97ed46ad4c013147d84544bc8d17ea53c4bf6ee942d16bac3dc6"
+  },
+  "generation": "Built-in ImageGen redrew all corrected rest poses from the v6 work identity and existing rest pose references. Local processing only removed cyan, split, aligned, packed, timed and measured.",
+  "evidence": {
+    "roomPlayback": "evidence/archivist-corrected-rest-room-playback.gif"
+  }
+}

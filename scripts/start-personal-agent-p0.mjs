@@ -28,6 +28,7 @@ async function shutdown() {
   server.close();
   for (const c of conversations.state.conversations) await conversations.stop(c.id, { preservePending: true });
   await Promise.all([...conversations.jobs.values()]);
+  await conversations.applications.close();
   await conversations.save(); process.exit(0);
 }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

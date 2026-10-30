@@ -1,0 +1,21 @@
+{
+  "id": "motion-quality-v12-frontend-scene-candidate",
+  "status": "isolated-review-candidate",
+  "roles": {
+    "writer": {
+      "manifest": "writer-v10/manifest.json"
+    },
+    "researcher": {
+      "manifest": "researcher-v10/manifest.json"
+    },
+    "reviewer": {
+      "manifest": "reviewer-v10/manifest.json"
+    },
+    "archivist": {
+      "manifest": "archivist-v10/manifest.json"
+    },
+    "steward": {
+      "manifest": "steward-seated-v12/manifest.json"
+    }
+  }
+}

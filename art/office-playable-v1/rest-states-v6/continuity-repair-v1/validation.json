@@ -1,0 +1,402 @@
+{
+  "id": "continuity-repair-v1-validation",
+  "roles": {
+    "writer": {
+      "checks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScaleAndPlacement": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            46,
+            12,
+            129,
+            103
+          ],
+          "visibleSize": [
+            83,
+            91
+          ],
+          "center": [
+            87.5,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            56,
+            12,
+            138,
+            103
+          ],
+          "visibleSize": [
+            82,
+            91
+          ],
+          "center": [
+            97.0,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            34,
+            12,
+            116,
+            102
+          ],
+          "visibleSize": [
+            82,
+            90
+          ],
+          "center": [
+            75.0,
+            57.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            48,
+            12,
+            124,
+            103
+          ],
+          "visibleSize": [
+            76,
+            91
+          ],
+          "center": [
+            86.0,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.19138278769007583,
+        "sourceCellBottomBaseline": 670,
+        "placement": [
+          3,
+          -25
+        ],
+        "targetContentBottom": 103
+      }
+    },
+    "researcher": {
+      "checks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScaleAndPlacement": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            38,
+            6,
+            137,
+            106
+          ],
+          "visibleSize": [
+            99,
+            100
+          ],
+          "center": [
+            87.5,
+            56.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            68,
+            7,
+            167,
+            106
+          ],
+          "visibleSize": [
+            99,
+            99
+          ],
+          "center": [
+            117.5,
+            56.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            14,
+            7,
+            110,
+            106
+          ],
+          "visibleSize": [
+            96,
+            99
+          ],
+          "center": [
+            62.0,
+            56.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            37,
+            8,
+            132,
+            107
+          ],
+          "visibleSize": [
+            95,
+            99
+          ],
+          "center": [
+            84.5,
+            57.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.19148936170212766,
+        "sourceCellBottomBaseline": 663,
+        "placement": [
+          -7,
+          -21
+        ],
+        "targetContentBottom": 106
+      }
+    },
+    "reviewer": {
+      "checks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": true,
+        "generatedMiddlesUseOneSharedScaleAndPlacement": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            14,
+            16,
+            177,
+            139
+          ],
+          "visibleSize": [
+            163,
+            123
+          ],
+          "center": [
+            95.5,
+            77.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            15,
+            21,
+            177,
+            139
+          ],
+          "visibleSize": [
+            162,
+            118
+          ],
+          "center": [
+            96.0,
+            80.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            13,
+            21,
+            178,
+            139
+          ],
+          "visibleSize": [
+            165,
+            118
+          ],
+          "center": [
+            95.5,
+            80.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            20,
+            28,
+            175,
+            139
+          ],
+          "visibleSize": [
+            155,
+            111
+          ],
+          "center": [
+            97.5,
+            83.5
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.2392638036809816,
+        "sourceCellBottomBaseline": 646,
+        "placement": [
+          -23,
+          -16
+        ],
+        "targetContentBottom": 139
+      }
+    },
+    "archivist": {
+      "checks": {
+        "exactWorkEndpoint": true,
+        "exactRestEndpoint": true,
+        "allFrameSizesMatch": true,
+        "allRGBA": true,
+        "allCornersTransparent": true,
+        "noVisibleBBoxTouchesCanvasEdge": false,
+        "generatedMiddlesUseOneSharedScaleAndPlacement": true,
+        "reverseIsExactFrameReversal": true
+      },
+      "metrics": [
+        {
+          "frame": 0,
+          "visibleBBox": [
+            34,
+            16,
+            157,
+            136
+          ],
+          "visibleSize": [
+            123,
+            120
+          ],
+          "center": [
+            95.5,
+            76.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 1,
+          "visibleBBox": [
+            32,
+            8,
+            173,
+            136
+          ],
+          "visibleSize": [
+            141,
+            128
+          ],
+          "center": [
+            102.5,
+            72.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 2,
+          "visibleBBox": [
+            21,
+            8,
+            162,
+            136
+          ],
+          "visibleSize": [
+            141,
+            128
+          ],
+          "center": [
+            91.5,
+            72.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": false
+        },
+        {
+          "frame": 3,
+          "visibleBBox": [
+            23,
+            0,
+            168,
+            136
+          ],
+          "visibleSize": [
+            145,
+            136
+          ],
+          "center": [
+            95.5,
+            68.0
+          ],
+          "transparentCorners": true,
+          "edgeTouch": true
+        }
+      ],
+      "transform": {
+        "sharedScale": 0.22030981067125643,
+        "sourceCellBottomBaseline": 736,
+        "placement": [
+          -2,
+          -26
+        ],
+        "targetContentBottom": 136
+      }
+    }
+  },
+  "allChecksPassed": false
+}

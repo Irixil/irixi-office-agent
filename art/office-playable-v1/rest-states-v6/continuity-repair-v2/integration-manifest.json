@@ -1,0 +1,104 @@
+{
+  "id": "rest-states-v6-continuity-repair-v2-integration",
+  "status": "no-go-do-not-integrate",
+  "supersededBy": "../continuity-repair-v3/integration-manifest.json",
+  "supplements": "../integration-manifest.json",
+  "supersedes": "../continuity-repair-v1/integration-manifest.json",
+  "archivistRestOverride": {
+    "manifest": "archivist-rest-identity-v2/manifest.json",
+    "replacesRuntimeStates": [
+      "idle",
+      "sleeping",
+      "slack"
+    ],
+    "reason": "match v6 work identity/palette and remove detached idle marks"
+  },
+  "transitions": {
+    "writer": {
+      "manifest": "transitions/writer/work-to-rest/manifest.json",
+      "workToRestOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "restToWorkOrder": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "actualRoomPlayback": "evidence/writer-work-rest-work-room-playback.gif"
+    },
+    "researcher": {
+      "manifest": "transitions/researcher/work-to-rest/manifest.json",
+      "workToRestOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "restToWorkOrder": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "actualRoomPlayback": "evidence/researcher-work-rest-work-room-playback.gif"
+    },
+    "reviewer": {
+      "manifest": "transitions/reviewer/work-to-rest/manifest.json",
+      "workToRestOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "restToWorkOrder": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "actualRoomPlayback": "evidence/reviewer-work-rest-work-room-playback.gif"
+    },
+    "archivist": {
+      "manifest": "transitions/archivist/work-to-rest/manifest.json",
+      "workToRestOrder": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "restToWorkOrder": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "actualRoomPlayback": "evidence/archivist-work-rest-work-room-playback.gif"
+    }
+  },
+  "runtimeContract": [
+    "Do not directly switch from a work safe frame to idle; play the role transition 0->1->2->3.",
+    "For rest-to-work, play the exact same transition frames in reverse order 3->2->1->0.",
+    "Avoid duplicating endpoint frames when chaining states: current work/rest endpoint already supplies transition frame 0/3.",
+    "Use per-frame forward/reverse timing from each transition manifest.",
+    "No crossfade is required or authorized; visible prop ownership changes occur in generated middle frames."
+  ],
+  "unchanged": [
+    "motion-repair-v6 work loops",
+    "room",
+    "owl",
+    "steward mole",
+    "second-floor behavior"
+  ],
+  "localRuntimeOnly": true,
+  "noCupProps": true,
+  "validation": "validation.json",
+  "unverified": [
+    "live runtime state-machine chaining",
+    "live desk-layer draw order",
+    "user visual acceptance"
+  ]
+}

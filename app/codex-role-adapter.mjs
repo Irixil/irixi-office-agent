@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 
 import { resolveCodexRuntime } from './codex-runtime.mjs';
 import { codexExecArgs } from './providers.mjs';
+import { readProviderCredential } from './api-key-store.mjs';
 
 export { resolveCodexRuntime } from './codex-runtime.mjs';
 
@@ -139,10 +140,11 @@ function restoreOptionalArguments(value, originalSchema) {
       || (Array.isArray(propertySchema?.anyOf) && propertySchema.anyOf.some((item) => item?.type === 'null'))
       || (Array.isArray(propertySchema?.oneOf) && propertySchema.oneOf.some((item) => item?.type === 'null'));
     if (!required.has(key) && value[key] === null && !explicitNull) delete value[key];
-    else if (value[key] && typeof value[key] === 'object' && !Array.isArray(value[key])) {
-      const branch = Array.isArray(propertySchema?.anyOf) ? propertySchema.anyOf.find((item) => item.type === 'object')
-        : Array.isArray(propertySchema?.oneOf) ? propertySchema.oneOf.find((item) => item.type === 'object') : propertySchema;
-      restoreOptionalArguments(value[key], branch);
+    else if (value[key] && typeof value[key] === 'object') {
+      const type = Array.isArray(value[key]) ? 'array' : 'object';
+      const branch = Array.isArray(propertySchema?.anyOf) ? propertySchema.anyOf.find((item) => item.type === type)
+        : Array.isArray(propertySchema?.oneOf) ? propertySchema.oneOf.find((item) => item.type === type) : propertySchema;
+      value[key] = restoreOptionalArguments(value[key], branch);
     }
   }
   return value;
@@ -348,13 +350,14 @@ function failureDetails(events, stderr, code, status) {
   };
 }
 
-function runCodexProcess(command, args, { cwd, input, timeoutMs, signal, env, codexHome, onSpawn, onStdoutChunk }) {
+function runCodexProcess(command, args, { cwd, input, timeoutMs, signal, env, codexHome, apiKey, onSpawn, onStdoutChunk }) {
   return new Promise((resolve, reject) => {
     const childEnv = { NO_COLOR: '1' };
     for (const key of ['PATH', 'HOME', 'TMPDIR', 'TERM', 'LANG', 'LC_ALL']) {
       if (typeof env[key] === 'string') childEnv[key] = env[key];
     }
     childEnv.CODEX_HOME = codexHome;
+    if (apiKey) childEnv.CODEX_API_KEY = apiKey;
     const child = spawn(command, args, {
       cwd,
       env: childEnv,
@@ -445,11 +448,16 @@ export async function runCodexRole({
   executable, env = process.env, realUserHome = os.userInfo().homedir, signal, processTimeoutMs = 600_000,
   executionMode = 'direct', providerTools = null, requiredProviderTools = [], taskScopedContinuation = false, now = Date.now,
   model = CODEX_ROLE_MODEL, reasoningEffort = CODEX_ROLE_REASONING_EFFORT,
+  connectionId = null, connectionRevision = null, credentialReader = readProviderCredential,
 }) {
+  if (/^deepseek(?:[-_.]|$)/iu.test(model)) throw new Error('DeepSeek 本轮仅限连接验证，不能用于项目、助手或恢复。');
   if (!/^[a-zA-Z0-9._-]+$/u.test(model) || !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(reasoningEffort)) throw new Error('模型或思考强度配置无效。');
   if (!['Lead', 'Developer', 'Reviewer', 'Chat'].includes(role)) throw new Error('Codex 角色类型无效。');
   if (!['direct', 'provider-decision'].includes(executionMode)) throw new Error('Codex 执行模式无效。');
   const isProviderDecision = executionMode === 'provider-decision';
+  const apiKeyAuth = connectionId === 'openai-api-key';
+  if (connectionId !== null && !apiKeyAuth) throw new Error('模型连接无效，未回退原登录。');
+  if (apiKeyAuth && (!isProviderDecision || typeof connectionRevision !== 'string' || !connectionRevision)) throw new Error('API Key 连接须绑定当前连接版本并经 OmO 执行，未回退原登录。');
   const taskScoped = taskScopedContinuation === true
     && binding?.continuationPolicy === 'task_scoped_no_aggregate_v1'
     && typeof binding?.continuationRequestId === 'string' && binding.continuationRequestId.length > 0;
@@ -522,6 +530,10 @@ export async function runCodexRole({
   let turnStarted = false;
   let outputPath = null;
   let result;
+  let apiKey;
+  const redactCredential = (text) => apiKey && typeof text === 'string'
+    ? text.replaceAll(apiKey, '[凭证已隐藏]').replaceAll(JSON.stringify(apiKey).slice(1, -1), '[凭证已隐藏]')
+    : text;
   const events = [];
   let invalidEvents = false;
   let stdoutLineBuffer = '';
@@ -535,7 +547,7 @@ export async function runCodexRole({
   const consumeEventLine = (line) => {
     if (!line.trim()) return;
     try {
-      const event = JSON.parse(line);
+      const event = JSON.parse(redactCredential(line));
       if (!event || typeof event !== 'object' || typeof event.type !== 'string') { invalidEvents = true; return; }
       events.push(event);
       if (event.type === 'turn.started' && !turnStarted) {
@@ -553,7 +565,7 @@ export async function runCodexRole({
     for (const line of lines) consumeEventLine(line);
   };
   try {
-    reservation = await reserve({ role, model, reasoningEffort, binding: structuredClone(binding), idempotencyKey, deadlineAt,
+    reservation = await reserve({ role, model, reasoningEffort, ...(apiKeyAuth ? { connectionId, connectionRevision } : {}), binding: structuredClone(binding), idempotencyKey, deadlineAt,
       maxCalls: taskScoped ? null : MAX_CALLS, taskScopedContinuation: taskScoped,
       promptSha256: sha256(JSON.stringify(invocation)), promptUtf8Bytes: invocationBytes });
     if (!reservation?.created) return { status: 'reservation_rejected', ...untouched };
@@ -589,6 +601,14 @@ export async function runCodexRole({
       }
       const timeoutMs = effectiveCodexProcessTimeoutMs(processTimeoutMs, deadlineAt, now());
       const runtime = resolveCodexRuntime({ env, realUserHome });
+      const codexHome = apiKeyAuth ? path.join(realRunRoot, 'codex-home') : runtime.codexHome;
+      if (apiKeyAuth) {
+        const credential = await credentialReader('openai');
+        if (!credential?.key) throw new Error('OpenAI API Key 不可读取，未调用模型，也未回退原登录。');
+        if (credential.revision !== connectionRevision) throw new Error('OpenAI API Key 已更换或失效，请重新选择连接；未回退原登录。');
+        apiKey = credential.key;
+        await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+      }
       const cliPath = executable || runtime.executable;
       runtimeDiagnostics = {
         cliPathExists: cliPath ? await pathExistsAs(cliPath, 'file') : false,
@@ -597,8 +617,9 @@ export async function runCodexRole({
         ...(providerDecisionContract ? { providerDecisionContract } : {}),
       };
       if (!cliPath) throw new Error(runtime.executableError || 'Codex Desktop 运行时路径不可用；未尝试其他 CLI。');
-      const args = codexExecArgs(effectiveSchemaPath, outputPath, realRunRoot, {
-        model, json: true, cwd: scratch,
+      const cliOutputPath = apiKeyAuth ? path.join(scratch, 'response.json') : outputPath;
+      const args = codexExecArgs(effectiveSchemaPath, cliOutputPath, realRunRoot, {
+        model, json: true, cwd: scratch, apiKeyAuth,
         reasoningEffort, disableMcp: true,
         sandbox: role === 'Developer' && !isProviderDecision ? 'workspace-write' : 'read-only',
         developerInstructions: invocation.developerInstructions,
@@ -613,11 +634,18 @@ export async function runCodexRole({
           && args[schemaArgIndex + 1] === effectiveSchemaPath;
       }
       const processResult = await runCodexProcess(cliPath, args, {
-        cwd: scratch, input: invocationPrompt, timeoutMs, signal, env, codexHome: runtime.codexHome,
+        cwd: scratch, input: invocationPrompt, timeoutMs, signal, env, codexHome, apiKey,
         onSpawn: async (processInfo) => { cliSpawned = true; await recordCliSpawn?.(reservation, processInfo); },
         onStdoutChunk: consumeStdout,
       });
       cliSpawned = processResult.spawned;
+      processResult.stderr = redactCredential(processResult.stderr);
+      let raw = null;
+      try {
+        const cliOutput = await fs.readFile(cliOutputPath, 'utf8');
+        raw = redactCredential(cliOutput);
+        if (apiKeyAuth || raw !== cliOutput) await fs.writeFile(outputPath, raw, { mode: 0o600 });
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (stdoutLineBuffer.trim()) consumeEventLine(stdoutLineBuffer);
       stdoutLineBuffer = '';
       toolDiagnostics = await commandExecutionDiagnostics(events);
@@ -634,7 +662,7 @@ export async function runCodexRole({
             : invalidEvents || !started || !completed ? 'incomplete_cli_turn' : 'model_returned';
       let output = null;
       if (status === 'model_returned') {
-        const raw = await fs.readFile(outputPath, 'utf8');
+        if (raw === null) throw new Error('Codex 没有返回结构化结果文件。');
         if (Buffer.byteLength(raw) > MAX_OUTPUT_BYTES) throw new Error('Codex 结构化结果超过安全上限。');
         try { output = JSON.parse(raw); }
         catch { throw new Error('Codex 没有返回有效的 JSON 结构化结果。'); }
@@ -666,7 +694,7 @@ export async function runCodexRole({
     result = {
       status: 'adapter_failed', workCompleted: false, roleCallReserved, cliSpawned, turnStarted,
       providerRequestCount: null, providerRequestEvidence: 'Codex CLI 不提供可核实的计费请求数',
-      outputPath, error: error.message, diagnostics: { ...runtimeDiagnostics, ...toolDiagnostics },
+      outputPath, error: safeFailureText(redactCredential(error.message)), diagnostics: { ...runtimeDiagnostics, ...toolDiagnostics },
     };
     return result;
   } finally {

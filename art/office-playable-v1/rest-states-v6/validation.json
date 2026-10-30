@@ -1,0 +1,45 @@
+{
+  "id": "rest-states-v6-validation",
+  "roles": {
+    "writer": {
+      "allFrameSizesMatch": true,
+      "allRGBA": true,
+      "allCornersTransparent": true,
+      "noVisibleBBoxTouchesCanvasEdge": true,
+      "noPerFrameScaleOrCenterFit": true,
+      "timingsMatchFourFrames": true,
+      "modelGeneratedPosesOnly": true,
+      "scriptRole": "equal-cell split, cyan-key removal, tiny detached-effect cleanup, one role-wide scale, one transform per source sheet, anchor placement, masking, packing, timing, preview composition and measurement only"
+    },
+    "researcher": {
+      "allFrameSizesMatch": true,
+      "allRGBA": true,
+      "allCornersTransparent": true,
+      "noVisibleBBoxTouchesCanvasEdge": true,
+      "noPerFrameScaleOrCenterFit": true,
+      "timingsMatchFourFrames": true,
+      "modelGeneratedPosesOnly": true,
+      "scriptRole": "equal-cell split, cyan-key removal, tiny detached-effect cleanup, one role-wide scale, one transform per source sheet, anchor placement, masking, packing, timing, preview composition and measurement only"
+    },
+    "reviewer": {
+      "allFrameSizesMatch": true,
+      "allRGBA": true,
+      "allCornersTransparent": true,
+      "noVisibleBBoxTouchesCanvasEdge": true,
+      "noPerFrameScaleOrCenterFit": true,
+      "timingsMatchFourFrames": true,
+      "modelGeneratedPosesOnly": true,
+      "scriptRole": "equal-cell split, cyan-key removal, tiny detached-effect cleanup, one role-wide scale, one transform per source sheet, anchor placement, masking, packing, timing, preview composition and measurement only"
+    },
+    "archivist": {
+      "allFrameSizesMatch": true,
+      "allRGBA": true,
+      "allCornersTransparent": true,
+      "noVisibleBBoxTouchesCanvasEdge": true,
+      "noPerFrameScaleOrCenterFit": true,
+      "timingsMatchFourFrames": true,
+      "modelGeneratedPosesOnly": true,
+      "scriptRole": "equal-cell split, cyan-key removal, tiny detached-effect cleanup, one role-wide scale, one transform per source sheet, anchor placement, masking, packing, timing, preview composition and measurement only"
+    }
+  }
+}

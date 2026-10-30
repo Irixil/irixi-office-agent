@@ -1,0 +1,249 @@
+{
+  "id": "steward-mole-exit-sleeping-n4-v1",
+  "status": "art-local-verified-independent-static-reviewed-runtime-pending",
+  "action": "exit-sleeping",
+  "frameSize": [
+    176,
+    208
+  ],
+  "anchor": [
+    88,
+    194
+  ],
+  "frameCount": 4,
+  "frameDurationsMs": [
+    180,
+    250,
+    300,
+    180
+  ],
+  "cycleDurationMs": 910,
+  "loop": false,
+  "returnTo": "wait-empty",
+  "spritesheet": "spritesheet.png",
+  "sheetLayout": {
+    "columns": 4,
+    "rows": 1
+  },
+  "fullframePattern": "frames/exit-sleeping_{index:02d}.png",
+  "previewBackground": "#FFFFFF",
+  "coordinateSpace": "screen-space",
+  "activeLimb": "both empty hands",
+  "activeShoulder": "each hand remains attached to its same screen-space shoulder",
+  "anchorLimb": "both planted feet",
+  "carriedProp": null,
+  "passiveAccessory": "cream sleeves; forest teal apron; brass buckles, chest button and loop",
+  "generation": "builtin image_gen; no scripted pose synthesis",
+  "normalization": [
+    {
+      "sourceFile": "transition-source.png",
+      "sourceSHA256": "5016471a533cce83bea168bcc1bfd08a59c4ffba44f50832dc3e161f6314cf22",
+      "sourceGridStride": [
+        585,
+        635
+      ],
+      "sourceCellSize": [
+        627,
+        627
+      ],
+      "scale": 0.2651072124756335,
+      "translation": [
+        -2,
+        43
+      ],
+      "sourceCells": [
+        {
+          "cell": [
+            0,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            155,
+            56,
+            547,
+            569
+          ]
+        },
+        {
+          "cell": [
+            585,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            151,
+            57,
+            583,
+            569
+          ]
+        },
+        {
+          "cell": [
+            0,
+            635,
+            627,
+            627
+          ],
+          "bbox": [
+            147,
+            47,
+            539,
+            569
+          ]
+        },
+        {
+          "cell": [
+            585,
+            635,
+            627,
+            627
+          ],
+          "bbox": [
+            152,
+            47,
+            549,
+            567
+          ]
+        }
+      ]
+    },
+    {
+      "sourceFile": "sleeping-v2-source.png",
+      "sourceSHA256": "f68446b50f29740acc89a4c659e68b347562864936d78bd85549fa52cf392802",
+      "sourceGridStride": [
+        614,
+        610
+      ],
+      "sourceCellSize": [
+        627,
+        627
+      ],
+      "scale": 0.256120527306968,
+      "translation": [
+        5,
+        41
+      ],
+      "sourceCells": [
+        {
+          "cell": [
+            0,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            139,
+            62,
+            528,
+            593
+          ]
+        },
+        {
+          "cell": [
+            614,
+            0,
+            627,
+            627
+          ],
+          "bbox": [
+            136,
+            61,
+            529,
+            593
+          ]
+        },
+        {
+          "cell": [
+            0,
+            610,
+            627,
+            627
+          ],
+          "bbox": [
+            139,
+            63,
+            529,
+            592
+          ]
+        },
+        {
+          "cell": [
+            614,
+            610,
+            627,
+            627
+          ],
+          "bbox": [
+            138,
+            62,
+            529,
+            593
+          ]
+        }
+      ]
+    }
+  ],
+  "baselineSHA256": "c3d7073dd085dbd467599dd760030f8afcfe80932da686cc4414fc38e0b7e9af",
+  "validationMetrics": [
+    {
+      "frame": 0,
+      "visibleBBox": [
+        40,
+        57,
+        141,
+        194
+      ],
+      "visibleSize": [
+        101,
+        137
+      ],
+      "sha256": "c62ea09485363ea2fdca6ea73c092c224d9202d165513fcace9400843bc8dddc"
+    },
+    {
+      "frame": 1,
+      "visibleBBox": [
+        38,
+        55,
+        143,
+        193
+      ],
+      "visibleSize": [
+        105,
+        138
+      ],
+      "sha256": "cf659f73b39ea477e23aca133358afeb0477fd237c9c881422931531b81f08a4"
+    },
+    {
+      "frame": 2,
+      "visibleBBox": [
+        37,
+        55,
+        141,
+        194
+      ],
+      "visibleSize": [
+        104,
+        139
+      ],
+      "sha256": "bcafcc95da12be5b6d7af50a1e500a39d1f436b0ff8fd6dcb449732aa98ece55"
+    },
+    {
+      "frame": 3,
+      "visibleBBox": [
+        42,
+        58,
+        135,
+        194
+      ],
+      "visibleSize": [
+        93,
+        136
+      ],
+      "sha256": "c3d7073dd085dbd467599dd760030f8afcfe80932da686cc4414fc38e0b7e9af"
+    }
+  ],
+  "framePlanReason": "Existing v6 runtime contract uses 4-frame loops. Continuous working/sleeping loops do not return to awake idle. Dedicated enter/exit tracks provide exact idle and loop endpoints. Exit reverses generated entry frames; no synthesized motion."
+}

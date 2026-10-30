@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { bindNativeGoalSubmission, canCreateNativeTask, canReviewNativeCandidate, continuationDraftMatches, continuationReplyTargetsChat, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeCoworkerTask, nativeExecutionStatusLabel, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, persistNativeGoalDraft, renderNativeMarkup, renderTaskListMarkup, restoreNativeGoalDraft, retainBoundCheckboxChoice, retainContinuationSourceSelection, safeLocalPath } from '../public/native-product-state.js';
+import { bindNativeGoalSubmission, canCreateNativeTask, canReviewNativeCandidate, continuationDraftMatches, continuationReplyTargetsChat, createBoundTextareaDraft, escapeHtml, filterNativeTaskHistory, gameWorkspaceBindingMatches, gameWorkspaceFileResponseMatches, nativeActionPayload, nativeCoworkerPresence, nativeExecutionStatusLabel, nativeFunctionChatContext, nativeFunctionDiscussionMember, nativeOfficeWaitingPresentation, nativeProductAsOfficeTask, nativeReviewBinding, normalizeNativeCandidate, normalizeNativeProductState, normalizeNativeTaskDraft, officeFunctionForCoworker, officeFunctionForStation, persistNativeGoalDraft, renderNativeMarkup, renderTaskListMarkup, restoreNativeGoalDraft, retainContinuationSourceSelection, safeLocalPath } from '../public/native-product-state.js';
 
 const PLAN_SHA256 = 'a'.repeat(64);
 const INSTRUCTION_SNAPSHOT_SHA256 = 'f'.repeat(64);
@@ -83,17 +83,6 @@ test('快照绑定无效时将状态显示为需恢复，不误导为可重新�
     id: value.taskId, status: 'waiting_user', goal: { activeVersionId: value.goalVersionId },
   });
   assert.equal(office.statusLabel, '批准要求快照异常');
-});
-
-test('NPC优先打开当前同职能任务，否则找最近已结算同职能任务，不跨职能代选', () => {
-  const tasks = [
-    { id: 'utility-old', functionId: 'utility', updatedAt: '2026-10-20' },
-    { id: 'game-recent', functionId: 'game', updatedAt: '2026-10-23' },
-    { id: 'utility-busy', functionId: 'utility', updatedAt: '2026-10-24', inFlight: true },
-  ];
-  assert.equal(nativeCoworkerTask(tasks, 'game', 'game-recent').id, 'game-recent');
-  assert.equal(nativeCoworkerTask(tasks, 'utility', 'game-recent').id, 'utility-old');
-  assert.equal(nativeCoworkerTask(tasks, 'agent', 'game-recent'), null);
 });
 
 test('把目标等用户文本写入办公室HTML前逐字符转义', () => {
@@ -703,10 +692,6 @@ test('轮询保留同任务同来源选择；切任务或来源失效时清空',
   assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-1', 'artifact-v1', sources), 'artifact-v1');
   assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-2', 'artifact-v1', sources), '');
   assert.equal(retainContinuationSourceSelection('task-binding-1', 'task-binding-1', 'artifact-removed', sources), '');
-  const selectedSharedBudget = retainBoundCheckboxChoice({ binding: 'task-binding-1', checked: true }, 'task-binding-1');
-  assert.equal(selectedSharedBudget.checked, true, 'a normal status refresh preserves the choice for the same bound task/scope');
-  assert.equal(retainBoundCheckboxChoice(selectedSharedBudget, 'task-binding-2').checked, false,
-    'changing task or scope resets the unsaved choice');
 });
 
 test('续改回执只作用于原项目聊天，草稿变化后不清理', () => {

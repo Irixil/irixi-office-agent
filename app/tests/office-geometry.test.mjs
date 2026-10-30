@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { animationCycleDuration, canStepWithoutCornerCutting, coworkerRuntimeState, crispZoom, feetOverlap, footToCell, isMovementKey, isSafeSwitchFrame, isWalkInProgress, pointToSegmentDistance, worldToCell } from '../public/office-geometry.js';
+import { animationCycleDuration, canStepWithoutCornerCutting, coworkerRuntimeState, crispZoom, feetOverlap, feetSegmentOverlap, footToCell, isMovementKey, isSafeSwitchFrame, isWalkInProgress, pointToSegmentDistance, worldToCell } from '../public/office-geometry.js';
 
 test('空地点击按世界坐标落到网格，相机缩放只用清晰倍率', () => {
   assert.deepEqual(worldToCell(511.9, 447.9, 32), { x: 15, y: 13 });
@@ -46,6 +46,13 @@ test('脚底避让只阻止真正近距离重叠，不把角色视觉宽度扩�
   assert.equal(pointToSegmentDistance(760, 470, 548, 400, 960, 400), 70);
 });
 
+test('两个端点合法仍不能沿对角线从脚底占位中穿过去', () => {
+  assert.equal(feetOverlap(80, 96, 96, 112), false);
+  assert.equal(feetOverlap(112, 128, 96, 112), false);
+  assert.equal(feetSegmentOverlap(80, 96, 112, 128, 96, 112), true);
+  assert.equal(feetSegmentOverlap(80, 64, 112, 64, 96, 112), false);
+});
+
 test('只有实际工作角色显示正在工作，失败与待确认不会被当成忙碌', () => {
   const task = { status: 'running', activeRole: 'writer', workItems: [{ role: 'writer', status: 'running' }, { role: 'reviewer', status: 'blocked' }, { role: 'steward', status: 'waiting_user' }] };
   assert.deepEqual(coworkerRuntimeState(task, 'writer'), { active: true, status: 'active', localEligible: false, activitySource: 'task' });
@@ -58,6 +65,25 @@ test('只有实际工作角色显示正在工作，失败与待确认不会被�
   const waiting = { status: 'waiting_user', activeRole: 'reviewer', workItems: [{ role: 'researcher', status: 'completed' }, { role: 'writer', status: 'completed' }] };
   assert.deepEqual(coworkerRuntimeState(waiting, 'researcher', { activeConversationRole: 'researcher' }), { active: true, status: 'replying', localEligible: false, activitySource: 'conversation' });
   assert.deepEqual(coworkerRuntimeState(waiting, 'writer', { activeConversationRole: 'researcher' }), { active: false, status: 'done', localEligible: true, activitySource: 'local' });
+});
+
+test('一段对话停止不掩盖同事另一项仍在工作，单独停止和断连保持真实状态', () => {
+  const task = { colleagues: [
+    { id: 'writer', works: [{ status: 'stopping' }, { status: 'working' }] },
+    { id: 'reviewer', works: [{ status: 'waiting_user' }] },
+  ] };
+  for (const status of ['working', 'understanding', 'creating', 'handoff']) {
+    task.colleagues[0].works[1].status = status;
+    assert.deepEqual(coworkerRuntimeState(task, 'writer'), { active: true, status, localEligible: false, activitySource: 'task' });
+  }
+  assert.deepEqual(coworkerRuntimeState(task, 'reviewer'), { active: false, status: 'waiting_user', localEligible: false, activitySource: 'status' });
+  task.colleagues[0].works[1].status = 'completed';
+  assert.deepEqual(coworkerRuntimeState(task, 'writer'), { active: true, status: 'stopping', localEligible: false, activitySource: 'task' });
+  task.colleagues[0].works[0].status = 'stopped';
+  assert.deepEqual(coworkerRuntimeState(task, 'writer'), { active: false, status: 'stopped', localEligible: false, activitySource: 'status' });
+  task.disconnected = true;
+  task.colleagues[0].works[1].status = 'working';
+  assert.deepEqual(coworkerRuntimeState(task, 'writer'), { active: false, status: 'unknown', localEligible: false, activitySource: 'status' });
 });
 
 test('同事对话发送按钮排在左侧并为右下角浮层留出空间', () => {

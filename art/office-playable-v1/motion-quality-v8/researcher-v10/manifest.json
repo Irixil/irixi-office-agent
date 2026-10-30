@@ -1,0 +1,427 @@
+{
+  "id": "researcher-desk-sleep-v2-animation-draft02",
+  "revision": "desk-sleep-v2-animation-draft02",
+  "role": "researcher",
+  "status": "material-draft; original-speed-runtime-and-independent-review-pending",
+  "frameSize": [
+    256,
+    256
+  ],
+  "anchor": [
+    128,
+    220
+  ],
+  "coordinateSpace": "screen-space",
+  "stationPatch": null,
+  "placement": {
+    "scale": 1,
+    "registrationPoint": [
+      136,
+      152
+    ],
+    "worldPoint": [
+      227,
+      520
+    ],
+    "contacts": {
+      "seat": [
+        136,
+        152
+      ]
+    }
+  },
+  "occlusionPatch": {
+    "file": "tabletop-occlusion.png",
+    "worldTopLeft": [
+      45,
+      520
+    ]
+  },
+  "states": {
+    "idle": {
+      "spritesheet": "states/idle/spritesheet.png",
+      "frontSpritesheet": "states/idle/front-spritesheet.png",
+      "frameCount": 5,
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "frameDurationsMs": [
+        1800,
+        1100,
+        1800,
+        100,
+        2100
+      ],
+      "cycleDurationMs": 6900,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "researcher-seated-reach-call15.png",
+        "researcher-breath-call21.png",
+        "researcher-seated-reach-call15.png",
+        "researcher-blink-call19.png",
+        "researcher-seated-reach-call15.png"
+      ]
+    },
+    "working": {
+      "spritesheet": "states/working/spritesheet.png",
+      "frontSpritesheet": "states/working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        650,
+        450,
+        350
+      ],
+      "cycleDurationMs": 1450,
+      "loop": true,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "researcher-work-a-call23.png",
+        "researcher-work-b-call27.png",
+        "researcher-work-a-call23.png"
+      ]
+    },
+    "enter-working": {
+      "spritesheet": "states/enter-working/spritesheet.png",
+      "frontSpritesheet": "states/enter-working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        100,
+        180,
+        180
+      ],
+      "cycleDurationMs": 460,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "working",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "researcher-seated-reach-call15.png",
+        "researcher-work-mid-call31.png",
+        "researcher-work-a-call23.png"
+      ]
+    },
+    "exit-working": {
+      "spritesheet": "states/exit-working/spritesheet.png",
+      "frontSpritesheet": "states/exit-working/front-spritesheet.png",
+      "frameCount": 3,
+      "frameIndices": [
+        0,
+        1,
+        2
+      ],
+      "frameDurationsMs": [
+        100,
+        180,
+        180
+      ],
+      "cycleDurationMs": 460,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "researcher-work-a-call23.png",
+        "researcher-work-mid-call31.png",
+        "researcher-seated-reach-call15.png"
+      ]
+    },
+    "sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 3,
+      "frameIndices": [
+        3,
+        4,
+        3
+      ],
+      "frameDurationsMs": [
+        1700,
+        1800,
+        1700
+      ],
+      "cycleDurationMs": 5200,
+      "loop": true,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        3,
+        4
+      ],
+      "returnTo": null,
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved"
+      ],
+      "poseIds": [
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved"
+      ],
+      "sleepIndicatorAnchor": [
+        93,
+        107
+      ]
+    },
+    "enter-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 6,
+      "frameIndices": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        3
+      ],
+      "frameDurationsMs": [
+        80,
+        100,
+        110,
+        100,
+        140,
+        100
+      ],
+      "cycleDurationMs": 630,
+      "loop": false,
+      "staticFrameIndex": 3,
+      "safeSwitchFrameIndices": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "returnTo": "sleeping",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "awake-existing",
+        "forearms-supported",
+        "head-near-arm",
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved"
+      ],
+      "poseIds": [
+        "awake-existing",
+        "forearms-supported",
+        "head-near-arm",
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved"
+      ],
+      "reverseOf": "sleep-to-idle",
+      "startFrameByAction": {
+        "sleep-to-idle": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    "exit-sleeping": {
+      "spritesheet": "sleep-v2-atlas/fullbody.png",
+      "frontSpritesheet": "sleep-v2-atlas/head-arms-front.png",
+      "frameCount": 6,
+      "frameIndices": [
+        3,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "frameDurationsMs": [
+        40,
+        60,
+        70,
+        90,
+        140,
+        210
+      ],
+      "cycleDurationMs": 610,
+      "loop": false,
+      "staticFrameIndex": 0,
+      "safeSwitchFrameIndices": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "returnTo": "idle",
+      "hitArea": [
+        -80,
+        -176,
+        162,
+        170
+      ],
+      "sourceFrames": [
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved",
+        "head-near-arm",
+        "forearms-supported",
+        "awake-existing"
+      ],
+      "poseIds": [
+        "sleep-contact-approved",
+        "sleep-breath-model",
+        "sleep-contact-approved",
+        "head-near-arm",
+        "forearms-supported",
+        "awake-existing"
+      ],
+      "reverseOf": "idle-to-sleep",
+      "startFrameByAction": {
+        "sleeping": [
+          2,
+          1,
+          2
+        ],
+        "idle-to-sleep": [
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    }
+  },
+  "provenance": {
+    "tool": "built-in image_gen",
+    "source": "researcher-seated-reach-call15.png",
+    "wholeCanvasResize": 144,
+    "canvasOffset": [
+      56,
+      56
+    ],
+    "sourceSize": [
+      1254,
+      1254
+    ],
+    "postprocessing": "same pose pixels cropped into draw layers; fixed role-wide scale and registration; no pose synthesis",
+    "adoptedSources": {
+      "base": "researcher-seated-reach-call15.png",
+      "blink": "researcher-blink-call19.png",
+      "breath": "researcher-breath-call21.png",
+      "a": "researcher-work-a-call23.png",
+      "b": "researcher-work-b-call27.png",
+      "mid": "researcher-work-mid-call31.png",
+      "sleep": "researcher-sleep-call29.png",
+      "sleepbreath": "researcher-sleep-breath-call33.png"
+    },
+    "newImageCalls": 10,
+    "rejectedCalls": [
+      25
+    ],
+    "sourceCanvasSize": [
+      1254,
+      1254
+    ],
+    "finalRoleCanvas": [
+      256,
+      256
+    ],
+    "animation": "genuine whole-character edits; exact endpoint reuse and chronological reverse; no local pose synthesis",
+    "deskSleepV2": {
+      "source": "../attempt-02-generated.png",
+      "newImageCalls": 2,
+      "rejectedCall": 1,
+      "cellCanvas": [
+        724,
+        724
+      ],
+      "commonScale": 0.35359116022099446,
+      "commonTranslation": [
+        0,
+        0
+      ],
+      "postprocessing": "Common whole-cell scaling, same-source draw-layer crop, alpha background-noise cleanup, atlas packing only; no per-frame fit or pose synthesis.",
+      "exactEndpoints": {
+        "awake": "Original v10 idle frame0 RGBA exact",
+        "sleep": "Frozen approved static-candidate fullbody/front RGBA exact"
+      },
+      "timing": "Enter and wake have separate original-speed timings; reversing pose IDs does not imply same timing.",
+      "draft02": "Same source PNG/atlas pixels as draft01. Explicit playback-position startFrameByAction covers sleep loop3/4 and exact transition reversal; independent time maps."
+    }
+  },
+  "knownGaps": [
+    "Material static chain and original-speed GIF previews authored. Phaser integration and actual continuous playback remain for parent gate."
+  ]
+}
